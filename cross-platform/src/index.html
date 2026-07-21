@@ -31,6 +31,75 @@
         </div>
       </section>
 
+      <section class="section word-center" id="word-center" aria-labelledby="word-center-title">
+        <div class="section-heading word-heading">
+          <div>
+            <span class="eyebrow">WORD 文件中心</span>
+            <h2 id="word-center-title">想完成什麼？</h2>
+            <p>依 Word 熟悉的功能區整理，但每張卡片都直接說明用途與下一步。</p>
+          </div>
+          <div class="word-start-actions">
+            <button class="primary" data-create="text">＋ 新增 Word 文件</button>
+            <button id="open-word-document">開啟 Word 文件</button>
+          </div>
+        </div>
+        <div class="word-ribbon" role="tablist" aria-label="Word 功能區">
+          <button id="word-tab-file" role="tab" aria-selected="false" aria-controls="word-task-panel" tabindex="-1" data-word-tab="file">檔案</button>
+          <button class="active" id="word-tab-home" role="tab" aria-selected="true" aria-controls="word-task-panel" tabindex="0" data-word-tab="home">常用</button>
+          <button id="word-tab-insert" role="tab" aria-selected="false" aria-controls="word-task-panel" tabindex="-1" data-word-tab="insert">插入</button>
+          <button id="word-tab-draw" role="tab" aria-selected="false" aria-controls="word-task-panel" tabindex="-1" data-word-tab="draw">繪圖</button>
+          <button id="word-tab-design" role="tab" aria-selected="false" aria-controls="word-task-panel" tabindex="-1" data-word-tab="design">設計</button>
+          <button id="word-tab-layout" role="tab" aria-selected="false" aria-controls="word-task-panel" tabindex="-1" data-word-tab="layout">版面配置</button>
+          <button id="word-tab-references" role="tab" aria-selected="false" aria-controls="word-task-panel" tabindex="-1" data-word-tab="references">參考資料</button>
+          <button id="word-tab-mailings" role="tab" aria-selected="false" aria-controls="word-task-panel" tabindex="-1" data-word-tab="mailings">郵件</button>
+          <button id="word-tab-review" role="tab" aria-selected="false" aria-controls="word-task-panel" tabindex="-1" data-word-tab="review">校閱</button>
+          <button id="word-tab-view" role="tab" aria-selected="false" aria-controls="word-task-panel" tabindex="-1" data-word-tab="view">檢視</button>
+          <button id="word-tab-advanced" role="tab" aria-selected="false" aria-controls="word-task-panel" tabindex="-1" data-word-tab="advanced">進階</button>
+        </div>
+        <div class="word-workspace-grid">
+          <div id="word-task-panel" role="tabpanel" aria-labelledby="word-tab-home">
+            <div class="word-tab-intro" id="word-tab-intro"></div>
+            <div class="word-task-grid" id="word-task-grid"></div>
+          </div>
+          <aside class="word-guide">
+            <b>最直覺的使用方式</b>
+            <ol>
+              <li>先選功能，不必先找選單。</li>
+              <li>OpenDesk 先備份並檢查文件。</li>
+              <li>需要精細排版時，直接開啟本機編輯器完成。</li>
+            </ol>
+            <p>⌘／Ctrl＋S 儲存　⌘／Ctrl＋Z 復原<br>⌘／Ctrl＋B 粗體　⌘／Ctrl＋F 尋找</p>
+          </aside>
+        </div>
+
+        <div class="word-current hidden" id="word-current">
+          <div class="word-current-head">
+            <div><span class="eyebrow">目前 WORD 文件</span><h3 id="word-report-title">文件地圖</h3></div>
+            <div class="action-row">
+              <button class="primary" id="word-edit">備份並開啟編輯</button>
+              <button id="word-renumber">中文標題安全重編</button>
+              <button id="word-report-refresh">重新檢查</button>
+            </div>
+          </div>
+          <div class="word-stats" id="word-stats"></div>
+          <div class="word-report-grid">
+            <section class="word-report-card">
+              <div class="mini-heading"><b>文件導覽</b><span>依標題層級快速掌握結構</span></div>
+              <div class="document-map" id="word-document-map"></div>
+            </section>
+            <section class="word-report-card">
+              <div class="mini-heading"><b>校閱與參照</b><span>交付前還有哪些內容</span></div>
+              <div class="review-metrics" id="word-review-metrics"></div>
+              <div class="font-list" id="word-fonts"></div>
+            </section>
+            <section class="word-report-card warnings-card">
+              <div class="mini-heading"><b>列印與無障礙檢查</b><span>問題直接說人話</span></div>
+              <div id="word-warnings"></div>
+            </section>
+          </div>
+        </div>
+      </section>
+
       <section class="section workspace hidden" id="workspace" aria-labelledby="workspace-title">
         <div class="section-heading">
           <div><h2 id="workspace-title">目前文件</h2><p id="workspace-path"></p></div>

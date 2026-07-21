@@ -2,6 +2,7 @@ use chrono::Local;
 use regex::Regex;
 use serde::Serialize;
 use serde_json::{json, Value};
+use std::collections::BTreeSet;
 use std::fs::{self, File};
 use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpStream};
@@ -9,7 +10,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::Duration;
 use tauri::{Manager, Runtime};
-use zip::ZipArchive;
+use zip::{ZipArchive, ZipWriter};
 
 #[derive(Serialize, Clone)]
 struct EngineStatus {
@@ -54,6 +55,41 @@ struct DocumentAnalysis {
     package_entries: usize,
     heading_count: usize,
     issues: Vec<String>,
+}
+
+#[derive(Serialize, Clone, Debug, PartialEq, Eq)]
+struct WordHeading {
+    paragraph: usize,
+    level: usize,
+    text: String,
+}
+
+#[derive(Serialize)]
+struct WordReport {
+    file_name: String,
+    characters: usize,
+    paragraphs: usize,
+    tables: usize,
+    images: usize,
+    hyperlinks: usize,
+    sections: usize,
+    headers: usize,
+    footers: usize,
+    footnotes: usize,
+    endnotes: usize,
+    comments: usize,
+    tracked_insertions: usize,
+    tracked_deletions: usize,
+    bookmarks: usize,
+    fields: usize,
+    page_breaks: usize,
+    mail_merge_fields: usize,
+    has_toc: bool,
+    has_page_numbers: bool,
+    fonts: Vec<String>,
+    headings: Vec<WordHeading>,
+    accessibility_warnings: Vec<String>,
+    print_warnings: Vec<String>,
 }
 
 #[derive(Serialize)]
@@ -289,11 +325,267 @@ fn inspect_package(path: &Path) -> (usize, usize, Vec<String>) {
     if let Ok(mut document) = archive.by_name("word/document.xml") {
         let mut xml = String::new();
         let _ = document.read_to_string(&mut xml);
-        let heading =
-            Regex::new(r"〔(?:[壹貳參肆伍陸柒捌玖拾]+|[一二三四五六七八九十]+)、〕").unwrap();
-        heading_count = heading.find_iter(&xml).count();
+        heading_count = detect_word_headings(&xml).len();
     }
     (count, heading_count, issues)
+}
+
+#[derive(Clone)]
+struct HeadingPrefix {
+    level: usize,
+    prefix: String,
+    numeral: String,
+}
+
+fn decode_xml_text(value: &str) -> String {
+    value
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&quot;", "\"")
+        .replace("&apos;", "'")
+        .replace("&amp;", "&")
+}
+
+fn encode_xml_text(value: &str) -> String {
+    value
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+}
+
+fn paragraph_text(paragraph: &str) -> String {
+    let expression = Regex::new(r#"(?s)<w:t\b[^>]*>(.*?)</w:t>"#).unwrap();
+    expression
+        .captures_iter(paragraph)
+        .filter_map(|capture| capture.get(1))
+        .map(|value| decode_xml_text(value.as_str()))
+        .collect()
+}
+
+fn heading_prefix(text: &str) -> Option<HeadingPrefix> {
+    let patterns = [
+        (
+            1,
+            r#"^\s*(?:〔|【|\[)?([壹貳參肆伍陸柒捌玖拾佰]+)、(?:〕|】|\])?"#,
+        ),
+        (
+            2,
+            r#"^\s*(?:〔|【|\[)?([一二三四五六七八九十百]+)、(?:〕|】|\])?"#,
+        ),
+        (
+            3,
+            r#"^\s*(?:（|\(|〔|【)([一二三四五六七八九十百]+)(?:）|\)|〕|】)"#,
+        ),
+        (4, r#"^\s*([0-9]+)[、\.．]"#),
+    ];
+    for (level, pattern) in patterns {
+        let expression = Regex::new(pattern).unwrap();
+        let Some(capture) = expression.captures(text) else {
+            continue;
+        };
+        return Some(HeadingPrefix {
+            level,
+            prefix: capture.get(0)?.as_str().to_string(),
+            numeral: capture.get(1)?.as_str().to_string(),
+        });
+    }
+    None
+}
+
+fn detect_word_headings(document_xml: &str) -> Vec<WordHeading> {
+    let paragraphs = Regex::new(r#"(?s)<w:p(?:\s[^>]*)?>.*?</w:p>"#).unwrap();
+    let style =
+        Regex::new(r#"<w:pStyle\b[^>]*w:val=\"(?:Heading|heading)([1-4])\"[^>]*/?>"#).unwrap();
+    paragraphs
+        .find_iter(document_xml)
+        .enumerate()
+        .filter_map(|(index, paragraph)| {
+            let xml = paragraph.as_str();
+            let text = paragraph_text(xml).trim().to_string();
+            if text.is_empty() {
+                return None;
+            }
+            let styled_level = style
+                .captures(xml)
+                .and_then(|capture| capture.get(1))
+                .and_then(|value| value.as_str().parse::<usize>().ok());
+            let level = styled_level.or_else(|| heading_prefix(&text).map(|value| value.level))?;
+            Some(WordHeading {
+                paragraph: index + 1,
+                level,
+                text,
+            })
+        })
+        .collect()
+}
+
+fn count_matches(pattern: &str, text: &str) -> usize {
+    Regex::new(pattern).unwrap().find_iter(text).count()
+}
+
+fn zip_text(archive: &mut ZipArchive<File>, name: &str) -> String {
+    let Ok(mut entry) = archive.by_name(name) else {
+        return String::new();
+    };
+    let mut content = String::new();
+    let _ = entry.read_to_string(&mut content);
+    content
+}
+
+fn build_word_report(path: &Path) -> Result<WordReport, String> {
+    let extension = path
+        .extension()
+        .and_then(|value| value.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    if !matches!(extension.as_str(), "docx" | "docm") {
+        return Err("Word 文件中心目前支援 DOCX／DOCM；舊版 DOC 請先用救援引擎另存。".into());
+    }
+    let file = File::open(path).map_err(|error| error.to_string())?;
+    let mut archive = ZipArchive::new(file).map_err(|_| "無法讀取 Word 文件結構")?;
+    let names: Vec<String> = archive.file_names().map(String::from).collect();
+    let document = zip_text(&mut archive, "word/document.xml");
+    if document.is_empty() {
+        return Err("Word 文件缺少 document.xml".into());
+    }
+    let styles = zip_text(&mut archive, "word/styles.xml");
+    let settings = zip_text(&mut archive, "word/settings.xml");
+    let relationships = zip_text(&mut archive, "word/_rels/document.xml.rels");
+    let comments_xml = zip_text(&mut archive, "word/comments.xml");
+    let footnotes_xml = zip_text(&mut archive, "word/footnotes.xml");
+    let endnotes_xml = zip_text(&mut archive, "word/endnotes.xml");
+    let footer_xml = names
+        .iter()
+        .filter(|name| name.starts_with("word/footer") && name.ends_with(".xml"))
+        .map(|name| zip_text(&mut archive, name))
+        .collect::<String>();
+
+    let paragraph_expression = Regex::new(r#"(?s)<w:p(?:\s[^>]*)?>.*?</w:p>"#).unwrap();
+    let paragraph_values: Vec<String> = paragraph_expression
+        .find_iter(&document)
+        .map(|value| paragraph_text(value.as_str()))
+        .filter(|value| !value.trim().is_empty())
+        .collect();
+    let characters = paragraph_values
+        .iter()
+        .flat_map(|value| value.chars())
+        .filter(|value| !value.is_whitespace())
+        .count();
+    let paragraphs = paragraph_values.len();
+    let tables = count_matches(r"<w:tbl(?:\s|>)", &document);
+    let images = names
+        .iter()
+        .filter(|name| name.starts_with("word/media/") && !name.ends_with('/'))
+        .count();
+    let hyperlinks = count_matches(r"<w:hyperlink(?:\s|>)", &document)
+        + count_matches(r#"TargetMode=\"External\""#, &relationships);
+    let sections = count_matches(r"<w:sectPr(?:\s|>)", &document);
+    let headers = names
+        .iter()
+        .filter(|name| name.starts_with("word/header") && name.ends_with(".xml"))
+        .count();
+    let footers = names
+        .iter()
+        .filter(|name| name.starts_with("word/footer") && name.ends_with(".xml"))
+        .count();
+    let footnotes = count_matches(r"<w:footnoteReference(?:\s|/|>)", &document);
+    let endnotes = count_matches(r"<w:endnoteReference(?:\s|/|>)", &document);
+    let comments = count_matches(r"<w:comment\b", &comments_xml);
+    let tracked_insertions = count_matches(r"<w:ins(?:\s|>)", &document);
+    let tracked_deletions = count_matches(r"<w:del(?:\s|>)", &document);
+    let bookmarks = count_matches(r"<w:bookmarkStart(?:\s|>)", &document);
+    let fields = count_matches(r"<w:fldSimple(?:\s|>)|<w:instrText(?:\s|>)", &document);
+    let page_breaks = count_matches(r#"w:type=\"page\"|<w:lastRenderedPageBreak"#, &document);
+    let mail_merge_fields = count_matches(r"MERGEFIELD", &document);
+    let has_toc = document.contains("TOC");
+    let has_page_numbers = footer_xml.contains("PAGE");
+    let headings = detect_word_headings(&document);
+
+    let font_expression = Regex::new(r#"w:(?:ascii|hAnsi|eastAsia)=\"([^\"]+)\""#).unwrap();
+    let fonts = font_expression
+        .captures_iter(&format!("{styles}{document}"))
+        .filter_map(|capture| capture.get(1).map(|value| value.as_str().to_string()))
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect::<Vec<_>>();
+
+    let drawing_objects = count_matches(r"<wp:docPr(?:\s|>)", &document);
+    let described_objects =
+        count_matches(r#"<wp:docPr\b[^>]*(?:descr|title)=\"[^\"]+\""#, &document);
+    let missing_alt_text = drawing_objects.saturating_sub(described_objects);
+    let header_tables = count_matches(r"<w:tblHeader(?:\s|/|>)", &document);
+    let mut accessibility_warnings = Vec::new();
+    if missing_alt_text > 0 {
+        accessibility_warnings.push(format!("{missing_alt_text} 個圖片或繪圖物件缺少替代文字"));
+    }
+    if tables > header_tables {
+        accessibility_warnings.push(format!(
+            "{} 個表格需確認第一列是否標示為標題列",
+            tables - header_tables
+        ));
+    }
+    if !document.contains("<w:lang") && !styles.contains("<w:lang") {
+        accessibility_warnings.push("尚未設定文件校訂語言，拼字與螢幕閱讀可能不準確".into());
+    }
+    if accessibility_warnings.is_empty() {
+        accessibility_warnings.push("未發現可由結構自動判定的無障礙問題".into());
+    }
+
+    let mut print_warnings = Vec::new();
+    if sections == 0 {
+        print_warnings.push("沒有明確頁面／分節設定，請確認紙張與邊界".into());
+    }
+    if footers == 0 || !has_page_numbers {
+        print_warnings.push("未偵測到頁尾頁碼".into());
+    }
+    if tracked_insertions + tracked_deletions > 0 {
+        print_warnings.push("文件仍含追蹤修訂，送印前請決定接受或拒絕".into());
+    }
+    if comments > 0 {
+        print_warnings.push(format!("文件仍含 {comments} 則註解，請確認是否列印標記"));
+    }
+    if has_toc && !settings.contains("updateFields") {
+        print_warnings.push("文件有目錄，但未設定開啟時自動更新欄位".into());
+    }
+    if fonts.is_empty() {
+        print_warnings.push("未讀到明確字型；換電腦時可能發生替代字型".into());
+    }
+    if print_warnings.is_empty() {
+        print_warnings.push("結構檢查未發現明顯的送印風險".into());
+    }
+
+    let _ = (footnotes_xml, endnotes_xml);
+    Ok(WordReport {
+        file_name: path
+            .file_name()
+            .and_then(|value| value.to_str())
+            .unwrap_or("Word 文件")
+            .into(),
+        characters,
+        paragraphs,
+        tables,
+        images,
+        hyperlinks,
+        sections,
+        headers,
+        footers,
+        footnotes,
+        endnotes,
+        comments,
+        tracked_insertions,
+        tracked_deletions,
+        bookmarks,
+        fields,
+        page_breaks,
+        mail_merge_fields,
+        has_toc,
+        has_page_numbers,
+        fonts,
+        headings,
+        accessibility_warnings,
+        print_warnings,
+    })
 }
 
 fn parse_environment(content: &str) -> std::collections::HashMap<String, String> {
@@ -676,6 +968,242 @@ fn magi_analyze(path: String, mode: String, instruction: String) -> Result<MagiR
 }
 
 #[tauri::command]
+fn word_report(path: String) -> Result<WordReport, String> {
+    let source = PathBuf::from(path);
+    if !source.is_file() {
+        return Err("找不到 Word 文件".into());
+    }
+    build_word_report(&source)
+}
+
+fn chinese_number(number: usize, financial: bool) -> String {
+    let digits = if financial {
+        ["零", "壹", "貳", "參", "肆", "伍", "陸", "柒", "捌", "玖"]
+    } else {
+        ["零", "一", "二", "三", "四", "五", "六", "七", "八", "九"]
+    };
+    let ten = if financial { "拾" } else { "十" };
+    match number {
+        0..=9 => digits[number].into(),
+        10..=19 => format!(
+            "{ten}{}",
+            if number == 10 {
+                ""
+            } else {
+                digits[number % 10]
+            }
+        ),
+        20..=99 => format!(
+            "{}{ten}{}",
+            digits[number / 10],
+            if number.is_multiple_of(10) {
+                ""
+            } else {
+                digits[number % 10]
+            }
+        ),
+        _ => number.to_string(),
+    }
+}
+
+fn replace_heading_prefix(paragraph: &str, old_prefix: &str, new_prefix: &str) -> String {
+    if !paragraph_text(paragraph).starts_with(old_prefix) {
+        return paragraph.into();
+    }
+    let expression = Regex::new(r#"(?s)<w:t\b[^>]*>(.*?)</w:t>"#).unwrap();
+    let mut remaining = old_prefix.chars().count();
+    let mut inserted = false;
+    let mut replacements = Vec::new();
+    for capture in expression.captures_iter(paragraph) {
+        if remaining == 0 {
+            break;
+        }
+        let Some(content) = capture.get(1) else {
+            continue;
+        };
+        let decoded = decode_xml_text(content.as_str());
+        let remove = remaining.min(decoded.chars().count());
+        let suffix = decoded.chars().skip(remove).collect::<String>();
+        let replacement = format!("{}{}", if inserted { "" } else { new_prefix }, suffix);
+        replacements.push((
+            content.start()..content.end(),
+            encode_xml_text(&replacement),
+        ));
+        inserted = true;
+        remaining -= remove;
+    }
+    if remaining != 0 {
+        return paragraph.into();
+    }
+    let mut output = paragraph.to_string();
+    for (range, replacement) in replacements.into_iter().rev() {
+        output.replace_range(range, &replacement);
+    }
+    output
+}
+
+fn apply_heading_style(paragraph: &str, level: usize) -> String {
+    let style = format!(r#"<w:pStyle w:val="Heading{level}"/>"#);
+    let style_expression = Regex::new(r#"<w:pStyle\b[^>]*/>"#).unwrap();
+    if let Some(found) = style_expression.find(paragraph) {
+        let mut output = paragraph.to_string();
+        output.replace_range(found.start()..found.end(), &style);
+        return output;
+    }
+    let properties = Regex::new(r#"<w:pPr(?:\s[^>]*)?>"#).unwrap();
+    if let Some(found) = properties.find(paragraph) {
+        let mut output = paragraph.to_string();
+        output.insert_str(found.end(), &style);
+        return output;
+    }
+    let Some(opening_end) = paragraph.find('>') else {
+        return paragraph.into();
+    };
+    let mut output = paragraph.to_string();
+    output.insert_str(opening_end + 1, &format!("<w:pPr>{style}</w:pPr>"));
+    output
+}
+
+fn renumber_word_xml(document_xml: &str) -> (String, usize) {
+    let expression = Regex::new(r#"(?s)<w:p(?:\s[^>]*)?>.*?</w:p>"#).unwrap();
+    let mut counters = [0usize; 5];
+    let mut replacements = Vec::new();
+    for paragraph in expression.find_iter(document_xml) {
+        let source = paragraph.as_str();
+        let text = paragraph_text(source);
+        let Some(heading) = heading_prefix(&text) else {
+            continue;
+        };
+        counters[heading.level] += 1;
+        for counter in counters.iter_mut().skip(heading.level + 1) {
+            *counter = 0;
+        }
+        let next = match heading.level {
+            1 => chinese_number(counters[heading.level], true),
+            2 | 3 => chinese_number(counters[heading.level], false),
+            _ => counters[heading.level].to_string(),
+        };
+        let new_prefix = heading.prefix.replacen(&heading.numeral, &next, 1);
+        let replaced = replace_heading_prefix(source, &heading.prefix, &new_prefix);
+        let styled = apply_heading_style(&replaced, heading.level);
+        replacements.push((paragraph.start()..paragraph.end(), styled));
+    }
+    let count = replacements.len();
+    let mut output = document_xml.to_string();
+    for (range, replacement) in replacements.into_iter().rev() {
+        output.replace_range(range, &replacement);
+    }
+    (output, count)
+}
+
+fn unique_renumbered_path(source: &Path) -> Result<PathBuf, String> {
+    let parent = source.parent().ok_or("無效文件位置")?;
+    let stem = source
+        .file_stem()
+        .and_then(|value| value.to_str())
+        .unwrap_or("Word 文件");
+    let extension = source
+        .extension()
+        .and_then(|value| value.to_str())
+        .unwrap_or("docx");
+    let preferred = parent.join(format!("{stem}-重新編號.{extension}"));
+    if !preferred.exists() {
+        return Ok(preferred);
+    }
+    Ok(parent.join(format!(
+        "{stem}-重新編號-{}.{extension}",
+        Local::now().format("%Y%m%d-%H%M%S")
+    )))
+}
+
+fn read_word_document_xml(source: &Path) -> Result<String, String> {
+    let file = File::open(source).map_err(|error| error.to_string())?;
+    let mut archive = ZipArchive::new(file).map_err(|_| "無法讀取 Word 文件結構")?;
+    let mut entry = archive
+        .by_name("word/document.xml")
+        .map_err(|_| "Word 文件缺少 document.xml")?;
+    let mut xml = String::new();
+    entry
+        .read_to_string(&mut xml)
+        .map_err(|error| error.to_string())?;
+    Ok(xml)
+}
+
+fn write_word_document_xml(
+    source: &Path,
+    destination: &Path,
+    document_xml: &str,
+) -> Result<(), String> {
+    let input = File::open(source).map_err(|error| error.to_string())?;
+    let mut archive = ZipArchive::new(input).map_err(|_| "無法讀取 Word 文件結構")?;
+    let output = File::create(destination).map_err(|error| error.to_string())?;
+    let mut writer = ZipWriter::new(output);
+    for index in 0..archive.len() {
+        let mut entry = archive.by_index(index).map_err(|error| error.to_string())?;
+        if entry.name() != "word/document.xml" {
+            writer
+                .raw_copy_file(entry)
+                .map_err(|error| error.to_string())?;
+            continue;
+        }
+        let name = entry.name().to_string();
+        let options = entry.options();
+        let mut ignored = Vec::new();
+        let _ = entry.read_to_end(&mut ignored);
+        writer
+            .start_file(name, options)
+            .map_err(|error| error.to_string())?;
+        writer
+            .write_all(document_xml.as_bytes())
+            .map_err(|error| error.to_string())?;
+    }
+    writer.finish().map_err(|error| error.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
+fn renumber_headings(path: String) -> Result<ActionResult, String> {
+    let source = PathBuf::from(&path);
+    if !source.is_file() {
+        return Err("找不到 Word 文件".into());
+    }
+    let extension = source
+        .extension()
+        .and_then(|value| value.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    if !matches!(extension.as_str(), "docx" | "docm") {
+        return Err("中文標題重新編號目前支援 DOCX／DOCM".into());
+    }
+    let document_xml = read_word_document_xml(&source)?;
+    let (renumbered, count) = renumber_word_xml(&document_xml);
+    if count == 0 {
+        return Err("沒有偵測到〔壹、〕、〔一、〕、（一）或 1. 等標題".into());
+    }
+    let backup = create_backup(&source)?;
+    let destination = unique_renumbered_path(&source)?;
+    write_word_document_xml(&source, &destination, &renumbered)?;
+    let engine = if engine_executable("ONLYOFFICE").is_some() {
+        "ONLYOFFICE"
+    } else {
+        "LibreOffice"
+    };
+    launch_document(&destination, engine)?;
+    Ok(ActionResult {
+        path: destination.to_string_lossy().to_string(),
+        file_name: destination
+            .file_name()
+            .and_then(|value| value.to_str())
+            .unwrap_or("重新編號文件.docx")
+            .into(),
+        message: format!(
+            "已重編 {count} 個標題並套用標題樣式；原檔備份於 {}",
+            backup.display()
+        ),
+    })
+}
+
+#[tauri::command]
 fn scan_document(path: String) -> Result<DocumentAnalysis, String> {
     let file = PathBuf::from(&path);
     if !file.is_file() {
@@ -826,7 +1354,7 @@ fn convert_pdf(path: String) -> Result<String, String> {
 
 fn convert_pdf_at(source: &Path, output: &Path) -> Result<PathBuf, String> {
     let executable = engine_executable("LibreOffice").ok_or("找不到 LibreOffice")?;
-    fs::create_dir_all(&output).map_err(|error| error.to_string())?;
+    fs::create_dir_all(output).map_err(|error| error.to_string())?;
     let profile = std::env::temp_dir().join(format!(
         "OpenDeskTW-LO-{}-{}",
         std::process::id(),
@@ -839,8 +1367,8 @@ fn convert_pdf_at(source: &Path, output: &Path) -> Result<PathBuf, String> {
             profile.to_string_lossy()
         ))
         .args(["--headless", "--convert-to", "pdf", "--outdir"])
-        .arg(&output)
-        .arg(&source)
+        .arg(output)
+        .arg(source)
         .status()
         .map_err(|error| error.to_string())?;
     let _ = fs::remove_dir_all(profile);
@@ -883,8 +1411,30 @@ fn reveal_path(path: String) -> Result<(), String> {
 }
 
 #[tauri::command]
+fn open_backup_folder() -> Result<String, String> {
+    let path = data_root()?.join("Backups");
+    fs::create_dir_all(&path).map_err(|error| error.to_string())?;
+    #[cfg(target_os = "macos")]
+    Command::new("/usr/bin/open")
+        .arg(&path)
+        .spawn()
+        .map_err(|error| error.to_string())?;
+    #[cfg(target_os = "windows")]
+    Command::new("explorer.exe")
+        .arg(&path)
+        .spawn()
+        .map_err(|error| error.to_string())?;
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    Command::new("xdg-open")
+        .arg(&path)
+        .spawn()
+        .map_err(|error| error.to_string())?;
+    Ok(path.to_string_lossy().to_string())
+}
+
+#[tauri::command]
 fn run_self_test<R: Runtime>(app: tauri::AppHandle<R>) -> SelfTestReport {
-    let engines = vec![engine_status("ONLYOFFICE"), engine_status("LibreOffice")];
+    let engines = [engine_status("ONLYOFFICE"), engine_status("LibreOffice")];
     let engine_passed = engines.iter().filter(|engine| engine.installed).count();
     let fixtures = [
         "resources/Templates/Blank-Document.docx",
@@ -915,6 +1465,22 @@ fn run_self_test<R: Runtime>(app: tauri::AppHandle<R>) -> SelfTestReport {
                 .unwrap_or(false)
         })
         .count();
+    let word_fixture = resource_path(&app, verification[0]).ok();
+    let word_report_passed = word_fixture
+        .as_ref()
+        .and_then(|path| build_word_report(path).ok())
+        .map(|report| {
+            report.headings.len() >= 4
+                && report.has_toc
+                && report.has_page_numbers
+                && report.tables >= 1
+                && report.comments >= 1
+        })
+        .unwrap_or(false);
+    let (_, word_renumber_count) = renumber_word_xml(
+        r#"<w:body><w:p><w:r><w:t>〔肆、〕章</w:t></w:r></w:p><w:p><w:r><w:t>〔九、〕節</w:t></w:r></w:p><w:p><w:r><w:t>（三）項</w:t></w:r></w:p></w:body>"#,
+    );
+    let word_renumber_passed = word_renumber_count == 3;
     let temporary_root = std::env::temp_dir().join(format!(
         "OpenDeskTW-SelfTest-{}-{}",
         std::process::id(),
@@ -957,6 +1523,11 @@ fn run_self_test<R: Runtime>(app: tauri::AppHandle<R>) -> SelfTestReport {
             total: verification.len(),
         },
         TestGroup {
+            name: "Word 文件中心".into(),
+            passed: usize::from(word_report_passed) + usize::from(word_renumber_passed),
+            total: 2,
+        },
+        TestGroup {
             name: "備份讀回".into(),
             passed: usize::from(backup_passed),
             total: 1,
@@ -996,11 +1567,14 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             system_status,
             scan_document,
+            word_report,
+            renumber_headings,
             backup_and_open,
             create_document,
             convert_pdf,
             magi_analyze,
             reveal_path,
+            open_backup_folder,
             run_self_test
         ])
         .run(tauri::generate_context!())
@@ -1042,6 +1616,90 @@ mod tests {
     }
 
     #[test]
+    fn detects_word_styles_and_traditional_chinese_headings() {
+        let xml = r#"<w:body>
+          <w:p><w:pPr><w:pStyle w:val="Heading1"/></w:pPr><w:r><w:t>正式標題</w:t></w:r></w:p>
+          <w:p><w:r><w:t>〔貳、〕中文編號標題</w:t></w:r></w:p>
+          <w:p><w:r><w:t>一般內文</w:t></w:r></w:p>
+        </w:body>"#;
+        let headings = detect_word_headings(xml);
+        assert_eq!(headings.len(), 2);
+        assert_eq!(headings[0].level, 1);
+        assert_eq!(headings[1].text, "〔貳、〕中文編號標題");
+    }
+
+    #[test]
+    fn renumbers_split_run_chinese_headings_and_applies_styles() {
+        let xml = r#"<w:body>
+          <w:p><w:r><w:t>〔肆</w:t></w:r><w:r><w:t>、〕第一章</w:t></w:r></w:p>
+          <w:p><w:r><w:t>〔九、〕第一節</w:t></w:r></w:p>
+          <w:p><w:r><w:t>〔十、〕第二節</w:t></w:r></w:p>
+          <w:p><w:r><w:t>（三）細目</w:t></w:r></w:p>
+          <w:p><w:r><w:t>9. 項目</w:t></w:r></w:p>
+        </w:body>"#;
+        let (output, count) = renumber_word_xml(xml);
+        assert_eq!(count, 5);
+        assert!(paragraph_text(&output).contains("〔壹、〕第一章"));
+        assert!(paragraph_text(&output).contains("〔一、〕第一節"));
+        assert!(paragraph_text(&output).contains("〔二、〕第二節"));
+        assert!(paragraph_text(&output).contains("（一）細目"));
+        assert!(paragraph_text(&output).contains("1. 項目"));
+        for level in 1..=4 {
+            assert!(output.contains(&format!("w:val=\"Heading{level}\"")));
+        }
+    }
+
+    #[test]
+    fn word_report_covers_navigation_review_and_print_checks() {
+        let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("resources/Verification/OpenDeskTW_完整文字功能.docx");
+        let report = build_word_report(&fixture).expect("應能建立 Word 專項報告");
+        assert!(report.characters > 100);
+        assert!(report.headings.len() >= 4);
+        assert!(report.has_toc);
+        assert!(report.has_page_numbers);
+        assert!(report.tables >= 1);
+        assert!(report.footnotes >= 1 && report.endnotes >= 1);
+        assert!(report.comments >= 1);
+        assert!(report.tracked_insertions >= 1 && report.tracked_deletions >= 1);
+        assert!(report.bookmarks >= 1 && report.mail_merge_fields >= 1);
+    }
+
+    #[test]
+    fn renumbered_docx_roundtrip_preserves_package() {
+        let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("resources/Verification/OpenDeskTW_完整文字功能.docx");
+        let temporary_root = std::env::temp_dir().join(format!(
+            "OpenDeskTW-Word-Test-{}-{}",
+            std::process::id(),
+            Local::now().timestamp_millis()
+        ));
+        fs::create_dir_all(&temporary_root).unwrap();
+        let _cleanup = TemporaryFolder(temporary_root.clone());
+        let input = temporary_root.join("待重編.docx");
+        let output = temporary_root.join("重新編號.docx");
+        let original_xml = read_word_document_xml(&fixture).unwrap();
+        let text_expression = Regex::new(r#"(?s)<w:t\b[^>]*>(.*?)</w:t>"#).unwrap();
+        let mut injected = original_xml.clone();
+        let nodes = text_expression
+            .captures_iter(&original_xml)
+            .filter_map(|capture| capture.get(1).map(|value| value.start()))
+            .take(2)
+            .collect::<Vec<_>>();
+        for (position, prefix) in nodes.into_iter().zip(["〔肆、〕", "〔九、〕"]).rev() {
+            injected.insert_str(position, prefix);
+        }
+        write_word_document_xml(&fixture, &input, &injected).unwrap();
+        let source_xml = read_word_document_xml(&input).unwrap();
+        let (renumbered, count) = renumber_word_xml(&source_xml);
+        assert!(count >= 2);
+        write_word_document_xml(&input, &output, &renumbered).unwrap();
+        let report = build_word_report(&output).expect("重新封裝後仍應是有效 DOCX");
+        assert!(report.headings.len() >= 4);
+        assert!(inspect_package(&output).0 > 10);
+    }
+
+    #[test]
     #[ignore = "需要正在運作的本機 MAGI V2 或 V3"]
     fn live_magi_v2_v3_request() {
         let status = magi_status();
@@ -1077,6 +1735,9 @@ mod tests {
             assert!(fixture.is_file());
             assert!(inspect_package(fixture).0 > 0);
         }
+        let original_report = build_word_report(&fixtures[0]).expect("Word LIVE 報告應建立成功");
+        assert!(original_report.headings.len() >= 4);
+        assert!(original_report.has_toc && original_report.has_page_numbers);
         let temporary_root = std::env::temp_dir().join(format!(
             "OpenDeskTW-Pipeline-Test-{}-{}",
             std::process::id(),
@@ -1087,7 +1748,29 @@ mod tests {
         let backup = temporary_root.join("backup.docx");
         fs::copy(&fixtures[0], &backup).unwrap();
         assert_eq!(fs::read(&fixtures[0]).unwrap(), fs::read(&backup).unwrap());
-        let pdf = convert_pdf_at(&fixtures[0], &temporary_root.join("pdf")).unwrap();
+        let original_xml = read_word_document_xml(&fixtures[0]).unwrap();
+        let text_expression = Regex::new(r#"(?s)<w:t\b[^>]*>(.*?)</w:t>"#).unwrap();
+        let mut injected_xml = original_xml.clone();
+        let positions = text_expression
+            .captures_iter(&original_xml)
+            .filter_map(|capture| capture.get(1).map(|value| value.start()))
+            .take(2)
+            .collect::<Vec<_>>();
+        for (position, prefix) in positions.into_iter().zip(["〔肆、〕", "〔九、〕"]).rev()
+        {
+            injected_xml.insert_str(position, prefix);
+        }
+        let word_input = temporary_root.join("Word-LIVE-待重編.docx");
+        let word_output = temporary_root.join("Word-LIVE-重新編號.docx");
+        write_word_document_xml(&fixtures[0], &word_input, &injected_xml).unwrap();
+        let (renumbered_xml, renumbered_count) =
+            renumber_word_xml(&read_word_document_xml(&word_input).unwrap());
+        assert!(renumbered_count >= 2);
+        write_word_document_xml(&word_input, &word_output, &renumbered_xml).unwrap();
+        let renumbered_report =
+            build_word_report(&word_output).expect("重編後 Word LIVE 報告應建立成功");
+        assert!(renumbered_report.headings.len() >= original_report.headings.len());
+        let pdf = convert_pdf_at(&word_output, &temporary_root.join("pdf")).unwrap();
         let pdf_bytes = fs::read(pdf).unwrap();
         assert!(pdf_bytes.starts_with(b"%PDF-") && pdf_bytes.len() > 1_000);
         let status = magi_status();
