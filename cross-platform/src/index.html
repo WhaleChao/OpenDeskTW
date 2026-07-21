@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="zh-Hant">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="light dark" />
+    <title>OpenDesk TW</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <main class="shell">
+      <header class="hero">
+        <div class="brand-mark" aria-hidden="true">▤</div>
+        <div class="hero-copy">
+          <h1>OpenDesk TW</h1>
+          <p>完整日常文書・Office 格式優先・全繁體中文・本機安全</p>
+        </div>
+        <div class="system-summary" id="system-summary" aria-live="polite">正在檢查本機環境…</div>
+      </header>
+
+      <section class="section" aria-labelledby="quick-title">
+        <div class="section-heading">
+          <div><h2 id="quick-title">開始使用</h2><p>選一個動作就能開始，不必先理解格式或引擎。</p></div>
+          <button class="quiet" id="check-update">檢查安全熱修</button>
+        </div>
+        <div class="quick-grid">
+          <button class="quick-card word" data-create="text"><span class="quick-icon">W</span><span><b>新增文字文件</b><small>DOCX・排版・頁碼・頁首頁尾</small></span></button>
+          <button class="quick-card sheet" data-create="spreadsheet"><span class="quick-icon">X</span><span><b>新增試算表</b><small>XLSX・公式・圖表・工作表</small></span></button>
+          <button class="quick-card slide" data-create="presentation"><span class="quick-icon">P</span><span><b>新增簡報</b><small>PPTX・母片・轉場・備忘稿</small></span></button>
+          <button class="quick-card open" id="open-document"><span class="quick-icon">＋</span><span><b>開啟現有文件</b><small>Office・PDF・ODF・舊版格式</small></span></button>
+        </div>
+      </section>
+
+      <section class="section workspace hidden" id="workspace" aria-labelledby="workspace-title">
+        <div class="section-heading">
+          <div><h2 id="workspace-title">目前文件</h2><p id="workspace-path"></p></div>
+          <span class="risk-badge" id="risk-badge">一般</span>
+        </div>
+        <div class="action-row">
+          <button class="primary" id="open-primary">備份並開啟編輯</button>
+          <button id="open-alternate">改用救援引擎</button>
+          <button id="convert-pdf">轉換 PDF</button>
+          <button id="magi-analyze">MAGI 文件分析</button>
+          <button id="reveal-file">顯示檔案</button>
+        </div>
+        <div class="analysis-grid" id="analysis-grid"></div>
+        <div class="magi-panel hidden" id="magi-panel">
+          <div class="magi-controls">
+            <label>分析方式
+              <select id="magi-mode">
+                <option value="complete">完整檢查</option>
+                <option value="summary">摘要重點</option>
+                <option value="review">校對與疑點</option>
+                <option value="structure">結構與標題</option>
+              </select>
+            </label>
+            <label class="magi-instruction">追加要求（可留白）
+              <input id="magi-instruction" type="text" placeholder="例如：找出日期與金額不一致處" />
+            </label>
+            <button class="primary" id="magi-run">開始分析</button>
+          </div>
+          <div id="magi-result" class="magi-result">結果會直接顯示在這裡，不會跳到網頁。</div>
+          <button class="quiet hidden" id="magi-copy">複製分析結果</button>
+        </div>
+      </section>
+
+      <section class="section" aria-labelledby="recent-title">
+        <div class="section-heading"><div><h2 id="recent-title">最近文件</h2><p>按一下即可先檢查與備份，再繼續工作。</p></div><button class="quiet" id="clear-recent">清除清單</button></div>
+        <div id="recent-list" class="recent-list"><p class="empty">尚無最近文件。</p></div>
+      </section>
+
+      <section class="section" aria-labelledby="feature-title">
+        <div class="section-heading">
+          <div><h2 id="feature-title">完整 Office 功能中心</h2><p>搜尋功能名稱，直接知道在哪個模組使用及相容界線。</p></div>
+          <input id="feature-search" class="search" type="search" placeholder="搜尋：頁碼、公式、動畫…" aria-label="搜尋 Office 功能" />
+        </div>
+        <div class="feature-tabs" role="tablist" aria-label="Office 模組">
+          <button class="active" data-feature-tab="all">全部</button>
+          <button data-feature-tab="word">文字</button>
+          <button data-feature-tab="excel">試算表</button>
+          <button data-feature-tab="powerpoint">簡報</button>
+          <button data-feature-tab="pdf">PDF</button>
+          <button data-feature-tab="safety">安全與 AI</button>
+        </div>
+        <div id="feature-grid" class="feature-grid"></div>
+        <aside class="boundary"><b>Microsoft 專屬界線</b><span>VBA、ActiveX、COM、IRM、Microsoft 365 雲端共同編輯，以及部分複雜 SmartArt／3D／動作路徑，會保留原檔並先警示；不會暗中轉格式。</span></aside>
+      </section>
+
+      <section class="section verify" aria-labelledby="verify-title">
+        <div class="section-heading">
+          <div><h2 id="verify-title">完整相容性 LIVE 檢查</h2><p>驗證編輯引擎、內建範本、備份、Office 結構、PDF 與 MAGI。</p></div>
+          <button class="primary" id="run-self-test">執行完整檢查</button>
+        </div>
+        <div id="self-test-result" class="test-result">尚未執行。</div>
+      </section>
+
+      <footer><span id="app-version">OpenDesk TW</span><span>文件預設留在本機・更新包必須通過密碼學簽章</span></footer>
+    </main>
+    <div class="toast hidden" id="toast" role="status" aria-live="polite"></div>
+    <script type="module" src="main.js"></script>
+  </body>
+</html>
