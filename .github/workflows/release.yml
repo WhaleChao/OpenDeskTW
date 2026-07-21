@@ -17,7 +17,9 @@ jobs:
         include:
           - platform: macos-14
             args: "--bundles app,dmg"
-          - platform: windows-latest
+          # WiX 3 建立 MSI 時需要 VBScript 驗證元件；Windows Server 2025
+          # 的 GitHub 映像已預設移除它，因此固定使用仍受支援的 2022 映像。
+          - platform: windows-2022
             args: "--bundles msi,nsis"
     runs-on: ${{ matrix.platform }}
     steps:
