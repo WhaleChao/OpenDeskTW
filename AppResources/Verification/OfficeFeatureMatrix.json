@@ -1,0 +1,206 @@
+{
+  "schemaVersion": 1,
+  "suite": "OpenDesk TW Office 完整功能矩陣",
+  "generatedForVersion": "1.4.0",
+  "passed": true,
+  "summary": "37/37 項通過",
+  "passedCount": 37,
+  "totalCount": 37,
+  "groups": {
+    "文字文件": [
+      {
+        "name": "DOCX 基本結構",
+        "passed": true,
+        "detail": "document.xml 與 styles.xml"
+      },
+      {
+        "name": "DOCX 四層標題",
+        "passed": true,
+        "detail": "Heading 1–4"
+      },
+      {
+        "name": "DOCX 自動目錄",
+        "passed": true,
+        "detail": "TOC 欄位涵蓋 Heading 1–4"
+      },
+      {
+        "name": "DOCX 自動中文編號",
+        "passed": true,
+        "detail": "繁體中文法律編號格式"
+      },
+      {
+        "name": "DOCX 頁首頁尾與頁碼",
+        "passed": true,
+        "detail": "頁首、頁尾與 PAGE 欄位"
+      },
+      {
+        "name": "DOCX 註腳與尾註",
+        "passed": true,
+        "detail": "註腳／尾註零件與參照"
+      },
+      {
+        "name": "DOCX 註解",
+        "passed": true,
+        "detail": "註解零件與範圍標記"
+      },
+      {
+        "name": "DOCX 追蹤修訂",
+        "passed": true,
+        "detail": "追蹤模式、插入與刪除"
+      },
+      {
+        "name": "DOCX 書籤與超連結",
+        "passed": true,
+        "detail": "內部書籤與外部連結"
+      },
+      {
+        "name": "DOCX 郵件合併欄位",
+        "passed": true,
+        "detail": "SimpleMailMergeField"
+      },
+      {
+        "name": "DOCX 表格與分頁",
+        "passed": true,
+        "detail": "表格與明確分頁"
+      },
+      {
+        "name": "DOCX 繁中字型",
+        "passed": true,
+        "detail": "黑體與明體樣式"
+      }
+    ],
+    "試算表": [
+      {
+        "name": "XLSX 多工作表與隱藏頁籤",
+        "passed": true,
+        "detail": "4 張工作表，含隱藏系統資料"
+      },
+      {
+        "name": "XLSX 公式與跨表參照",
+        "passed": true,
+        "detail": "22 個公式"
+      },
+      {
+        "name": "XLSX 命名範圍",
+        "passed": true,
+        "detail": "TaxRate、MonthlyProfit"
+      },
+      {
+        "name": "XLSX 格式化表格與篩選",
+        "passed": true,
+        "detail": "MonthlyPerformance 與自動篩選"
+      },
+      {
+        "name": "XLSX 凍結窗格",
+        "passed": true,
+        "detail": "B3"
+      },
+      {
+        "name": "XLSX 圖表",
+        "passed": true,
+        "detail": "1 個可編輯長條圖"
+      },
+      {
+        "name": "XLSX 條件格式",
+        "passed": true,
+        "detail": "儲存格規則與色階"
+      },
+      {
+        "name": "XLSX 資料驗證",
+        "passed": true,
+        "detail": "狀態下拉選單"
+      },
+      {
+        "name": "XLSX 註解",
+        "passed": true,
+        "detail": "目標值註解"
+      },
+      {
+        "name": "XLSX 工作表保護",
+        "passed": true,
+        "detail": "受保護工作表及可編輯欄位"
+      },
+      {
+        "name": "XLSX 列印版面",
+        "passed": true,
+        "detail": "A4 橫向、列印範圍與重複標題列"
+      },
+      {
+        "name": "XLSX 頁首頁尾",
+        "passed": true,
+        "detail": "列印頁首與頁碼"
+      },
+      {
+        "name": "XLSX 群組與字型",
+        "passed": true,
+        "detail": "資料列群組及繁中字型"
+      },
+      {
+        "name": "XLSX 自動重算",
+        "passed": true,
+        "detail": "開啟時完整重算"
+      }
+    ],
+    "簡報": [
+      {
+        "name": "PPTX 投影片數",
+        "passed": true,
+        "detail": "3 張 16:9 投影片"
+      },
+      {
+        "name": "PPTX 母片與版面",
+        "passed": true,
+        "detail": "母片與自訂版面"
+      },
+      {
+        "name": "PPTX 投影片編號",
+        "passed": true,
+        "detail": "動態投影片編號欄位"
+      },
+      {
+        "name": "PPTX 圖表",
+        "passed": true,
+        "detail": "可編輯圖表與內嵌活頁簿"
+      },
+      {
+        "name": "PPTX 表格",
+        "passed": true,
+        "detail": "PowerPoint 原生表格"
+      },
+      {
+        "name": "PPTX 圖形與排列",
+        "passed": true,
+        "detail": "多個可編輯圖形與文字物件"
+      },
+      {
+        "name": "PPTX 備忘稿",
+        "passed": true,
+        "detail": "每張投影片皆有備忘稿"
+      },
+      {
+        "name": "PPTX 轉場",
+        "passed": true,
+        "detail": "每張投影片淡化轉場"
+      },
+      {
+        "name": "PPTX 超連結",
+        "passed": true,
+        "detail": "外部超連結關係"
+      },
+      {
+        "name": "PPTX 繁中字型",
+        "passed": true,
+        "detail": "黑體與明體"
+      },
+      {
+        "name": "PPTX 結構順序",
+        "passed": true,
+        "detail": "notesMasterIdLst 位於 sldIdLst 前"
+      }
+    ]
+  },
+  "boundaries": [
+    "VBA、ActiveX、COM、IRM 與 Microsoft 365 雲端服務不是開放格式能力，僅保留原檔並警示。",
+    "複雜 SmartArt、3D 物件、PowerPoint 動作路徑與 Microsoft 專屬巨集需在實際文件逐檔確認。"
+  ]
+}
