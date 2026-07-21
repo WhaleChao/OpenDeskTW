@@ -2,11 +2,14 @@
 
 OpenDesk TW 是 Windows／macOS 單機文件工作台：用一個全繁體中文介面管理本機開源 Office 引擎，針對 Office 格式優先使用 ONLYOFFICE，舊格式、開放文件格式、救援與 PDF 轉檔使用 LibreOffice，並整合本機 MAGI V2／V3 AI 助理。
 
-2.0 版位於 `cross-platform/`，以同一套 Tauri 2／Rust 核心產生 macOS App／DMG 與 Windows MSI／NSIS 安裝程式；`Sources/OpenDeskTW/` 保留功能較深的 macOS 原生版。兩者都不會取代或繞過 Microsoft 授權，而是以開源桌面編輯器處理使用者自己的文件。
+2.1 版位於 `cross-platform/`，以同一套 Tauri 2／Rust 核心產生 macOS App／DMG 與 Windows MSI／NSIS 安裝程式；`Sources/OpenDeskTW/` 保留功能較深的 macOS 原生版。兩者都不會取代或繞過 Microsoft 授權，而是以開源桌面編輯器處理使用者自己的文件。
 
 ## 核心能力
 
 - 首頁可一鍵新增具完整 OOXML 結構的 DOCX、XLSX、PPTX；建立前先選檔名與位置，完成後直接進入編輯器。
+- Word 文件中心依桌面版 Word 的「檔案、常用、插入、繪圖、設計、版面配置、參考資料、郵件、校閱、檢視、進階」工作方式整理，但改成可直接理解的任務卡片；頁籤也支援左右方向鍵、Home 與 End。
+- 開啟 DOCX／DOCM 後會顯示 Word 專項報告：字數、段落、標題地圖、分節、表格、圖片、字型、頁首頁尾、頁碼、目錄、註腳／尾註、註解、修訂、書籤、欄位、合併欄位，以及列印與無障礙提醒。
+- 中文標題安全重編支援跨多個 XML 文字片段的〔壹、〕、〔一、〕、（一）、1. 前綴，保留原始 OOXML 套件與 DOCM 巨集內容，先備份再輸出新的 DOCX／DOCM 副本並套用標題 1–4。
 - 最近文件保留最多 12 筆，按一下會先執行相容性檢查與版本備份，再繼續編輯；清除清單不會刪除原始文件。
 - 可展開的「完整功能中心」整理文字、試算表、簡報、PDF、救援與安全功能，也明列 Microsoft 專屬能力的相容性界線。
 - 內建「完整 Office 相容性自我檢查」：隨附高複雜度 DOCX、XLSX、PPTX 測試檔，逐項檢查 OOXML 結構、兩套本機引擎、實檔讀取、PDF 可搜尋文字及 MAGI V2／V3 契約，並保存繁體中文 JSON 報告。
@@ -24,7 +27,7 @@ OpenDesk TW 是 Windows／macOS 單機文件工作台：用一個全繁體中文
 - 透過本機 LibreOffice 進行無雲端 PDF 匯出。
 - 所有文件都留在本機；啟動器本身不含遙測或登入功能。
 
-## Windows／macOS 2.0 建置
+## Windows／macOS 2.1 建置
 
 需求：Node.js 22、Rust stable、Tauri 2 的平台前置需求，以及獨立安裝的 ONLYOFFICE Desktop Editors、LibreOffice。
 
@@ -52,7 +55,7 @@ scripts/build_app.sh
 
 輸出位於 `dist/OpenDesk TW.app`。
 
-## 2.0 驗證
+## 2.1 驗證
 
 ```bash
 cd cross-platform
@@ -60,7 +63,7 @@ cargo test --manifest-path src-tauri/Cargo.toml --lib
 cargo test --manifest-path src-tauri/Cargo.toml --lib live_complete_office_pipeline -- --ignored --nocapture
 ```
 
-第二行是 LIVE 驗證，會實際檢查兩個編輯引擎、三種 OOXML、備份讀回、PDF 轉換與目前唯一運作的 MAGI V2／V3。GitHub runner 沒有桌面引擎與 MAGI，因此 CI 只執行不依賴本機環境的測試。
+第二行是 LIVE 驗證，會實際檢查兩個編輯引擎、三種 OOXML、Word 專項報告、中文標題重編後的 DOCX 往返保存、備份讀回、重編文件 PDF 轉換，以及目前唯一運作的 MAGI V2／V3。GitHub runner 沒有桌面引擎與 MAGI，因此 CI 只執行不依賴本機環境的測試。
 
 ## 原生版驗證工具
 
