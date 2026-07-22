@@ -1,44 +1,45 @@
-# OpenDesk TW
+# 全能文件工作台
 
-OpenDesk TW 是 Windows／macOS 單機文件工作台：用一個全繁體中文介面管理本機開源 Office 引擎，針對 Office 格式優先使用 ONLYOFFICE，舊格式、開放文件格式與救援轉檔使用 LibreOffice，PDF 交給本機 AcroPDF 完整工作區，並整合本機 MAGI V2／V3 AI 助理。
+「全能文件工作台」是一套全繁體中文、Windows／macOS 共用的單機文件 App。名稱直接表達用途：在同一個視窗處理文字、試算表、簡報、PDF 與 MAGI，不必先理解檔案格式或切換多套啟動器。
 
-2.2.2 版位於 `cross-platform/`，以同一套 Tauri 2／Rust 核心產生 macOS App／DMG 與 Windows MSI／NSIS 安裝程式；`Sources/OpenDeskTW/` 保留功能較深的 macOS 原生版。兩者都不會取代或繞過 Microsoft 授權，而是以本機桌面編輯器處理使用者自己的文件。
+目前開發版為 2.3.0，主要程式位於 `cross-platform/`，以 Tauri 2、Rust 與原生 WebView 建置。
 
-## 核心能力
+## 主要能力
 
-- 首頁可一鍵新增具完整 OOXML 結構的 DOCX、XLSX、PPTX；建立前先選檔名與位置，完成後直接進入編輯器。
-- Word 文件中心依桌面版 Word 的「檔案、常用、插入、繪圖、設計、版面配置、參考資料、郵件、校閱、檢視、進階」工作方式整理，但改成可直接理解的任務卡片；頁籤也支援左右方向鍵、Home 與 End。
-- 「一鍵修正繁中＋寫作工具」會先確認 ONLYOFFICE 已安全關閉，再備份原有偏好設定與簡體範本快取、固定使用官方 `zh-TW` 語系，並安裝不連網的本機繁中寫作工具。
-- ONLYOFFICE 會套用不修改官方程式檔的繁中介面熱修，補齊英文／簡體回退字串並把初號、五號等中文字號固定顯示成數字；文件功能區的「OpenDesk TW」分頁另提供數字字級、分散對齊、智慧補齊、台灣標點與快捷鍵提示。
-- Word 文件中心內建可搜尋的 Windows／Linux 與 macOS 快捷鍵總覽，完整收錄 ONLYOFFICE 桌面文件編輯器公開快捷鍵，並保留既有系統與輸入法按鍵。
-- 開啟 DOCX／DOCM 後會顯示 Word 專項報告：字數、段落、標題地圖、分節、表格、圖片、字型、頁首頁尾、頁碼、目錄、註腳／尾註、註解、修訂、書籤、欄位、合併欄位，以及列印與無障礙提醒。
-- 中文標題安全重編支援跨多個 XML 文字片段的〔壹、〕、〔一、〕、（一）、1. 前綴，保留原始 OOXML 套件與 DOCM 巨集內容，先備份再輸出新的 DOCX／DOCM 副本並套用標題 1–4。
-- PDF 文件中心依工作目的整理成常用、頁面、編輯與註解、表單與簽署、轉換與 OCR、保護與檢查、批次與 MAGI 七組任務；頁籤支援鍵盤操作與響應式版面。
-- PDF 專項報告顯示頁數、文字／掃描頁、圖片、註解、表單、簽章、連結、書籤、附件、旋轉、頁面尺寸與安全警示，不把文件全文傳回啟動器。
-- 可從任務卡直接開啟 AcroPDF 的頁面整理、合併分割、文字圖片編輯、註解、表單、簽署、OCR、PDF/A、最佳化、密碼、永久遮蔽、比較、預檢、無障礙、批次、智慧歸檔與 MAGI 工具。
-- PDF LIVE 驗證會實際渲染首末頁、計算渲染摘要並測試記憶體往返重開；編輯既有 PDF 前仍先建立版本備份。
-- 最近文件保留最多 12 筆，按一下會先執行相容性檢查與版本備份，再繼續編輯；清除清單不會刪除原始文件。
-- 可展開的「完整功能中心」整理文字、試算表、簡報、PDF、救援與安全功能，也明列 Microsoft 專屬能力的相容性界線。
-- 內建「完整 Office 相容性自我檢查」：隨附高複雜度 DOCX、XLSX、PPTX 測試檔，逐項檢查 OOXML 結構、兩套本機引擎、實檔讀取、PDF 可搜尋文字及 MAGI V2／V3 契約，並保存繁體中文 JSON 報告。
-- DOCX、XLSX、PPTX、PDF、ODF 與舊版 Office 文件路由。
-- 開啟前自動建立版本備份；巨集、ActiveX 等高風險文件另建唯讀安全副本。
-- 掃描 OOXML 內的 VBA、ActiveX、外部連線、嵌入物件、SmartArt、樞紐分析與缺少字型。
-- 自動辨識〔壹、〕、〔一、〕、（一）、1. 等中文標題層級，備份後建立套用標題一至四的重新編號副本。
-- 顯示 Office 字型到開源相容字型的替代關係（例如 Calibri → Carlito）。
-- 文件結構、字型排版、安全與備份由「本機文件健檢」獨立判定，不會冒充 AI 結果。
-- MAGI 相容層會辨識目前唯一運作的 V2 或 V3，唯讀檢查主服務、工具服務、分享閘道及管理服務。
-- 若目前為 V2，會離線驗證磁碟上的 V3 完成版、V2 路由與 V2／V3 回應封套；驗證時不啟動 V3。
-- 「MAGI 文件分析」會在使用者按下按鈕後擷取 DOCX、XLSX、PPTX 內容，直接呼叫目前唯一啟用的本機 MAGI，並把結果顯示在 OpenDesk TW 內，不會自動跳到網頁。
-- 提供完整分析、內容摘要、校對與風險、排版與結構四種模式，也能附加自訂要求；結果可選取與複製。
-- 「MAGI 網頁」另行保留為完整主控台入口；一般文件分析不會再自動跳到網頁。
-- 透過本機 LibreOffice 進行無雲端 PDF 匯出。
-- 所有文件都留在本機；啟動器本身不含遙測或登入功能。
+- 文字文件：DOCX／DOCM 健康報告、標題地圖、字型與列印檢查、頁碼與頁首頁尾檢查、註解與修訂檢查。
+- 台灣繁中寫作：ONLYOFFICE 固定 `zh-TW`、數字字級、分散對齊、智慧成對標點、台灣標點與可搜尋快捷鍵總覽。
+- 中文標題安全重編：辨識〔壹、〕、〔一、〕、（一）與 `1.`，先備份再建立套用標題樣式的新副本。
+- 試算表與簡報：使用 ONLYOFFICE 優先保留 OOXML；LibreOffice 負責舊格式、開放格式與救援轉檔。
+- 同視窗 PDF：內建由 AcroPDF 核心整合的無視窗處理引擎，不啟動另一套 App，也不上傳文件。
+- PDF 頁面：新增、插入、刪除、旋轉、合併、分割、擷取與重新排列。
+- PDF 內容：加入文字、便利貼、搜尋標示、浮水印、頁首頁尾與自動頁碼。
+- PDF 安全：AES-256 加密副本、永久遮蔽、最佳化、繁中 OCR、文件比較與 LIVE 往返驗證。
+- MAGI：在主視窗內顯示分析結果，相容目前唯一運作的 MAGI V2 或 V3，不自行啟停 Agent。
+- 安全熱修：只安裝通過 Tauri 更新公鑰驗證的更新包。
 
-繁中修復原理、備份位置、操作方式與上游翻譯限制詳見 `docs/ONLYOFFICE-TRADITIONAL-CHINESE.md`。
+## 直覺工作流程
 
-## Windows／macOS 2.2.2 建置
+1. 選擇「新增」或「開啟」，不必先找引擎。
+2. 工作台在本機檢查格式並建立版本備份。
+3. Word／試算表／簡報交由適合的本機編輯引擎；PDF 留在主視窗內處理。
+4. 交付前執行文件報告與 LIVE 驗證。
 
-需求：Node.js 22、Rust stable、Tauri 2 的平台前置需求，以及獨立安裝的 ONLYOFFICE Desktop Editors、LibreOffice；完整 PDF 工作區另需授權安裝 AcroPDF 1.0.18 以上版本。
+## PDF 內嵌架構
+
+`cross-platform/src-tauri/resources/acropdf-core/embedded_core.py` 是無 GUI 的內建核心；正式建置時由 PyInstaller 封裝成 Tauri sidecar。主程式只透過結構化本機協定呼叫它，因此不會出現第二個視窗，也不需要使用者另外安裝 AcroPDF。
+
+支援的本機協定包含狀態、報告、渲染、LIVE 驗證、PDF 操作、建立空白文件與文件比較。每次原檔修改前由 Rust 層先建立時間戳記備份。
+
+## 建置
+
+需求：
+
+- Node.js 22
+- Rust stable
+- Python 3.11 以上
+- PyInstaller、PyMuPDF
+- Tauri 2 對應平台的系統相依套件
+- ONLYOFFICE Desktop Editors、LibreOffice
 
 ```bash
 cd cross-platform
@@ -47,69 +48,25 @@ npm run check
 npm run build
 ```
 
-- macOS 輸出：`cross-platform/src-tauri/target/release/bundle/macos` 與 `bundle/dmg`
-- Windows 輸出：`cross-platform/src-tauri/target/release/bundle/msi` 與 `bundle/nsis`
-- 推送 `v*` tag 後，GitHub Actions 會在兩個原生 runner 打包並產生簽章熱修資訊。
+`npm run build` 會先建立目前平台的內建 PDF 核心，再產生桌面安裝包。
 
-更新私鑰不得提交至儲存庫；詳見 `docs/HOTFIX.md`。
+- macOS：`cross-platform/src-tauri/target/release/bundle/macos` 與 `bundle/dmg`
+- Windows：`cross-platform/src-tauri/target/release/bundle/msi` 與 `bundle/nsis`
 
-## macOS 原生版建置
-
-需求：macOS 14 以上、Swift 5.10 以上、ONLYOFFICE Desktop Editors、LibreOffice。
-
-```bash
-chmod +x scripts/build_app.sh
-scripts/build_app.sh
-```
-
-輸出位於 `dist/OpenDesk TW.app`。
-
-## 2.2.2 驗證
+## 驗證
 
 ```bash
 cd cross-platform
+npm run frontend:build
 cargo test --manifest-path src-tauri/Cargo.toml --lib
-cargo test --manifest-path src-tauri/Cargo.toml --lib live_complete_office_pipeline -- --ignored --nocapture
 ```
 
-第二行是 LIVE 驗證，會實際檢查兩個 Office 引擎、AcroPDF 引擎、ONLYOFFICE `zh-TW` 與繁中寫作工具、三種 OOXML、Word 專項報告、中文標題重編後的 DOCX 往返保存、備份讀回、重編文件 PDF 轉換、PDF 首末頁渲染與往返重開，以及目前唯一運作的 MAGI V2／V3。GitHub runner 沒有桌面引擎、AcroPDF 與 MAGI，因此 CI 只執行不依賴本機環境的測試。
+PDF 核心另會實際建立文件、寫入繁中頁首頁尾、渲染頁面、重新封裝並再次開啟；不是只檢查按鈕或模擬回應。
 
-## 原生版驗證工具
+## Microsoft 專屬界線
 
-```bash
-.build/debug/OpenDeskTW --health
-.build/debug/OpenDeskTW --route 文件.docx
-.build/debug/OpenDeskTW --scan 文件.docx
-.build/debug/OpenDeskTW --document-health 文件.docx
-.build/debug/OpenDeskTW --magi-status
-.build/debug/OpenDeskTW --extract-text 文件.docx
-.build/debug/OpenDeskTW --magi-analyze 文件.docx summary
-.build/debug/OpenDeskTW --backup 文件.docx
-.build/debug/OpenDeskTW --create-document text 新文件.docx
-.build/debug/OpenDeskTW --create-document spreadsheet 新試算表.xlsx
-.build/debug/OpenDeskTW --create-document presentation 新簡報.pptx
-.build/debug/OpenDeskTW --headings 文件.docx
-.build/debug/OpenDeskTW --renumber-headings 文件.docx
-.build/debug/OpenDeskTW --convert-pdf 文件.docx 輸出資料夾
-.build/debug/OpenDeskTW --office-self-test
-```
+本專案不取代或繞過 Microsoft 授權。一般 OOXML 文件由本機開源編輯引擎處理；VBA、ActiveX、COM、IRM、Microsoft 365 雲端共同編輯、Copilot，以及部分複雜 SmartArt／3D／動作路徑沒有完全等價的開源實作。遇到這些內容時，工作台會保留原檔並顯示相容性提醒，不會暗中移除。
 
-完整 LIVE 測試可執行 `scripts/live_verify.sh`，它會建立 DOCX／XLSX／PPTX 樣本，驗證中文標題重編、公式回算、OOXML 結構、三種 PDF 匯出、MAGI V2 實際文件分析、V3 離線相容契約與 App 簽章。
+## 授權
 
-較嚴格的完整功能矩陣可執行 `scripts/comprehensive_verify.sh`。它另外驗證 DOCX 四層樣式、目錄、自動中文編號、註腳／尾註、註解、追蹤修訂、書籤與欄位；XLSX 公式、命名範圍、表格、條件格式、資料驗證、圖表、保護與列印；PPTX 母片、投影片編號、圖表、表格、備忘稿、超連結與轉場，最後重新建置 App 並執行內建 47 項 LIVE 自我檢查。
-
-## MAGI V2／V3 相容設計
-
-OpenDesk TW 不管理 MAGI 的生命週期，不會執行啟動、停止、重啟或版本切換。它會辨識目前的執行程序，以共同的本機介面檢查 `5002` 主服務及 `5003` 工具服務，並只在使用者明確按下分析時呼叫 `5003/collab/chat`。若同時偵測到 V2 與 V3，會立即標示版本衝突並停止呼叫 MAGI，以遵守 MAGI 的單一啟用版本保護。
-
-V3 尚未正式接管時，OpenDesk TW 只讀取候選版的完成標記、路由清冊與回應格式契約；等 V3 日後以冷切換成為唯一運作版本，介面會自動顯示 V3，仍沿用同一套操作。
-
-## 編輯快捷鍵
-
-文件編輯器保留原生文字熱鍵，包括 ⌘／Ctrl+B 粗體、⌘／Ctrl+I 斜體、⌘／Ctrl+U 底線、複製貼上與復原。格式刷位於 ONLYOFFICE 首頁工具列的「複製樣式」，也可用 macOS `⌘⌥C`／`⌘⌥V` 或 Windows／Linux `Ctrl+Alt+C`／`Ctrl+Alt+V` 複製與套用格式。OpenDesk TW 內建可搜尋的完整桌面文件快捷鍵總覽；中文標題安全重編使用 macOS `⌥⇧⌘R` 或 Windows／Linux `Ctrl+Alt+Shift+R`，避開編輯器原生的註冊商標符號快捷鍵。
-
-## 相容性界線
-
-一般排版、字型、樣式、表格、目錄、註腳／尾註、頁碼、頁首頁尾、公式、圖表、郵件合併、註解、追蹤修訂、文件比較、工作表頁籤、樞紐分析、轉場、動畫、列印與 PDF 匯出都由本機原生編輯器提供；OpenDesk 負責備份、路由、結構檢查與繁中補強。VBA、ActiveX、COM 增益集、IRM 權限、Microsoft 365 雲端共同編輯、Copilot，以及部分複雜 SmartArt／3D 物件屬 Microsoft 專有能力，無法保證與 Microsoft Office 完全相同，會在開啟前明確警示並保留原檔。逐項盤點見 `docs/WORD-COMPATIBILITY.md`。
-
-本專案原生啟動器採 MIT License；ONLYOFFICE、LibreOffice、AcroPDF 與 MAGI 維持各自授權與獨立安裝。AcroPDF 私有程式碼與二進位檔不會併入公開 OpenDesk TW 發行包，整合邊界詳見 `docs/ONE-STOP-ARCHITECTURE.md`。
+Tauri／Rust 工作台採專案根目錄所列授權。內建 AcroPDF 衍生核心維持其個別專有授權，詳見 `cross-platform/src-tauri/resources/acropdf-core/ACROPDF-LICENSE`；該目錄不因放入同一儲存庫而改採 MIT。ONLYOFFICE、LibreOffice、PyMuPDF、Tesseract 與 MAGI 亦各自維持原授權。
