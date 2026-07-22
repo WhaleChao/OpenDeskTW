@@ -3,6 +3,7 @@
 
   const plugin = window.Asc.plugin;
   let toolbarEventsBound = false;
+  const numericFontSizes = [9, 10, 10.5, 11, 12, 14, 16, 18, 20, 22, 24, 28, 36, 48, 72];
   const selectedTextOptions = {
     Numbering: false,
     Math: false,
@@ -80,6 +81,26 @@
     );
   }
 
+  function applyNumericFontSize(size) {
+    window.Asc.scope.numericFontSize = Number(size);
+    plugin.callCommand(
+      function () {
+        const document = Api.GetDocument();
+        let range = document.GetRangeBySelect();
+        if (!range || range.GetText() === "") {
+          document.SelectCurrentWord();
+          range = document.GetRangeBySelect();
+        }
+        if (!range) return false;
+        range.SetFontSize(Asc.scope.numericFontSize);
+        return true;
+      },
+      false,
+      true,
+      focusEditor,
+    );
+  }
+
   function completePairedPunctuation() {
     transformSelectionOrSentence(
       window.OpenDeskTwTypography.completePairs,
@@ -101,6 +122,7 @@
         "套用格式：Windows／Linux Ctrl+Alt+V；macOS ⌘⌥V",
         "只貼文字：Ctrl／⌘+Shift+V",
         "清除格式：Ctrl+Space；macOS ⌘+Fn+Space",
+        "字級顯示：一律使用 9、10.5、12 等數字，不混用初號、五號等名稱",
         "粗體／斜體／底線：Ctrl／⌘+B、I、U",
         "靠左／置中／左右對齊：Ctrl／⌘+L、E、J",
         "更多內容請在 OpenDesk TW 開啟「快捷鍵總覽」。",
@@ -142,6 +164,22 @@
                 icons: "resources/punctuation.svg",
               },
               {
+                id: "opendesk-font-size",
+                type: "button",
+                text: "數字字級",
+                hint: "字級一律顯示為數字；可直接套用常用字級",
+                lockInViewMode: true,
+                split: false,
+                icons: "resources/font-size.svg",
+                items: numericFontSizes.map(function (size) {
+                  return {
+                    id: `opendesk-font-size-${String(size).replace(".", "-")}`,
+                    text: String(size),
+                    data: String(size),
+                  };
+                }),
+              },
+              {
                 id: "opendesk-shortcuts",
                 type: "button",
                 text: "快捷鍵",
@@ -157,6 +195,7 @@
   }
 
   plugin.init = function () {
+    window.OpenDeskTwUiPatch?.install?.(window.parent);
     if (plugin.info.editorType !== "word") return;
     if (!toolbarEventsBound) {
       this.attachToolbarMenuClickEvent("opendesk-distributed", applyDistributedAlignment);
@@ -166,6 +205,14 @@
         normalizeTaiwanPunctuation,
       );
       this.attachToolbarMenuClickEvent("opendesk-shortcuts", showShortcuts);
+      for (const size of numericFontSizes) {
+        this.attachToolbarMenuClickEvent(
+          `opendesk-font-size-${String(size).replace(".", "-")}`,
+          function () {
+            applyNumericFontSize(size);
+          },
+        );
+      }
       toolbarEventsBound = true;
     }
     addTraditionalChineseToolbar();

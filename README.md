@@ -2,14 +2,14 @@
 
 OpenDesk TW 是 Windows／macOS 單機文件工作台：用一個全繁體中文介面管理本機開源 Office 引擎，針對 Office 格式優先使用 ONLYOFFICE，舊格式、開放文件格式與救援轉檔使用 LibreOffice，PDF 交給本機 AcroPDF 完整工作區，並整合本機 MAGI V2／V3 AI 助理。
 
-2.2.1 版位於 `cross-platform/`，以同一套 Tauri 2／Rust 核心產生 macOS App／DMG 與 Windows MSI／NSIS 安裝程式；`Sources/OpenDeskTW/` 保留功能較深的 macOS 原生版。兩者都不會取代或繞過 Microsoft 授權，而是以本機桌面編輯器處理使用者自己的文件。
+2.2.2 版位於 `cross-platform/`，以同一套 Tauri 2／Rust 核心產生 macOS App／DMG 與 Windows MSI／NSIS 安裝程式；`Sources/OpenDeskTW/` 保留功能較深的 macOS 原生版。兩者都不會取代或繞過 Microsoft 授權，而是以本機桌面編輯器處理使用者自己的文件。
 
 ## 核心能力
 
 - 首頁可一鍵新增具完整 OOXML 結構的 DOCX、XLSX、PPTX；建立前先選檔名與位置，完成後直接進入編輯器。
 - Word 文件中心依桌面版 Word 的「檔案、常用、插入、繪圖、設計、版面配置、參考資料、郵件、校閱、檢視、進階」工作方式整理，但改成可直接理解的任務卡片；頁籤也支援左右方向鍵、Home 與 End。
 - 「一鍵修正繁中＋寫作工具」會先確認 ONLYOFFICE 已安全關閉，再備份原有偏好設定與簡體範本快取、固定使用官方 `zh-TW` 語系，並安裝不連網的本機繁中寫作工具。
-- ONLYOFFICE 文件功能區會自動出現「OpenDesk TW」分頁：提供分散對齊、智慧補齊 `）」「】〕》〉` 等巢狀結尾、台灣標點整理及格式複製快捷鍵提示；只處理目前選取文字或游標所在句子，不會開啟網頁或傳送文件。
+- ONLYOFFICE 會套用不修改官方程式檔的繁中介面熱修，補齊英文／簡體回退字串並把初號、五號等中文字號固定顯示成數字；文件功能區的「OpenDesk TW」分頁另提供數字字級、分散對齊、智慧補齊、台灣標點與快捷鍵提示。
 - Word 文件中心內建可搜尋的 Windows／Linux 與 macOS 快捷鍵總覽，完整收錄 ONLYOFFICE 桌面文件編輯器公開快捷鍵，並保留既有系統與輸入法按鍵。
 - 開啟 DOCX／DOCM 後會顯示 Word 專項報告：字數、段落、標題地圖、分節、表格、圖片、字型、頁首頁尾、頁碼、目錄、註腳／尾註、註解、修訂、書籤、欄位、合併欄位，以及列印與無障礙提醒。
 - 中文標題安全重編支援跨多個 XML 文字片段的〔壹、〕、〔一、〕、（一）、1. 前綴，保留原始 OOXML 套件與 DOCM 巨集內容，先備份再輸出新的 DOCX／DOCM 副本並套用標題 1–4。
@@ -36,7 +36,7 @@ OpenDesk TW 是 Windows／macOS 單機文件工作台：用一個全繁體中文
 
 繁中修復原理、備份位置、操作方式與上游翻譯限制詳見 `docs/ONLYOFFICE-TRADITIONAL-CHINESE.md`。
 
-## Windows／macOS 2.2.1 建置
+## Windows／macOS 2.2.2 建置
 
 需求：Node.js 22、Rust stable、Tauri 2 的平台前置需求，以及獨立安裝的 ONLYOFFICE Desktop Editors、LibreOffice；完整 PDF 工作區另需授權安裝 AcroPDF 1.0.18 以上版本。
 
@@ -64,7 +64,7 @@ scripts/build_app.sh
 
 輸出位於 `dist/OpenDesk TW.app`。
 
-## 2.2.1 驗證
+## 2.2.2 驗證
 
 ```bash
 cd cross-platform

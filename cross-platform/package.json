@@ -1,12 +1,13 @@
 {
   "name": "opendesk-tw-cross-platform",
   "private": true,
-  "version": "2.2.1",
+  "version": "2.2.2",
   "type": "module",
   "scripts": {
     "tauri": "tauri",
     "frontend:dev": "vite --host 127.0.0.1 --port 1420",
     "frontend:build": "vite build",
+    "translations:generate": "node scripts/generate_onlyoffice_zh_tw_overrides.mjs",
     "dev": "tauri dev",
     "build": "tauri build",
     "check": "cargo check --manifest-path src-tauri/Cargo.toml"
@@ -19,6 +20,7 @@
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2.8.0",
+    "opencc-js": "^1.4.1",
     "vite": "^7.0.0"
   }
 }
