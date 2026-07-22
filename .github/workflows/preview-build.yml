@@ -1,0 +1,66 @@
+name: 全能文件工作台預覽安裝包
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  build-preview:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: macos-14
+            bundles: app,dmg
+            artifact_name: 全能文件工作台-macOS
+            artifact_paths: |
+              cross-platform/src-tauri/target/release/bundle/dmg/*.dmg
+              cross-platform/src-tauri/target/release/bundle/macos/*.app.tar.gz*
+          - platform: windows-2022
+            bundles: nsis
+            artifact_name: 全能文件工作台-Windows
+            artifact_paths: |
+              cross-platform/src-tauri/target/release/bundle/nsis/*.exe
+              cross-platform/src-tauri/target/release/bundle/nsis/*.nsis.zip*
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: cross-platform/package-lock.json
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: 安裝建置相依套件
+        working-directory: cross-platform
+        run: |
+          npm ci
+          python -m pip install --disable-pip-version-check pyinstaller==6.19.0 pymupdf==1.27.1
+      - name: 建立內建 PDF 核心
+        working-directory: cross-platform
+        run: npm run pdf-core:build
+      - name: 靜態檢查與單元測試
+        working-directory: cross-platform
+        run: |
+          npm run check
+          cargo test --manifest-path src-tauri/Cargo.toml --lib
+      - name: 建立預覽安裝包
+        working-directory: cross-platform
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: npx tauri build --bundles ${{ matrix.bundles }}
+      - name: 上傳預覽成品
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact_name }}
+          path: ${{ matrix.artifact_paths }}
+          if-no-files-found: error
+          retention-days: 14
