@@ -2,7 +2,7 @@
 
 全能文件工作台採 `AGPL-3.0-or-later`。每個正式 GitHub Release 會在安裝包旁提供
 同標籤的專案 Source code，以及包含 npm、Cargo、Python／PyMuPDF 上游來源封包的
-「第三方對應原始碼」壓縮檔。
+`complete-document-workbench-<版本>-corresponding-source.tar.gz` 壓縮檔。
 
 取得位置：https://github.com/WhaleChao/OpenDeskTW/releases
 
