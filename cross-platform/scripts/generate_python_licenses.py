@@ -7,6 +7,7 @@ import argparse
 import json
 import re
 import shutil
+import sys
 from importlib import metadata
 from pathlib import Path
 
@@ -25,6 +26,14 @@ ROOT_DISTRIBUTIONS = (
     "Pillow",
 )
 LICENSE_MARKERS = ("license", "copying", "notice", "authors", "copyright")
+
+
+def configure_utf8_console() -> None:
+    """避免 Windows 子程序繼承 cp1252 後無法輸出繁體中文建置訊息。"""
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure:
+            reconfigure(encoding="utf-8", errors="backslashreplace")
 
 
 def canonical(value: str) -> str:
@@ -166,4 +175,5 @@ def main() -> None:
 
 
 if __name__ == "__main__":
+    configure_utf8_console()
     main()
