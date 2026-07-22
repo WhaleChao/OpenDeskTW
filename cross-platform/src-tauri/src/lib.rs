@@ -101,6 +101,16 @@ struct ActionResult {
 }
 
 #[derive(Serialize)]
+struct OnlyOfficeTwStatus {
+    installed: bool,
+    running: bool,
+    current_language: String,
+    traditional_chinese: bool,
+    plugin_installed: bool,
+    message: String,
+}
+
+#[derive(Serialize)]
 struct TestGroup {
     name: String,
     passed: usize,
@@ -502,6 +512,235 @@ fn engine_status(name: &str) -> EngineStatus {
     }
 }
 
+const ONLYOFFICE_TW_PLUGIN_FOLDER: &str = "{5CBF7C74-7021-4E8C-93F3-5A6C20260722}";
+
+fn is_traditional_onlyoffice_locale(value: &str) -> bool {
+    let locale = value.trim().replace('_', "-").to_ascii_lowercase();
+    locale == "zh-tw" || locale.starts_with("zh-hant")
+}
+
+fn onlyoffice_is_running() -> bool {
+    #[cfg(target_os = "macos")]
+    {
+        Command::new("/usr/bin/pgrep")
+            .args(["-x", "ONLYOFFICE"])
+            .status()
+            .map(|status| status.success())
+            .unwrap_or(false)
+    }
+    #[cfg(target_os = "windows")]
+    {
+        Command::new("tasklist.exe")
+            .args(["/FI", "IMAGENAME eq DesktopEditors.exe", "/NH"])
+            .output()
+            .ok()
+            .map(|output| {
+                String::from_utf8_lossy(&output.stdout)
+                    .to_ascii_lowercase()
+                    .contains("desktopeditors.exe")
+            })
+            .unwrap_or(false)
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    {
+        Command::new("pgrep")
+            .args(["-f", "(^|/)(DesktopEditors|onlyoffice-desktopeditors)( |$)"])
+            .status()
+            .map(|status| status.success())
+            .unwrap_or(false)
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn macos_defaults_read(key: &str) -> Option<String> {
+    Command::new("/usr/bin/defaults")
+        .args(["read", "asc.onlyoffice.ONLYOFFICE", key])
+        .output()
+        .ok()
+        .filter(|output| output.status.success())
+        .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_string())
+        .filter(|value| !value.is_empty())
+}
+
+fn onlyoffice_current_language() -> String {
+    #[cfg(target_os = "macos")]
+    {
+        if let Some(language) = macos_defaults_read("asc_user_ui_lang") {
+            return language;
+        }
+        let languages = macos_defaults_read("AppleLanguages").unwrap_or_default();
+        for candidate in ["zh-TW", "zh-Hant-TW", "zh-ZH", "zh-CN"] {
+            if languages
+                .to_ascii_lowercase()
+                .contains(&candidate.to_ascii_lowercase())
+            {
+                return candidate.into();
+            }
+        }
+        "依系統設定".into()
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        "由 OpenDesk 啟動時固定為 zh-TW".into()
+    }
+}
+
+fn onlyoffice_user_plugin_root() -> Result<PathBuf, String> {
+    #[cfg(target_os = "macos")]
+    {
+        dirs::data_dir()
+            .map(|root| {
+                root.join("asc.onlyoffice.ONLYOFFICE/data/sdkjs-plugins")
+                    .join(ONLYOFFICE_TW_PLUGIN_FOLDER)
+            })
+            .ok_or_else(|| "找不到 ONLYOFFICE 使用者外掛資料夾".into())
+    }
+    #[cfg(target_os = "windows")]
+    {
+        dirs::data_dir()
+            .map(|root| {
+                root.join("ONLYOFFICE/DesktopEditors/sdkjs-plugins")
+                    .join(ONLYOFFICE_TW_PLUGIN_FOLDER)
+            })
+            .ok_or_else(|| "找不到 ONLYOFFICE 使用者外掛資料夾".into())
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    {
+        dirs::data_local_dir()
+            .map(|root| {
+                root.join("onlyoffice/desktopeditors/sdkjs-plugins")
+                    .join(ONLYOFFICE_TW_PLUGIN_FOLDER)
+            })
+            .ok_or_else(|| "找不到 ONLYOFFICE 使用者外掛資料夾".into())
+    }
+}
+
+fn onlyoffice_tw_status_value() -> OnlyOfficeTwStatus {
+    let installed = engine_executable("ONLYOFFICE").is_some();
+    let running = onlyoffice_is_running();
+    let current_language = onlyoffice_current_language();
+    let traditional_chinese = if cfg!(target_os = "macos") {
+        is_traditional_onlyoffice_locale(&current_language)
+    } else {
+        true
+    };
+    let plugin_installed = onlyoffice_user_plugin_root()
+        .map(|path| {
+            path.join("config.json").is_file()
+                && path.join("index.html").is_file()
+                && path.join("code.js").is_file()
+                && path.join("typography.js").is_file()
+        })
+        .unwrap_or(false);
+    let message = if !installed {
+        "尚未安裝 ONLYOFFICE".into()
+    } else if running && !traditional_chinese {
+        "目前正在使用錯誤語系；請先關閉 ONLYOFFICE，再按一鍵修復".into()
+    } else if traditional_chinese && plugin_installed {
+        "繁體中文與繁中寫作工具已就緒".into()
+    } else if !traditional_chinese {
+        format!("目前語系為 {current_language}，需要修正為 zh-TW")
+    } else {
+        "繁體中文已啟用；尚待安裝繁中寫作工具".into()
+    };
+    OnlyOfficeTwStatus {
+        installed,
+        running,
+        current_language,
+        traditional_chinese,
+        plugin_installed,
+        message,
+    }
+}
+
+fn copy_directory(source: &Path, destination: &Path) -> Result<(), String> {
+    fs::create_dir_all(destination).map_err(|error| error.to_string())?;
+    for entry in fs::read_dir(source).map_err(|error| error.to_string())? {
+        let entry = entry.map_err(|error| error.to_string())?;
+        let target = destination.join(entry.file_name());
+        if entry
+            .file_type()
+            .map_err(|error| error.to_string())?
+            .is_dir()
+        {
+            copy_directory(&entry.path(), &target)?;
+        } else {
+            fs::copy(entry.path(), target).map_err(|error| error.to_string())?;
+        }
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+fn repair_macos_onlyoffice_locale() -> Result<Option<PathBuf>, String> {
+    if is_traditional_onlyoffice_locale(&onlyoffice_current_language()) {
+        return Ok(None);
+    }
+    if onlyoffice_is_running() {
+        return Err("請先關閉 ONLYOFFICE；文件不會遺失，關閉後再按一鍵修復".into());
+    }
+    let backup = data_root()?
+        .join("OnlyOfficeRepairBackups")
+        .join(Local::now().format("%Y%m%d-%H%M%S-%3f").to_string());
+    fs::create_dir_all(&backup).map_err(|error| error.to_string())?;
+    if let Some(home) = dirs::home_dir() {
+        let preferences = home.join("Library/Preferences/asc.onlyoffice.ONLYOFFICE.plist");
+        if preferences.is_file() {
+            fs::copy(&preferences, backup.join("asc.onlyoffice.ONLYOFFICE.plist"))
+                .map_err(|error| error.to_string())?;
+        }
+        let template_cache =
+            home.join("Library/Application Support/asc.onlyoffice.ONLYOFFICE/data/templates_cache");
+        if template_cache.is_dir() {
+            fs::rename(&template_cache, backup.join("templates_cache"))
+                .map_err(|error| error.to_string())?;
+        }
+    }
+    for arguments in [
+        [
+            "write",
+            "asc.onlyoffice.ONLYOFFICE",
+            "asc_user_ui_lang",
+            "-string",
+            "zh-TW",
+        ],
+        [
+            "write",
+            "asc.onlyoffice.ONLYOFFICE",
+            "AppleLanguages",
+            "-array",
+            "zh-TW",
+        ],
+        [
+            "write",
+            "asc.onlyoffice.ONLYOFFICE",
+            "AppleLocale",
+            "-string",
+            "zh-TW",
+        ],
+    ] {
+        let status = Command::new("/usr/bin/defaults")
+            .args(arguments)
+            .status()
+            .map_err(|error| error.to_string())?;
+        if !status.success() {
+            return Err("無法寫入 ONLYOFFICE 繁體中文設定".into());
+        }
+    }
+    if !is_traditional_onlyoffice_locale(&onlyoffice_current_language()) {
+        return Err("ONLYOFFICE 語系驗證失敗，已保留原始設定備份".into());
+    }
+    Ok(Some(backup))
+}
+
+fn prepare_onlyoffice_locale_for_launch() -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        repair_macos_onlyoffice_locale()?;
+    }
+    Ok(())
+}
+
 fn probe_port(port: u16) -> bool {
     let address = SocketAddr::from(([127, 0, 0, 1], port));
     TcpStream::connect_timeout(&address, Duration::from_millis(350)).is_ok()
@@ -593,6 +832,52 @@ fn system_status<R: Runtime>(app: tauri::AppHandle<R>) -> SystemStatus {
         ],
         magi: magi_status(),
     }
+}
+
+#[tauri::command]
+fn onlyoffice_tw_status() -> OnlyOfficeTwStatus {
+    onlyoffice_tw_status_value()
+}
+
+#[tauri::command]
+fn repair_onlyoffice_traditional_chinese<R: Runtime>(
+    app: tauri::AppHandle<R>,
+) -> Result<ActionResult, String> {
+    if engine_executable("ONLYOFFICE").is_none() {
+        return Err("找不到 ONLYOFFICE，請先安裝桌面編輯器".into());
+    }
+    if onlyoffice_is_running() {
+        return Err("請先儲存文件並關閉 ONLYOFFICE，再執行繁體中文修復".into());
+    }
+    #[cfg(target_os = "macos")]
+    let locale_backup = repair_macos_onlyoffice_locale()?;
+    #[cfg(not(target_os = "macos"))]
+    let locale_backup: Option<PathBuf> = None;
+
+    let plugin_source = resource_path(&app, "resources/onlyoffice-tw-plugin")?;
+    if !plugin_source.join("config.json").is_file()
+        || !plugin_source.join("index.html").is_file()
+        || !plugin_source.join("code.js").is_file()
+        || !plugin_source.join("typography.js").is_file()
+    {
+        return Err("安裝包缺少 ONLYOFFICE 繁中工具".into());
+    }
+    let plugin_destination = onlyoffice_user_plugin_root()?;
+    copy_directory(&plugin_source, &plugin_destination)?;
+    let status = onlyoffice_tw_status_value();
+    if !status.traditional_chinese || !status.plugin_installed {
+        return Err("繁體中文工具安裝後驗證失敗，請保留備份並回報".into());
+    }
+    let backup_message = locale_backup
+        .map(|path| format!("；原設定與簡體範本快取備份於 {}", path.display()))
+        .unwrap_or_default();
+    Ok(ActionResult {
+        path: plugin_destination.to_string_lossy().to_string(),
+        file_name: "繁中寫作工具（OpenDesk TW）".into(),
+        message: format!(
+            "已固定 ONLYOFFICE 為 zh-TW，並安裝繁中寫作工具{backup_message}。重新開啟 ONLYOFFICE 後，使用「OpenDesk TW」工具列的分散對齊、智慧補齊、台灣標點與快捷鍵。"
+        ),
+    })
 }
 
 fn extension_kind(path: &Path) -> (&'static str, &'static str, &'static str) {
@@ -1568,6 +1853,9 @@ fn create_backup(source: &Path) -> Result<PathBuf, String> {
 fn launch_document(path: &Path, engine: &str) -> Result<(), String> {
     let _executable =
         engine_executable(engine).ok_or_else(|| format!("找不到 {engine}，請先安裝桌面編輯器"))?;
+    if engine == "ONLYOFFICE" {
+        prepare_onlyoffice_locale_for_launch()?;
+    }
     #[cfg(target_os = "macos")]
     {
         let app = if engine == "ONLYOFFICE" {
@@ -1583,7 +1871,11 @@ fn launch_document(path: &Path, engine: &str) -> Result<(), String> {
     }
     #[cfg(not(target_os = "macos"))]
     {
-        Command::new(_executable)
+        let mut command = Command::new(_executable);
+        if engine == "ONLYOFFICE" {
+            command.arg("--keeplang:zh-TW");
+        }
+        command
             .arg(path)
             .spawn()
             .map_err(|error| error.to_string())?;
@@ -1594,6 +1886,9 @@ fn launch_document(path: &Path, engine: &str) -> Result<(), String> {
 #[tauri::command]
 fn backup_and_open(path: String, engine: String) -> Result<ActionResult, String> {
     let source = PathBuf::from(&path);
+    if engine == "ONLYOFFICE" {
+        prepare_onlyoffice_locale_for_launch()?;
+    }
     let backup = create_backup(&source)?;
     launch_document(&source, &engine)?;
     Ok(ActionResult {
@@ -1827,6 +2122,7 @@ fn run_self_test<R: Runtime>(app: tauri::AppHandle<R>) -> SelfTestReport {
         .and_then(|pdf| acropdf_call("--integration-live-test", Some(pdf)).ok())
         .and_then(|(value, _)| value.get("passed").and_then(Value::as_bool))
         .unwrap_or(false);
+    let onlyoffice_tw = onlyoffice_tw_status_value();
     let _ = fs::remove_dir_all(&temporary_root);
     let magi = magi_status();
     let groups = vec![
@@ -1848,6 +2144,12 @@ fn run_self_test<R: Runtime>(app: tauri::AppHandle<R>) -> SelfTestReport {
         TestGroup {
             name: "Word 文件中心".into(),
             passed: usize::from(word_report_passed) + usize::from(word_renumber_passed),
+            total: 2,
+        },
+        TestGroup {
+            name: "ONLYOFFICE 繁中寫作工具".into(),
+            passed: usize::from(onlyoffice_tw.traditional_chinese)
+                + usize::from(onlyoffice_tw.plugin_installed),
             total: 2,
         },
         TestGroup {
@@ -1894,6 +2196,8 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .invoke_handler(tauri::generate_handler![
             system_status,
+            onlyoffice_tw_status,
+            repair_onlyoffice_traditional_chinese,
             scan_document,
             word_report,
             renumber_headings,
@@ -1916,6 +2220,106 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn distinguishes_traditional_from_invalid_or_simplified_locales() {
+        assert!(is_traditional_onlyoffice_locale("zh-TW"));
+        assert!(is_traditional_onlyoffice_locale("zh_Hant_TW"));
+        assert!(!is_traditional_onlyoffice_locale("zh-ZH"));
+        assert!(!is_traditional_onlyoffice_locale("zh-CN"));
+        assert!(!is_traditional_onlyoffice_locale("zh"));
+    }
+
+    #[test]
+    fn bundled_onlyoffice_plugin_uses_native_distributed_alignment() {
+        let config = include_str!("../resources/onlyoffice-tw-plugin/config.json");
+        let value: Value = serde_json::from_str(config).expect("外掛設定必須是有效 JSON");
+        assert_eq!(
+            value.get("guid").and_then(Value::as_str),
+            Some("asc.{5CBF7C74-7021-4E8C-93F3-5A6C20260722}")
+        );
+        assert_eq!(
+            value.pointer("/variations/0/type").and_then(Value::as_str),
+            Some("system")
+        );
+        assert_eq!(
+            value
+                .pointer("/variations/0/events/0")
+                .and_then(Value::as_str),
+            Some("onToolbarMenuClick")
+        );
+        let code = include_str!("../resources/onlyoffice-tw-plugin/code.js");
+        assert!(code.contains("put_PrAlign"));
+        assert!(code.contains("align_Distributed"));
+        assert!(code.contains("AddToolbarMenuItem"));
+        assert!(code.contains("opendesk-complete-pairs"));
+        assert!(code.contains("opendesk-normalize-punctuation"));
+        let typography = include_str!("../resources/onlyoffice-tw-plugin/typography.js");
+        for pair in [
+            "（\"", "）\"", "「\"", "」\"", "【\"", "】\"", "〔\"", "〕\"",
+        ] {
+            assert!(typography.contains(pair), "缺少成對標點：{pair}");
+        }
+        assert!(!code.contains("fetch("));
+        assert!(!code.contains("XMLHttpRequest"));
+        assert!(!typography.contains("fetch("));
+    }
+
+    #[test]
+    fn primary_interface_includes_searchable_document_shortcuts() {
+        let surface = include_str!("../../src/main.js");
+        for marker in [
+            "Ctrl+Alt+C",
+            "⌘⌥C",
+            "Ctrl+Alt+V",
+            "⌘⌥V",
+            "Ctrl+Alt+Shift+R",
+            "⌥⇧⌘R",
+            "插入頁碼",
+            "插入註腳",
+            "插入方程式",
+            "螢幕閱讀器",
+            "選擇性貼上",
+        ] {
+            assert!(surface.contains(marker), "快捷鍵總覽缺少：{marker}");
+        }
+    }
+
+    #[test]
+    fn primary_interface_has_no_known_simplified_chinese_phrases() {
+        let surface = concat!(
+            include_str!("../../src/index.html"),
+            include_str!("../../src/main.js")
+        );
+        for phrase in [
+            "设置",
+            "页面",
+            "字体",
+            "打印",
+            "审阅",
+            "删除",
+            "选择",
+            "默认",
+            "应用",
+            "样式",
+            "转换",
+            "备份",
+            "检查",
+            "当前",
+            "启动",
+            "点击",
+            "链接",
+            "网络",
+            "编辑",
+            "标题",
+            "编号",
+            "页眉",
+            "页脚",
+            "分散对齐",
+        ] {
+            assert!(!surface.contains(phrase), "介面含簡體詞：{phrase}");
+        }
+    }
 
     #[test]
     fn xml_text_keeps_traditional_chinese() {
@@ -2052,11 +2456,36 @@ mod tests {
         assert!(!reply.text.trim().is_empty());
     }
 
+    #[cfg(target_os = "macos")]
+    #[test]
+    #[ignore = "會修復本機 ONLYOFFICE 語系並安裝繁中寫作工具；執行前必須正常關閉 ONLYOFFICE"]
+    fn live_repair_onlyoffice_traditional_chinese() {
+        assert!(engine_status("ONLYOFFICE").installed);
+        assert!(
+            !onlyoffice_is_running(),
+            "請先儲存文件並正常關閉 ONLYOFFICE"
+        );
+        repair_macos_onlyoffice_locale().expect("語系應能修復為 zh-TW");
+        let source =
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("resources/onlyoffice-tw-plugin");
+        let destination = onlyoffice_user_plugin_root().expect("應找到使用者外掛資料夾");
+        copy_directory(&source, &destination).expect("繁中寫作工具應能安裝");
+        let status = onlyoffice_tw_status_value();
+        assert!(status.traditional_chinese, "{}", status.message);
+        assert!(status.plugin_installed, "{}", status.message);
+    }
+
     #[test]
     #[ignore = "需要本機 ONLYOFFICE、LibreOffice 與 MAGI"]
     fn live_complete_office_pipeline() {
         assert!(engine_status("ONLYOFFICE").installed);
         assert!(engine_status("LibreOffice").installed);
+        let onlyoffice_tw = onlyoffice_tw_status_value();
+        assert!(
+            onlyoffice_tw.traditional_chinese && onlyoffice_tw.plugin_installed,
+            "{}",
+            onlyoffice_tw.message
+        );
         let resources = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("resources");
         let fixtures = [
             resources.join("Verification/OpenDeskTW_完整文字功能.docx"),

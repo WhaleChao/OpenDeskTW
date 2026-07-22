@@ -1,6 +1,6 @@
 [package]
 name = "opendesk-tw"
-version = "2.2.0"
+version = "2.2.1"
 description = "全繁體中文、跨平台、Office 格式優先的本機文件工作台"
 authors = ["OpenDesk TW Contributors"]
 edition = "2021"

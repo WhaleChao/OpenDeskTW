@@ -41,7 +41,15 @@
           <div class="word-start-actions">
             <button class="primary" data-create="text">＋ 新增 Word 文件</button>
             <button id="open-word-document">開啟 Word 文件</button>
+            <button id="word-shortcuts">快捷鍵總覽</button>
           </div>
+        </div>
+        <div class="onlyoffice-tw-banner" id="onlyoffice-tw-banner" aria-live="polite">
+          <div>
+            <b id="onlyoffice-tw-title">正在檢查 ONLYOFFICE 繁體中文…</b>
+            <span id="onlyoffice-tw-detail">會核對介面語系與繁中寫作工具，不會讀取文件內容。</span>
+          </div>
+          <button id="repair-onlyoffice-tw">一鍵修正繁中＋寫作工具</button>
         </div>
         <div class="word-ribbon" role="tablist" aria-label="Word 功能區">
           <button id="word-tab-file" role="tab" aria-selected="false" aria-controls="word-task-panel" tabindex="-1" data-word-tab="file">檔案</button>
@@ -230,6 +238,18 @@
 
       <footer><span id="app-version">OpenDesk TW</span><span>文件預設留在本機・更新包必須通過密碼學簽章</span></footer>
     </main>
+    <dialog class="shortcut-dialog" id="shortcut-dialog" aria-labelledby="shortcut-title">
+      <div class="shortcut-dialog-head">
+        <div><span class="eyebrow">本機可用・全繁體中文</span><h2 id="shortcut-title">Word 常用快捷鍵總覽</h2><p>由 ONLYOFFICE 原生處理；可搜尋動作或按鍵，不必連到網頁。</p></div>
+        <button id="shortcut-close" aria-label="關閉快捷鍵總覽">關閉</button>
+      </div>
+      <label class="shortcut-search-label">搜尋快捷鍵
+        <input id="shortcut-search" type="search" placeholder="例如：格式、頁碼、⌘、Ctrl+Alt+C" autocomplete="off" />
+      </label>
+      <div class="shortcut-platform-note" id="shortcut-platform-note"></div>
+      <div class="shortcut-grid" id="shortcut-grid"></div>
+      <p class="shortcut-boundary">分散對齊、智慧補齊與台灣標點位於 ONLYOFFICE 的「OpenDesk TW」工具列；自訂外掛按鈕不冒用系統層全域熱鍵，避免與輸入法及既有快捷鍵衝突。</p>
+    </dialog>
     <div class="toast hidden" id="toast" role="status" aria-live="polite"></div>
     <script type="module" src="main.js"></script>
   </body>

@@ -138,7 +138,7 @@ total = sum(len(checks) for checks in groups.values())
 report = {
     "schemaVersion": 1,
     "suite": "OpenDesk TW Office 完整功能矩陣",
-    "generatedForVersion": "2.2.0",
+    "generatedForVersion": "2.2.1",
     "passed": passed == total,
     "summary": f"{passed}/{total} 項通過",
     "passedCount": passed,
