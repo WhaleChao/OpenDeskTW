@@ -434,9 +434,9 @@ async function loadOnlyOfficeTwStatus() {
     const ready = status.installed && status.traditional_chinese && status.plugin_installed;
     banner.classList.toggle("ready", ready);
     banner.classList.toggle("warning", !ready);
-    $("#onlyoffice-tw-title").textContent = ready ? "● ONLYOFFICE 繁中工具已就緒" : "○ ONLYOFFICE 繁中工具需要處理";
+    $("#onlyoffice-tw-title").textContent = ready ? "● ONLYOFFICE 完整繁中與數字字級已就緒" : "○ ONLYOFFICE 繁中介面需要處理";
     $("#onlyoffice-tw-detail").textContent = `${status.message}・目前語系：${status.current_language}${status.running ? "・ONLYOFFICE 正在運作" : ""}`;
-    $("#repair-onlyoffice-tw").textContent = ready ? "重新驗證／修復" : "一鍵修正繁中＋寫作工具";
+    $("#repair-onlyoffice-tw").textContent = ready ? "重新驗證／修復" : "一鍵補齊繁中＋數字字級";
   } catch (error) {
     $("#onlyoffice-tw-title").textContent = "無法檢查 ONLYOFFICE 繁中狀態";
     $("#onlyoffice-tw-detail").textContent = String(error);

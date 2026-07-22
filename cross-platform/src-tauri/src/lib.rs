@@ -630,6 +630,8 @@ fn onlyoffice_tw_status_value() -> OnlyOfficeTwStatus {
                 && path.join("index.html").is_file()
                 && path.join("code.js").is_file()
                 && path.join("typography.js").is_file()
+                && path.join("ui-overrides.js").is_file()
+                && path.join("ui-patch.js").is_file()
         })
         .unwrap_or(false);
     let message = if !installed {
@@ -637,7 +639,7 @@ fn onlyoffice_tw_status_value() -> OnlyOfficeTwStatus {
     } else if running && !traditional_chinese {
         "目前正在使用錯誤語系；請先關閉 ONLYOFFICE，再按一鍵修復".into()
     } else if traditional_chinese && plugin_installed {
-        "繁體中文與繁中寫作工具已就緒".into()
+        "完整繁中介面、數字字級與繁中寫作工具已就緒".into()
     } else if !traditional_chinese {
         format!("目前語系為 {current_language}，需要修正為 zh-TW")
     } else {
@@ -859,6 +861,8 @@ fn repair_onlyoffice_traditional_chinese<R: Runtime>(
         || !plugin_source.join("index.html").is_file()
         || !plugin_source.join("code.js").is_file()
         || !plugin_source.join("typography.js").is_file()
+        || !plugin_source.join("ui-overrides.js").is_file()
+        || !plugin_source.join("ui-patch.js").is_file()
     {
         return Err("安裝包缺少 ONLYOFFICE 繁中工具".into());
     }
@@ -875,7 +879,7 @@ fn repair_onlyoffice_traditional_chinese<R: Runtime>(
         path: plugin_destination.to_string_lossy().to_string(),
         file_name: "繁中寫作工具（OpenDesk TW）".into(),
         message: format!(
-            "已固定 ONLYOFFICE 為 zh-TW，並安裝繁中寫作工具{backup_message}。重新開啟 ONLYOFFICE 後，使用「OpenDesk TW」工具列的分散對齊、智慧補齊、台灣標點與快捷鍵。"
+            "已固定 ONLYOFFICE 為 zh-TW、補齊繁中介面並鎖定數字字級{backup_message}。重新開啟 ONLYOFFICE 後，可使用「OpenDesk TW」工具列的數字字級、分散對齊、智慧補齊、台灣標點與快捷鍵。"
         ),
     })
 }
@@ -2248,13 +2252,23 @@ mod tests {
                 .and_then(Value::as_str),
             Some("onToolbarMenuClick")
         );
+        let supported_editors = value
+            .pointer("/variations/0/EditorsSupport")
+            .and_then(Value::as_array)
+            .expect("外掛必須宣告支援的編輯器");
+        assert_eq!(supported_editors.len(), 4);
         let code = include_str!("../resources/onlyoffice-tw-plugin/code.js");
         assert!(code.contains("put_PrAlign"));
         assert!(code.contains("align_Distributed"));
         assert!(code.contains("AddToolbarMenuItem"));
         assert!(code.contains("opendesk-complete-pairs"));
         assert!(code.contains("opendesk-normalize-punctuation"));
+        assert!(code.contains("opendesk-font-size"));
+        assert!(code.contains("range.SetFontSize(Asc.scope.numericFontSize)"));
+        assert!(code.contains("OpenDeskTwUiPatch"));
         let typography = include_str!("../resources/onlyoffice-tw-plugin/typography.js");
+        let ui_patch = include_str!("../resources/onlyoffice-tw-plugin/ui-patch.js");
+        let ui_overrides = include_str!("../resources/onlyoffice-tw-plugin/ui-overrides.js");
         for pair in [
             "（\"", "）\"", "「\"", "」\"", "【\"", "】\"", "〔\"", "〕\"",
         ] {
@@ -2263,6 +2277,12 @@ mod tests {
         assert!(!code.contains("fetch("));
         assert!(!code.contains("XMLHttpRequest"));
         assert!(!typography.contains("fetch("));
+        assert!(ui_patch.contains("de-settings-western-font-size"));
+        assert!(ui_patch.contains("初號: \"42\""));
+        assert!(ui_patch.contains("五號: \"10.5\""));
+        assert!(ui_overrides.contains("\"Multipage view\": \"多頁檢視\""));
+        assert!(ui_overrides.contains("\"Got it\": \"知道了\""));
+        assert!(!ui_patch.contains("fetch("));
     }
 
     #[test]

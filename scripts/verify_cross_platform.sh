@@ -16,10 +16,14 @@ DEFAULT_SIGNING_KEY="$HOME/Library/Application Support/OpenDesk TW/Signing/opend
 if [[ -z "${TAURI_SIGNING_PRIVATE_KEY_PATH:-}" && -f "$DEFAULT_SIGNING_KEY" ]]; then
   export TAURI_SIGNING_PRIVATE_KEY_PATH="$DEFAULT_SIGNING_KEY"
 fi
+if [[ -z "${TAURI_SIGNING_PRIVATE_KEY:-}" && -n "${TAURI_SIGNING_PRIVATE_KEY_PATH:-}" ]]; then
+  export TAURI_SIGNING_PRIVATE_KEY="$(< "$TAURI_SIGNING_PRIVATE_KEY_PATH")"
+fi
 if [[ -z "${TAURI_SIGNING_PRIVATE_KEY_PASSWORD:-}" && "$(uname -s)" == "Darwin" ]]; then
   export TAURI_SIGNING_PRIVATE_KEY_PASSWORD="$(security find-generic-password -a WhaleChao -s OpenDeskTW-Tauri-Signing -w)"
 fi
 test -n "${TAURI_SIGNING_PRIVATE_KEY_PATH:-}"
+test -n "${TAURI_SIGNING_PRIVATE_KEY:-}"
 test -n "${TAURI_SIGNING_PRIVATE_KEY_PASSWORD:-}"
 npm run build -- --bundles app,dmg
 
@@ -29,10 +33,6 @@ UPDATER_ARCHIVE="$(/usr/bin/find src-tauri/target/release/bundle/macos -maxdepth
 test -n "$APP_BUNDLE"
 test -n "$DMG"
 test -n "$UPDATER_ARCHIVE"
-if [[ -f "$UPDATER_ARCHIVE.sig" ]]; then
-  mv "$UPDATER_ARCHIVE.sig" "$UPDATER_ARCHIVE.sig.previous.$$"
-fi
-npx tauri signer sign "$UPDATER_ARCHIVE" >/dev/null
 test -s "$UPDATER_ARCHIVE.sig"
 /usr/bin/codesign --verify --deep --strict "$APP_BUNDLE"
 print "CROSS_PLATFORM_MAC_PASS $APP_BUNDLE $DMG $UPDATER_ARCHIVE.sig"
