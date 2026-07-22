@@ -169,7 +169,88 @@ const wordTabs = {
   },
 };
 
-const state = { status: null, selectedPath: null, selectedAnalysis: null, wordReport: null, wordTab: "home", featureTab: "all" };
+const pdfTabs = {
+  home: {
+    title: "常用：開啟、閱讀、搜尋與列印",
+    detail: "先掌握頁數、文字化程度與安全狀態，再決定要編輯、OCR 或交付。",
+    tasks: [
+      ["pdf-read", "閱讀與搜尋", "連續、單頁、雙頁、分割檢視、書籤、全文搜尋、縮放與全螢幕簡報。", "AcroPDF 檢視工作區", "editor", "read"],
+      ["pdf-new", "新增空白 PDF", "建立新文件、插入空白頁，再加入文字、圖片、表單或附件。", "AcroPDF → 新增", "workspace", "new"],
+      ["pdf-tools", "完整 PDF 工具中心", "一次看到建立整理、編輯、註解、表單、轉換、保護與智慧工具。", "AcroPDF → 工具", "workspace", "tools"],
+      ["pdf-report", "PDF 健康報告", "檢查頁數、文字頁、掃描頁、影像、表單、簽章、註解、附件與中繼資料。", "OpenDesk 直接完成", "report", ""],
+      ["pdf-print", "列印與頁面預覽", "設定頁面範圍、雙面、縮放、方向與印表機，不改寫原始 PDF。", "AcroPDF → 檔案 → 列印", "editor", "read"],
+      ["pdf-live", "PDF LIVE 驗證", "實際渲染首末頁、記憶體重新封裝並再次開啟，確認文件可安全處理。", "OpenDesk＋AcroPDF", "live", ""],
+    ],
+  },
+  pages: {
+    title: "整理頁面：合併、分割、擷取與重新排列",
+    detail: "頁面工作先保留原檔；拖曳縮圖即可調整順序，批次操作會清楚顯示範圍。",
+    tasks: [
+      ["pdf-merge", "合併多份 PDF", "依選擇順序合併文件，保留原始檔案並輸出新 PDF。", "頁面 → 合併 PDF", "workspace", "merge"],
+      ["pdf-organize", "縮圖與頁面重排", "多選、拖曳、插入、刪除、旋轉、裁切與查看頁面尺寸。", "頁面 → 組織頁面", "editor", "pages"],
+      ["pdf-split", "分割 PDF", "依分割點、選取範圍或每頁獨立輸出。", "頁面 → 分割 PDF", "editor", "split"],
+      ["pdf-extract", "擷取指定頁面", "選擇不連續頁碼，另存為新的 PDF。", "頁面 → 擷取頁面", "editor", "extract"],
+      ["pdf-watermark", "浮水印與頁面背景", "加入文字／圖片浮水印、草稿標記或頁面背景。", "頁面 → 浮水印／背景", "editor", "watermark"],
+      ["pdf-header", "頁首頁尾與 Bates 編號", "加入日期、檔名、頁碼、總頁數或法律文件連續編號。", "頁面 → 頁首頁尾／Bates", "editor", "header_footer"],
+    ],
+  },
+  edit: {
+    title: "編輯與註解：直接修改內容並留下可追蹤標記",
+    detail: "文字、圖片與註解分開處理；永久遮蔽不等同於畫黑色方塊。",
+    tasks: [
+      ["pdf-text", "編輯文字", "選取文字區塊修改內容、字型與位置；複雜重排可切換文字重排工具。", "工具 → 編輯文字", "editor", "edit_text"],
+      ["pdf-image", "編輯圖片", "選取、移動、縮放、取代或刪除 PDF 內圖片。", "工具 → 編輯圖片", "editor", "edit_image"],
+      ["pdf-annotate", "螢光筆與註解", "螢光筆、底線、刪除線、便利貼、文字框、圖形、箭頭、手繪與圖章。", "標記工具列", "editor", "annotate"],
+      ["pdf-links", "連結、書籤與附件", "加入網頁／頁面連結、階層書籤及內嵌附件。", "工具 → 連結／書籤／附件", "editor", "tools"],
+      ["pdf-layers", "圖層、尺規與格線", "管理選用內容圖層，使用尺規、格線、距離與面積測量。", "檢視／工具 → 圖層", "editor", "tools"],
+      ["pdf-summary", "註解摘要與匯入匯出", "彙整所有註解，支援 XFDF 往返與註解扁平化。", "工具 → 標注摘要", "editor", "annotate"],
+    ],
+  },
+  forms: {
+    title: "表單與簽署：辨識欄位、填寫、驗證再交付",
+    detail: "先確認 PDF 是否已有可填欄位；掃描式表單需先辨識結構與座標。",
+    tasks: [
+      ["pdf-fill", "填寫既有表單", "列出文字、核取、單選、下拉與簽名欄，驗證欄位後再填入。", "工具 → 表單填寫", "editor", "forms"],
+      ["pdf-form-design", "建立可填表單", "加入文字、核取、單選、選單、按鈕與簽名欄，設定 Tab 順序。", "工具 → 表單設計", "editor", "form_design"],
+      ["pdf-form-data", "表單資料與扁平化", "匯入／匯出 FDF；交付定稿時可將欄位外觀扁平化。", "表單 → 資料／扁平化", "editor", "forms"],
+      ["pdf-sign", "數位簽章與驗證", "使用本機憑證簽署、檢查簽章狀態；簽署後修改會影響有效性。", "工具 → 數位簽章", "editor", "sign"],
+    ],
+  },
+  convert: {
+    title: "轉換與 OCR：讓掃描檔可搜尋，讓內容能重用",
+    detail: "轉換結果一律另存新檔；版面複雜時保留 PDF 作為視覺基準。",
+    tasks: [
+      ["pdf-ocr", "繁體中文 OCR", "辨識掃描頁並加入可搜尋文字層；完成後再比對頁面渲染。", "工具 → OCR 文字化", "editor", "ocr"],
+      ["pdf-office", "匯出 Word／Excel／PowerPoint", "依內容類型轉為可編輯 Office 文件；複雜版面需逐頁確認。", "匯出 → Office", "editor", "convert"],
+      ["pdf-image-export", "匯出圖片、文字與 HTML", "逐頁輸出 PNG，或擷取純文字與 HTML 供後續整理。", "匯出 → 圖片／文字／HTML", "editor", "convert"],
+      ["pdf-archive", "PDF/A 與 PDF/X", "製作長期保存或印刷交換版本，並執行對應預檢。", "匯出 → PDF/A／PDF/X", "editor", "preflight"],
+      ["pdf-optimize", "壓縮與最佳化", "壓縮影像、清理未使用物件並支援快速網頁檢視。", "工具 → 最佳化 PDF", "editor", "optimize"],
+    ],
+  },
+  protect: {
+    title: "保護與檢查：密碼、權限、遮蔽、比較與無障礙",
+    detail: "敏感內容要用永久遮蔽；安全設定與簽章都必須在輸出副本上驗證。",
+    tasks: [
+      ["pdf-security", "密碼與使用權限", "AES-256 加密，限制列印、複製與修改；移除保護需要正確密碼。", "工具 → 安全性設定", "editor", "protect"],
+      ["pdf-redact", "永久遮蔽敏感資料", "搜尋姓名、身分證號或自訂模式，預覽後套用不可復原的真正遮蔽。", "工具 → 塗黑工具", "editor", "redact"],
+      ["pdf-compare", "比較兩份 PDF", "逐頁比較文字與影像差異，產生可檢視的差異結果。", "工具 → 比較文件", "workspace", "compare"],
+      ["pdf-preflight", "印刷與交付預檢", "檢查字型、圖片解析度、色彩空間、透明度、出血與 PDF 規範。", "工具 → 預檢", "editor", "preflight"],
+      ["pdf-accessibility", "PDF/UA 無障礙", "檢查結構樹、標題、替代文字、表格與閱讀順序。", "工具 → 無障礙設定", "editor", "accessibility"],
+    ],
+  },
+  automation: {
+    title: "批次與 MAGI：大量處理、歸檔與內容理解",
+    detail: "批次工作先選輸出資料夾；MAGI 只連線目前唯一運作的 V2 或 V3。",
+    tasks: [
+      ["pdf-batch", "批次處理多份 PDF", "一次加入浮水印、頁首頁尾、Bates 編號、分割或合併。", "工具 → 批次處理", "workspace", "batch"],
+      ["pdf-filing", "智慧歸檔與重新命名", "依本機規則分析檔名與內容，複製到分類資料夾並保留來源。", "工具 → 智慧歸檔", "workspace", "filing"],
+      ["pdf-magi", "MAGI PDF 分析", "摘要、翻譯、分類、關鍵資訊與法律文件分析；結果留在 App。", "OpenDesk＋MAGI V2／V3", "magi", "magi"],
+      ["pdf-live-automation", "交付前 LIVE 驗證", "重新檢查結構、首末頁渲染及記憶體往返，確認輸出仍能開啟。", "OpenDesk＋AcroPDF", "live", ""],
+    ],
+  },
+};
+
+const state = { status: null, selectedPath: null, selectedAnalysis: null, wordReport: null, wordTab: "home", pdfReport: null, pdfTab: "home", pdfEngine: null, featureTab: "all" };
 const $ = (selector) => document.querySelector(selector);
 const $$ = (selector) => [...document.querySelectorAll(selector)];
 
@@ -184,6 +265,7 @@ function toast(message, timeout = 4600) {
 async function loadStatus() {
   if (!window.__TAURI_INTERNALS__) {
     $("#system-summary").textContent = "介面預覽模式・本機文件功能會在桌面 App 啟用";
+    $("#pdf-engine-line").textContent = "介面預覽模式・AcroPDF 會在桌面 App 以本機協定連線";
     return;
   }
   try {
@@ -191,6 +273,7 @@ async function loadStatus() {
     const engines = state.status.engines.map((item) => `${item.installed ? "●" : "○"} ${item.name}${item.version ? ` ${item.version}` : ""}`).join("　");
     $("#system-summary").textContent = `${state.status.platform}・${engines}・${state.status.magi.summary}`;
     $("#app-version").textContent = `OpenDesk TW ${state.status.app_version}`;
+    await loadPdfEngineStatus();
   } catch (error) {
     $("#system-summary").textContent = `環境檢查失敗：${error}`;
   }
@@ -220,16 +303,32 @@ async function selectDocument(path) {
     $("#workspace-title").textContent = analysis.file_name;
     $("#workspace-path").textContent = path;
     $("#risk-badge").textContent = analysis.risk;
-    $("#analysis-grid").innerHTML = [
+    const analysisValues = isPdfPath(path) ? [
+      ["文件類型", "PDF"], ["建議引擎", "AcroPDF PDF 引擎"], ["結構檢查", "由本機 PDF 協定建立健康報告"],
+      ["內容安全", "報告不包含文件內文"], ["相容性提醒", analysis.issues.length ? analysis.issues.join("、") : "待 PDF 專項檢查"], ["原檔保護", "編輯前自動備份"],
+    ] : [
       ["文件類型", analysis.kind], ["建議引擎", analysis.preferred_engine], ["已檢查結構", `${analysis.package_entries} 個項目`],
       ["中文字標題", `${analysis.heading_count} 個`], ["相容性提醒", analysis.issues.length ? analysis.issues.join("、") : "未發現已知高風險功能"], ["原檔保護", "開啟前自動備份"],
-    ].map(([title, detail]) => `<div class="analysis-card"><b>${escapeHtml(title)}</b><span>${escapeHtml(detail)}</span></div>`).join("");
+    ];
+    $("#analysis-grid").innerHTML = analysisValues.map(([title, detail]) => `<div class="analysis-card"><b>${escapeHtml(title)}</b><span>${escapeHtml(detail)}</span></div>`).join("");
     recordRecent(path);
     if (isWordPath(path)) {
       await loadWordReport(path);
     } else {
       state.wordReport = null;
       $("#word-current").classList.add("hidden");
+    }
+    if (isPdfPath(path)) {
+      await loadPdfReport(path);
+      $("#open-primary").textContent = "備份並開啟 PDF 工作區";
+      $("#convert-pdf").disabled = true;
+      $("#convert-pdf").textContent = "目前已是 PDF";
+    } else {
+      state.pdfReport = null;
+      $("#pdf-current").classList.add("hidden");
+      $("#open-primary").textContent = "備份並開啟編輯";
+      $("#convert-pdf").disabled = false;
+      $("#convert-pdf").textContent = "轉換 PDF";
     }
     $("#workspace").scrollIntoView({ behavior: "smooth", block: "center" });
   } catch (error) { toast(`無法檢查文件：${error}`); }
@@ -418,6 +517,164 @@ async function renumberCurrentWord() {
   }
 }
 
+function isPdfPath(path) {
+  return /\.pdf$/i.test(path || "");
+}
+
+async function loadPdfEngineStatus() {
+  const line = $("#pdf-engine-line");
+  try {
+    const status = await invoke("acropdf_status");
+    state.pdfEngine = status;
+    line.className = "pdf-engine-line ready";
+    line.textContent = `● AcroPDF ${status.app_version} 已就緒・整合協定 v${status.protocol_version}・${status.capabilities.length} 組本機能力`;
+  } catch (error) {
+    state.pdfEngine = null;
+    line.className = "pdf-engine-line error";
+    line.textContent = `○ AcroPDF 尚未就緒：${error}`;
+  }
+}
+
+async function choosePdfDocument() {
+  const result = await open({
+    multiple: false,
+    directory: false,
+    filters: [{ name: "PDF 文件", extensions: ["pdf"] }],
+  });
+  if (typeof result !== "string") return null;
+  await selectDocument(result);
+  return result;
+}
+
+async function ensurePdfDocument() {
+  if (isPdfPath(state.selectedPath)) return state.selectedPath;
+  return choosePdfDocument();
+}
+
+function renderPdfTab() {
+  const tab = pdfTabs[state.pdfTab];
+  $$('[data-pdf-tab]').forEach((item) => {
+    const active = item.dataset.pdfTab === state.pdfTab;
+    item.classList.toggle("active", active);
+    item.setAttribute("aria-selected", String(active));
+    item.tabIndex = active ? 0 : -1;
+  });
+  $("#pdf-task-panel").setAttribute("aria-labelledby", `pdf-tab-${state.pdfTab}`);
+  $("#pdf-tab-intro").innerHTML = `<b>${escapeHtml(tab.title)}</b><span>${escapeHtml(tab.detail)}</span>`;
+  $("#pdf-task-grid").innerHTML = tab.tasks.map(([id, title, detail, location, action]) => `
+    <article class="pdf-task-card">
+      <div class="pdf-task-icon" aria-hidden="true">${action === "report" ? "✓" : action === "live" ? "LIVE" : action === "magi" ? "AI" : "PDF"}</div>
+      <div class="pdf-task-copy"><h3>${escapeHtml(title)}</h3><p>${escapeHtml(detail)}</p><small>${escapeHtml(location)}</small></div>
+      <button class="pdf-task-action" data-pdf-task="${id}">${action === "report" ? "立即檢查" : action === "live" ? "開始驗證" : action === "magi" ? "交給 MAGI" : action === "workspace" ? "啟動工具" : "備份並開啟"}</button>
+    </article>`).join("");
+  $$('[data-pdf-task]').forEach((button) => button.addEventListener("click", () => runPdfTask(button.dataset.pdfTask)));
+}
+
+function findPdfTask(id) {
+  for (const tab of Object.values(pdfTabs)) {
+    const task = tab.tasks.find((value) => value[0] === id);
+    if (task) return task;
+  }
+  return null;
+}
+
+async function openPdfWorkspace(path, tool = "tools") {
+  const result = await invoke("open_in_acropdf", { path: path || null, tool: tool || null });
+  toast(result.message, 9000);
+  return result;
+}
+
+async function runPdfTask(id) {
+  const task = findPdfTask(id);
+  if (!task) return;
+  const [, title, , , action, tool] = task;
+  try {
+    if (action === "workspace") {
+      await openPdfWorkspace(isPdfPath(state.selectedPath) ? state.selectedPath : null, tool);
+      return;
+    }
+    const path = await ensurePdfDocument();
+    if (!path) return;
+    if (action === "report") {
+      await loadPdfReport(path, true);
+      toast(`${title}已完成。`);
+      return;
+    }
+    if (action === "live") {
+      await runPdfLiveCheck(path);
+      return;
+    }
+    if (action === "magi") {
+      $("#magi-panel").classList.remove("hidden");
+      $("#magi-panel").scrollIntoView({ behavior: "smooth", block: "center" });
+      return;
+    }
+    await openPdfWorkspace(path, tool);
+  } catch (error) {
+    toast(`${title}無法執行：${error}`, 8000);
+  }
+}
+
+async function loadPdfReport(path, shouldScroll = false) {
+  try {
+    const report = await invoke("pdf_report", { path });
+    state.pdfReport = report;
+    $("#pdf-current").classList.remove("hidden");
+    $("#pdf-report-title").textContent = report.file_name;
+    const stats = [
+      [report.pages, "頁數"],
+      [Number(report.characters).toLocaleString("zh-TW"), "非空白字元"],
+      [report.text_pages, "文字頁"],
+      [report.scanned_pages, "掃描頁"],
+      [report.images, "影像"],
+      [report.form_fields, "表單欄位"],
+    ];
+    $("#pdf-stats").innerHTML = stats.map(([value, label]) => `<div><strong>${escapeHtml(String(value))}</strong><span>${escapeHtml(label)}</span></div>`).join("");
+    const content = [
+      ["單字／詞組", Number(report.words).toLocaleString("zh-TW")],
+      ["書籤", report.bookmarks],
+      ["連結", report.links],
+      ["旋轉頁", report.rotated_pages],
+      ["頁面尺寸", report.page_sizes.join("、") || "未取得"],
+      ["文件標題", report.metadata?.title || "未設定"],
+    ];
+    $("#pdf-content-metrics").innerHTML = content.map(([label, value]) => `<div><span>${escapeHtml(label)}</span><b>${escapeHtml(String(value))}</b></div>`).join("");
+    const interactive = [
+      ["註解", report.annotations],
+      ["表單欄位", report.form_fields],
+      ["簽名欄", report.signature_fields],
+      ["附件", report.attachments],
+      ["加密", report.encrypted ? "是" : "否"],
+      ["PDF 格式", report.metadata?.format || "未取得"],
+    ];
+    $("#pdf-interactive-metrics").innerHTML = interactive.map(([label, value]) => `<div><span>${escapeHtml(label)}</span><b>${escapeHtml(String(value))}</b></div>`).join("");
+    const warnings = report.warnings?.length ? report.warnings : ["未發現需要立即處理的結構提醒。"];
+    $("#pdf-warnings").innerHTML = warnings.map((warning) => `<div class="word-warning"><span>${report.warnings?.length ? "提醒" : "通過"}</span><p>${escapeHtml(warning)}</p></div>`).join("");
+    if (shouldScroll) $("#pdf-current").scrollIntoView({ behavior: "smooth", block: "start" });
+  } catch (error) {
+    $("#pdf-current").classList.add("hidden");
+    toast(`PDF 文件檢查失敗：${error}`, 8000);
+  }
+}
+
+async function runPdfLiveCheck(path = state.selectedPath) {
+  if (!isPdfPath(path)) return;
+  const button = $("#pdf-live-check");
+  const original = button.textContent;
+  button.disabled = true;
+  button.textContent = "正在渲染與往返驗證…";
+  try {
+    const result = await invoke("pdf_live_validate", { path });
+    if (!result.passed) throw new Error(result.reason || "PDF LIVE 驗證未通過");
+    toast(`PDF LIVE 驗證通過：渲染 ${result.rendered_pages} 頁，重新封裝 ${Number(result.roundtrip_bytes).toLocaleString("zh-TW")} 位元組並成功再開啟。`, 10000);
+  } catch (error) {
+    toast(`PDF LIVE 驗證失敗：${error}`, 9000);
+  } finally {
+    button.disabled = false;
+    button.textContent = original;
+  }
+}
+
 async function runSelfTest() {
   const root = $("#self-test-result");
   root.textContent = "正在執行 LIVE 檢查，請稍候…";
@@ -503,7 +760,46 @@ $("#word-edit").addEventListener("click", async () => {
 });
 $("#word-renumber").addEventListener("click", renumberCurrentWord);
 $("#word-report-refresh").addEventListener("click", () => state.selectedPath && loadWordReport(state.selectedPath, true));
-$("#open-primary").addEventListener("click", async () => { try { const result = await invoke("backup_and_open", { path: state.selectedPath, engine: state.selectedAnalysis.preferred_engine }); toast(result.message); } catch (error) { toast(String(error)); } });
+function selectPdfTab(button, focus = false) {
+  state.pdfTab = button.dataset.pdfTab;
+  renderPdfTab();
+  if (focus) button.focus();
+}
+
+$$('[data-pdf-tab]').forEach((button) => {
+  button.addEventListener("click", () => selectPdfTab(button));
+  button.addEventListener("keydown", (event) => {
+    const tabs = $$('[data-pdf-tab]');
+    const current = tabs.indexOf(button);
+    let target = null;
+    if (event.key === "ArrowRight") target = tabs[(current + 1) % tabs.length];
+    if (event.key === "ArrowLeft") target = tabs[(current - 1 + tabs.length) % tabs.length];
+    if (event.key === "Home") target = tabs[0];
+    if (event.key === "End") target = tabs[tabs.length - 1];
+    if (!target) return;
+    event.preventDefault();
+    selectPdfTab(target, true);
+  });
+});
+$("#open-pdf-document").addEventListener("click", choosePdfDocument);
+$("#launch-pdf-workspace").addEventListener("click", () => openPdfWorkspace(null, "tools").catch((error) => toast(String(error), 8000)));
+$("#pdf-edit").addEventListener("click", async () => {
+  const path = await ensurePdfDocument();
+  if (!path) return;
+  openPdfWorkspace(path, "tools").catch((error) => toast(String(error), 8000));
+});
+$("#pdf-live-check").addEventListener("click", () => runPdfLiveCheck());
+$("#pdf-report-refresh").addEventListener("click", () => isPdfPath(state.selectedPath) && loadPdfReport(state.selectedPath, true));
+$("#open-primary").addEventListener("click", async () => {
+  try {
+    if (isPdfPath(state.selectedPath)) {
+      await openPdfWorkspace(state.selectedPath, "tools");
+      return;
+    }
+    const result = await invoke("backup_and_open", { path: state.selectedPath, engine: state.selectedAnalysis.preferred_engine });
+    toast(result.message);
+  } catch (error) { toast(String(error)); }
+});
 $("#open-alternate").addEventListener("click", async () => { try { const result = await invoke("backup_and_open", { path: state.selectedPath, engine: state.selectedAnalysis.alternate_engine }); toast(result.message); } catch (error) { toast(String(error)); } });
 $("#convert-pdf").addEventListener("click", async () => { try { toast("正在本機轉換 PDF…"); const result = await invoke("convert_pdf", { path: state.selectedPath }); toast(`PDF 已完成：${result}`); } catch (error) { toast(`PDF 轉換失敗：${error}`); } });
 $("#magi-analyze").addEventListener("click", () => { $("#magi-panel").classList.toggle("hidden"); if (!$("#magi-panel").classList.contains("hidden")) $("#magi-panel").scrollIntoView({ behavior: "smooth", block: "center" }); });
@@ -516,4 +812,4 @@ $$('[data-feature-tab]').forEach((button) => button.addEventListener("click", ()
 $("#run-self-test").addEventListener("click", runSelfTest);
 $("#check-update").addEventListener("click", checkUpdate);
 
-renderRecent(); renderFeatures(); renderWordTab(); loadStatus();
+renderRecent(); renderFeatures(); renderWordTab(); renderPdfTab(); loadStatus();
