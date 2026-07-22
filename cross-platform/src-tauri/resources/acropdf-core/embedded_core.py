@@ -28,6 +28,10 @@ from datetime import date
 from pathlib import Path
 from typing import Any
 
+for _stream in (sys.stdin, sys.stdout, sys.stderr):
+    if hasattr(_stream, "reconfigure"):
+        _stream.reconfigure(encoding="utf-8", errors="strict")
+
 _BUNDLED_TESSDATA = Path(getattr(sys, "_MEIPASS", "")) / "tessdata"
 if _BUNDLED_TESSDATA.is_dir():
     os.environ["TESSDATA_PREFIX"] = str(_BUNDLED_TESSDATA)
