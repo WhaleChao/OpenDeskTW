@@ -5,8 +5,9 @@
 redaction_engine 與 optimize_manager 抽離成無視窗核心。它只接受固定白名單命令，
 不啟動 AcroPDF 圖形介面，也不連線到網路。
 
-Copyright (c) 2026 WhaleChao. All rights reserved.
-依同資料夾 ACROPDF-LICENSE 授權使用。
+Copyright (c) 2026 WhaleChao.
+SPDX-License-Identifier: AGPL-3.0-or-later
+依同資料夾 ACROPDF-LICENSE 與專案根目錄 LICENSE 授權使用；本程式不附帶任何擔保。
 """
 
 from __future__ import annotations

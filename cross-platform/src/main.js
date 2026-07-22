@@ -1,3 +1,6 @@
+// Copyright (c) 2026 WhaleChao and contributors.
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 import { invoke } from "@tauri-apps/api/core";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { check } from "@tauri-apps/plugin-updater";
@@ -1787,6 +1790,31 @@ async function checkUpdate() {
   finally { button.disabled = false; button.textContent = "檢查安全熱修"; }
 }
 
+async function showLegalDocument(document) {
+  const target = $("#legal-text");
+  target.textContent = "正在讀取安裝包內的授權文件…";
+  try {
+    if (!window.__TAURI_INTERNALS__) {
+      const previews = {
+        agpl: "GNU Affero General Public License v3.0 或更新版本。桌面 App 內含完整離線條文。",
+        "third-party": "第三方元件維持各自授權；桌面 App 會顯示當次建置的精確套件與授權清單。",
+        "source-offer": "每個正式版本都會在 GitHub Release 提供同標籤專案原始碼，以及含 npm、Cargo、Python／PyMuPDF 上游來源與雜湊的對應原始碼包。",
+      };
+      target.textContent = previews[document] || "找不到指定的授權文件。";
+      return;
+    }
+    target.textContent = await invoke("read_legal_document", { document });
+  } catch (error) {
+    target.textContent = `無法讀取授權文件：${error}`;
+  }
+}
+
+function openLegalDialog() {
+  const dialog = $("#legal-dialog");
+  if (!dialog.open) dialog.showModal();
+  showLegalDocument("agpl");
+}
+
 $$('[data-create]').forEach((button) => button.addEventListener("click", () => createDocument(button.dataset.create)));
 $("#open-word-document").addEventListener("click", chooseWordDocument);
 $("#word-shortcuts").addEventListener("click", openShortcutCatalog);
@@ -1932,6 +1960,25 @@ $("#feature-search").addEventListener("input", renderFeatures);
 $$('[data-feature-tab]').forEach((button) => button.addEventListener("click", () => { state.featureTab = button.dataset.featureTab; $$('[data-feature-tab]').forEach((item) => item.classList.toggle("active", item === button)); renderFeatures(); }));
 $("#run-self-test").addEventListener("click", runSelfTest);
 $("#check-update").addEventListener("click", checkUpdate);
+$("#legal-open").addEventListener("click", openLegalDialog);
+$("#legal-close").addEventListener("click", () => $("#legal-dialog").close());
+$("#legal-dialog").addEventListener("click", (event) => {
+  if (event.target === $("#legal-dialog")) $("#legal-dialog").close();
+});
+$("#legal-license").addEventListener("click", () => showLegalDocument("agpl"));
+$("#legal-third-party").addEventListener("click", () => showLegalDocument("third-party"));
+$("#legal-source-offer").addEventListener("click", () => showLegalDocument("source-offer"));
+$("#legal-source").addEventListener("click", async () => {
+  if (!window.__TAURI_INTERNALS__) {
+    toast("桌面 App 會明確開啟 GitHub 對應原始碼；介面預覽不會離開目前頁面。", 8000);
+    return;
+  }
+  try {
+    await invoke("open_source_repository");
+  } catch (error) {
+    toast(`無法開啟原始碼頁面：${error}`, 8000);
+  }
+});
 
 window.addEventListener("keydown", (event) => {
   if (!(event.altKey && event.shiftKey && (event.metaKey || event.ctrlKey) && event.key.toLocaleLowerCase("zh-TW") === "r")) return;

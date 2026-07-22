@@ -56,6 +56,7 @@ jobs:
           npm run test:traditional
           npm run test:contracts
           npm run test:pdf-core
+          npm run test:legal
           cargo test --manifest-path src-tauri/Cargo.toml --lib
       - name: 建立預覽安裝包
         working-directory: cross-platform

@@ -14,3 +14,4 @@ latest.json
 npm-debug.log*
 __pycache__/
 *.py[cod]
+cross-platform/src-tauri/resources/licenses/third-party/

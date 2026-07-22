@@ -14,4 +14,8 @@
 
 推送 `v*` tag 後，GitHub Actions 分別在 macOS 與 Windows 原生 runner 建置 App／DMG、MSI／NSIS，並產生 Tauri 更新簽章與 `latest.json`。
 
+正式 Release 採 `AGPL-3.0-or-later`。GitHub 自動附加的同標籤 Source code 是安裝包的
+對應原始碼；不得只發布二進位檔或更新檔而移除該來源。建置前會執行
+`npm run legal:bundle`，把當次 Rust、npm 與 Python 相依套件授權一併封裝。
+
 本機驗證可用 `tauri signer sign` 對 `.app.tar.gz` 產生 `.sig`。Apple 的應用程式公證與 Tauri 更新簽章是兩件事：更新簽章已強制啟用；若要讓網路下載的 macOS App 完全不出現 Gatekeeper 警告，還必須在 Actions 加入 Apple Developer ID 與公證秘密。沒有 Apple 憑證時仍會產生 ad-hoc 簽章的測試 DMG。

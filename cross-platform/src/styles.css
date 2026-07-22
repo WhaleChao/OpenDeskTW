@@ -239,7 +239,14 @@ button:focus-visible, input:focus-visible { outline: 3px solid rgba(8, 126, 131,
 .test-groups { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-top: 8px; }
 .test-group { padding: 9px; border-radius: 9px; background: white; border: 1px solid var(--line); }
 .pass { color: #087749; } .fail { color: #b54b27; }
-footer { display: flex; justify-content: space-between; padding: 18px 5px 0; color: var(--muted); font-size: 11px; }
+footer { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px; padding: 18px 5px 0; color: var(--muted); font-size: 11px; }
+.footer-license { padding: 6px 10px; border-color: var(--line); background: transparent; color: inherit; font-size: 11px; }
+.legal-dialog { width: min(820px, calc(100vw - 32px)); }
+.legal-summary { padding: 12px 14px; border-radius: 12px; background: #fff8e7; color: #63490f; line-height: 1.6; }
+.legal-summary p { margin: 0 0 8px; }
+.legal-summary p:last-child { margin-bottom: 0; }
+.legal-actions { display: flex; flex-wrap: wrap; gap: 8px; margin: 14px 0; }
+.legal-text { max-height: 46vh; overflow: auto; margin: 0; padding: 14px; border: 1px solid var(--line); border-radius: 12px; background: #f5f8f9; color: #23373c; white-space: pre-wrap; overflow-wrap: anywhere; font: 12px/1.55 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
 .toast { position: fixed; right: 22px; bottom: 22px; max-width: 460px; padding: 13px 16px; border-radius: 12px; background: #152f36; color: white; box-shadow: 0 12px 30px rgba(0,0,0,.2); }
 .hidden { display: none !important; }
 @media (max-width: 1080px) {
@@ -275,6 +282,8 @@ footer { display: flex; justify-content: space-between; padding: 18px 5px 0; col
   .shortcut-dialog { color: #e5eef1; border-color: #435768; background: #20292e; }
   .shortcut-dialog-head, .shortcut-group { border-color: #3b4a55; background: #252f35; }
   .shortcut-dialog-head p, .shortcut-platform-note { color: #aabac4; }
+  .legal-summary { background: #392f19; color: #f4d88f; }
+  .legal-text { color: #dbe8ea; border-color: #435768; background: #182326; }
   .shortcut-search-label { color: #c4d0d7; }
   .shortcut-search-label input { color: #e5eef1; border-color: #43515a; background: #1e272c; }
   .shortcut-group h3 { color: #b8d4ff; border-color: #3b4a55; background: #293741; }

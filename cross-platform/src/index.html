@@ -294,7 +294,11 @@
         <div id="self-test-result" class="test-result">尚未執行。</div>
       </section>
 
-      <footer><span id="app-version">全能文件工作台</span><span>文件預設留在本機・更新包必須通過密碼學簽章</span></footer>
+      <footer>
+        <span id="app-version">全能文件工作台</span>
+        <span>文件預設留在本機・更新包必須通過密碼學簽章</span>
+        <button class="footer-license" id="legal-open">GNU AGPL v3+・授權與原始碼</button>
+      </footer>
     </main>
     <dialog class="shortcut-dialog" id="shortcut-dialog" aria-labelledby="shortcut-title">
       <div class="shortcut-dialog-head">
@@ -317,6 +321,27 @@
         <div class="pdf-tool-fields" id="pdf-tool-fields"></div>
         <div class="pdf-tool-actions"><button value="cancel">取消</button><button class="pdf-primary" id="pdf-tool-confirm" value="default">套用並自動備份</button></div>
       </form>
+    </dialog>
+    <dialog class="shortcut-dialog legal-dialog" id="legal-dialog" aria-labelledby="legal-title">
+      <div class="shortcut-dialog-head">
+        <div>
+          <span class="eyebrow">自由軟體與對應原始碼</span>
+          <h2 id="legal-title">GNU AGPL v3+ 授權告知</h2>
+          <p>全能文件工作台與 AcroPDF 衍生內建核心採 AGPL-3.0-or-later。</p>
+        </div>
+        <button id="legal-close" aria-label="關閉授權告知">關閉</button>
+      </div>
+      <div class="legal-summary">
+        <p><b>本程式不附帶任何擔保</b>，包括適售性或特定用途適用性的默示擔保。您可依 GNU AGPL v3 或更新版本複製、散布及修改。</p>
+        <p>散布執行檔或透過網路提供修改版功能時，必須依 AGPL 向使用者提供相同版本的完整對應原始碼與建置、安裝資訊。</p>
+      </div>
+      <div class="legal-actions">
+        <button class="primary" id="legal-license">完整授權條文</button>
+        <button id="legal-third-party">第三方授權</button>
+        <button id="legal-source-offer">對應原始碼說明</button>
+        <button id="legal-source">在瀏覽器檢視原始碼</button>
+      </div>
+      <pre class="legal-text" id="legal-text" tabindex="0">請選擇要檢視的授權文件；完整條文已隨 App 離線提供。</pre>
     </dialog>
     <div id="pdf-print-root" aria-hidden="true"></div>
     <div class="toast hidden" id="toast" role="status" aria-live="polite"></div>

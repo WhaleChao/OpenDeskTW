@@ -1,3 +1,6 @@
+// Copyright (c) 2026 WhaleChao and contributors.
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 use chrono::Local;
 use regex::Regex;
 use serde::Serialize;
@@ -2478,6 +2481,43 @@ fn open_backup_folder() -> Result<String, String> {
     Ok(path.to_string_lossy().to_string())
 }
 
+const SOURCE_REPOSITORY: &str = "https://github.com/WhaleChao/OpenDeskTW";
+
+#[tauri::command]
+fn read_legal_document<R: Runtime>(
+    app: tauri::AppHandle<R>,
+    document: String,
+) -> Result<String, String> {
+    let relative = match document.as_str() {
+        "agpl" => "resources/licenses/AGPL-3.0.txt",
+        "third-party" => "resources/licenses/THIRD_PARTY_NOTICES.md",
+        "source-offer" => "resources/licenses/SOURCE_OFFER.md",
+        _ => return Err("不支援的授權文件".into()),
+    };
+    let path = resource_path(&app, relative)?;
+    fs::read_to_string(path).map_err(|error| format!("無法讀取授權文件：{error}"))
+}
+
+#[tauri::command]
+fn open_source_repository() -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    Command::new("/usr/bin/open")
+        .arg(SOURCE_REPOSITORY)
+        .spawn()
+        .map_err(|error| error.to_string())?;
+    #[cfg(target_os = "windows")]
+    Command::new("rundll32.exe")
+        .args(["url.dll,FileProtocolHandler", SOURCE_REPOSITORY])
+        .spawn()
+        .map_err(|error| error.to_string())?;
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    Command::new("xdg-open")
+        .arg(SOURCE_REPOSITORY)
+        .spawn()
+        .map_err(|error| error.to_string())?;
+    Ok(())
+}
+
 #[tauri::command]
 fn run_self_test<R: Runtime>(app: tauri::AppHandle<R>) -> SelfTestReport {
     let engines = [
@@ -2710,6 +2750,8 @@ pub fn run() {
             magi_analyze,
             reveal_path,
             open_backup_folder,
+            read_legal_document,
+            open_source_repository,
             run_self_test
         ])
         .run(tauri::generate_context!())
@@ -2798,6 +2840,26 @@ mod tests {
         ] {
             assert!(surface.contains(marker), "快捷鍵總覽缺少：{marker}");
         }
+    }
+
+    #[test]
+    fn primary_interface_displays_agpl_notices_and_source_offer() {
+        let interface = include_str!("../../src/index.html");
+        let frontend = include_str!("../../src/main.js");
+        let bundled_license = include_str!("../resources/licenses/AGPL-3.0.txt");
+        for marker in [
+            "GNU AGPL v3+",
+            "本程式不附帶任何擔保",
+            "完整授權條文",
+            "第三方授權",
+            "對應原始碼說明",
+            "檢視原始碼",
+        ] {
+            assert!(interface.contains(marker), "AGPL 介面告知缺少：{marker}");
+        }
+        assert!(frontend.contains("read_legal_document"));
+        assert!(frontend.contains("open_source_repository"));
+        assert!(bundled_license.contains("GNU AFFERO GENERAL PUBLIC LICENSE"));
     }
 
     #[test]
