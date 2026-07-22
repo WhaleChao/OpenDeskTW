@@ -11,6 +11,8 @@ assert.ok(uiPatch, "應載入繁中介面熱修");
 assert.equal(tools.completePairs("公文（附件【第一項"), "公文（附件【第一項】）");
 assert.equal(tools.completePairs("公告「附件〔壹、"), "公告「附件〔壹、〕」");
 assert.equal(tools.completePairs("法規《總則〈目的"), "法規《總則〈目的〉》");
+assert.equal(tools.completePairs("公告「附件【第一項」"), "公告「附件【第一項】」");
+assert.equal(tools.completePairs("說明（詳見〔附件一）"), "說明（詳見〔附件一〕）");
 assert.equal(tools.completePairs("文字「已完成」"), "文字「已完成」");
 assert.equal(tools.completePairs("〔壹、〕標題"), "〔壹、〕標題");
 assert.equal(tools.normalizeTaiwanPunctuation('他說"測試"'), "他說「測試」");
@@ -25,9 +27,12 @@ assert.equal(
 );
 assert.equal(uiPatch.translateText("五號"), "10.5");
 assert.equal(uiPatch.translateText(" 小四 "), " 12 ");
+assert.equal(uiPatch.translateText("單擊鏈接以保存文檔"), "按一下連結以儲存文件");
+assert.equal(uiPatch.translateText("工作簿的單元格數據"), "活頁簿的儲存格資料");
+assert.equal(uiPatch.translateText("打印演示文稿"), "列印簡報");
 assert.ok(
   Object.keys(globalThis.OpenDeskTwUiOverrides.translations).length > 10000,
   "應隨附完整繁中介面覆寫字典",
 );
 
-console.log("ONLYOFFICE 繁中寫作工具：15/15 項通過");
+console.log("ONLYOFFICE 繁中寫作工具：20/20 項通過");

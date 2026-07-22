@@ -2,7 +2,7 @@
 
 「全能文件工作台」是一套全繁體中文、Windows／macOS 共用的單機文件 App。名稱直接表達用途：在同一個視窗處理文字、試算表、簡報、PDF 與 MAGI，不必先理解檔案格式或切換多套啟動器。
 
-目前開發版為 2.3.0，主要程式位於 `cross-platform/`，以 Tauri 2、Rust 與原生 WebView 建置。
+目前開發版為 2.4.0，主要程式位於 `cross-platform/`，以 Tauri 2、Rust 與原生 WebView 建置。
 
 ## 主要能力
 
@@ -12,8 +12,10 @@
 - 試算表與簡報：使用 ONLYOFFICE 優先保留 OOXML；LibreOffice 負責舊格式、開放格式與救援轉檔。
 - 同視窗 PDF：內建由 AcroPDF 核心整合的無視窗處理引擎，不啟動另一套 App，也不上傳文件。
 - PDF 頁面：新增、插入、刪除、旋轉、合併、分割、擷取與重新排列。
-- PDF 內容：加入文字、便利貼、搜尋標示、浮水印、頁首頁尾與自動頁碼。
-- PDF 安全：AES-256 加密副本、永久遮蔽、最佳化、繁中 OCR、文件比較與 LIVE 往返驗證。
+- PDF 內容：搜尋與取代文字、加入文字、圖片替換／刪除、便利貼、自由文字、四種搜尋標記、圖形、測量、連結、書籤、圖層、附件、浮水印、頁首頁尾與自動頁碼。
+- PDF 表單與簽章：建立與填寫欄位、JSON 匯入／匯出、扁平化、PFX／P12 數位簽章與完整性驗證。
+- PDF 轉換：匯出 DOCX、XLSX、PPTX、TXT、HTML、PNG、JPEG；可列印、批次處理與依內容智慧歸檔。
+- PDF 安全：AES-256 加密副本、永久遮蔽、最佳化、繁中 OCR、文件比較、印刷／無障礙稽核與 LIVE 往返驗證。
 - MAGI：在主視窗內顯示分析結果，相容目前唯一運作的 MAGI V2 或 V3，不自行啟停 Agent。
 - 安全熱修：只安裝通過 Tauri 更新公鑰驗證的更新包。
 
@@ -26,9 +28,9 @@
 
 ## PDF 內嵌架構
 
-`cross-platform/src-tauri/resources/acropdf-core/embedded_core.py` 是無 GUI 的內建核心；正式建置時由 PyInstaller 封裝成 Tauri sidecar。主程式只透過結構化本機協定呼叫它，因此不會出現第二個視窗，也不需要使用者另外安裝 AcroPDF。
+`cross-platform/src-tauri/resources/acropdf-core/embedded_core.py` 是無 GUI 的內建核心；正式建置時由 PyInstaller 封裝成 Tauri sidecar。主程式只透過結構化本機協定呼叫它，因此不會出現第二個視窗，也不需要使用者另外安裝 AcroPDF。核心第一次使用時啟動一次，後續翻頁、搜尋與修改共用常駐程序，避免每個動作重複載入大型 PDF 相依套件。
 
-支援的本機協定包含狀態、報告、渲染、LIVE 驗證、PDF 操作、建立空白文件與文件比較。每次原檔修改前由 Rust 層先建立時間戳記備份。
+支援的本機協定包含狀態、報告、渲染、搜尋／稽核查詢、LIVE 驗證、PDF 操作、建立空白文件與文件比較。每次原檔修改前由 Rust 層先建立時間戳記備份，介面可立即復原最近一次操作。
 
 ## 建置
 
@@ -37,7 +39,7 @@
 - Node.js 22
 - Rust stable
 - Python 3.11 以上
-- PyInstaller、PyMuPDF
+- PyInstaller、PyMuPDF、python-docx、openpyxl、python-pptx、pyHanko（含 ETSI／xsdata 相依套件）
 - Tauri 2 對應平台的系統相依套件
 - ONLYOFFICE Desktop Editors、LibreOffice
 
@@ -58,10 +60,12 @@ npm run build
 ```bash
 cd cross-platform
 npm run frontend:build
-cargo test --manifest-path src-tauri/Cargo.toml --lib
+npm test
 ```
 
-PDF 核心另會實際建立文件、寫入繁中頁首頁尾、渲染頁面、重新封裝並再次開啟；不是只檢查按鈕或模擬回應。
+PDF 核心會實際建立文件，逐項執行內容編輯、頁面、註解、表單、附件、加密、簽章、轉檔與復原，再用對應讀取器重新開啟；不是只檢查按鈕或模擬回應。完整盤點見 `docs/FEATURE-COVERAGE.md`。
+
+封裝後另以 `npm run test:sidecar` 驗證常駐協定、實際搜尋與 LIVE 往返，並限制後續暖回應必須在三秒內完成。
 
 ## Microsoft 專屬界線
 

@@ -41,17 +41,55 @@
     "placeholder",
     "title",
   ];
+  const taiwanTerminology = Object.freeze([
+    ["演示文稿", "簡報"],
+    ["幻燈片", "投影片"],
+    ["工作簿", "活頁簿"],
+    ["單元格", "儲存格"],
+    ["文件夾", "資料夾"],
+    ["服務器", "伺服器"],
+    ["互聯網", "網際網路"],
+    ["網絡", "網路"],
+    ["視頻", "視訊"],
+    ["軟件", "軟體"],
+    ["程序", "程式"],
+    ["默認", "預設"],
+    ["設置", "設定"],
+    ["打印", "列印"],
+    ["保存", "儲存"],
+    ["創建", "建立"],
+    ["鏈接", "連結"],
+    ["視圖", "檢視"],
+    ["組件", "元件"],
+    ["內存", "記憶體"],
+    ["數據", "資料"],
+    ["文檔", "文件"],
+    ["信息", "資訊"],
+    ["單擊", "按一下"],
+    ["鼠標", "滑鼠"],
+    ["宏", "巨集"],
+  ]);
+
+  function localizeTaiwanTerminology(value) {
+    if (typeof value !== "string" || !value) return value;
+    let localized = value;
+    for (const [mainland, taiwan] of taiwanTerminology) {
+      localized = localized.replaceAll(mainland, taiwan);
+    }
+    return localized;
+  }
 
   function translateText(value) {
     if (typeof value !== "string" || !value) return value;
     if (numericFontSizes[value]) return numericFontSizes[value];
-    if (translations[value]) return translations[value];
+    if (translations[value]) return localizeTaiwanTerminology(translations[value]);
 
     const match = value.match(/^(\s*)(.*?)(\s*)$/s);
     if (!match || !match[2]) return value;
     const core = match[2];
     const translated = numericFontSizes[core] || translations[core];
-    return translated ? `${match[1]}${translated}${match[3]}` : value;
+    const result = translated ? `${match[1]}${translated}${match[3]}` : value;
+    return localizeTaiwanTerminology(result);
   }
 
   function shouldSkipTextNode(node) {
@@ -180,5 +218,12 @@
     return true;
   }
 
-  return { forceNumericFontSizes, install, numericFontSizes, translateNode, translateText };
+  return {
+    forceNumericFontSizes,
+    install,
+    localizeTaiwanTerminology,
+    numericFontSizes,
+    translateNode,
+    translateText,
+  };
 });

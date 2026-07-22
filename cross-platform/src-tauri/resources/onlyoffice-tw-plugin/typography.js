@@ -29,17 +29,28 @@
 
   function completePairs(text) {
     const stack = [];
+    let result = "";
     for (const character of String(text)) {
       if (pairs[character]) {
         stack.push(pairs[character]);
+        result += character;
       } else if (stack.length && character === stack[stack.length - 1]) {
         stack.pop();
+        result += character;
       } else if (closingMarks.has(character)) {
         const matchingIndex = stack.lastIndexOf(character);
-        if (matchingIndex >= 0) stack.splice(matchingIndex, 1);
+        if (matchingIndex >= 0) {
+          // 使用者先輸入外層結尾時，必須先補齊尚未關閉的內層符號。
+          // 例如「附件【第一項」應修成「附件【第一項】」，不能變成「附件【第一項」】。
+          while (stack.length - 1 > matchingIndex) result += stack.pop();
+          stack.pop();
+        }
+        result += character;
+      } else {
+        result += character;
       }
     }
-    return String(text) + stack.reverse().join("");
+    return result + stack.reverse().join("");
   }
 
   function alternatingQuotes(text, expression, opening, closing) {

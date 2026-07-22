@@ -6,23 +6,23 @@ import { relaunch } from "@tauri-apps/plugin-process";
 const featureItems = [
   ["word", "文字格式與樣式", "字型、大小、色彩、粗斜底線、段落、定位點、樣式與格式刷。", "編輯引擎"],
   ["word", "標題與自動編號", "〔壹、〕〔一、〕等層級、重新編號、目錄、書籤與交互參照。", "工作台＋編輯引擎"],
-  ["word", "頁面與印刷", "紙張、邊界、分節、欄、浮水印、頁碼、頁首、頁尾與列印。", "已驗證"],
-  ["word", "內容物件", "表格、圖片、圖表、形狀、SmartArt、方程式、文字方塊與超連結。", "編輯引擎"],
-  ["word", "參照與審閱", "目錄、圖表目錄、註腳、尾註、註解、比較、追蹤修訂與保護。", "已驗證"],
+  ["word", "頁面與印刷", "紙張、邊界、分節、欄、浮水印、頁碼、頁首、頁尾與列印。", "編輯引擎＋文件檢查"],
+  ["word", "內容物件", "表格、圖片、圖表、形狀、方程式、文字方塊與超連結；複雜 SmartArt 需逐檔確認。", "編輯引擎"],
+  ["word", "參照與審閱", "目錄、圖表目錄、註腳、尾註、註解、比較、追蹤修訂與保護。", "編輯引擎＋文件檢查"],
   ["word", "表單與郵件合併", "欄位、核取方塊、可填表單、郵件合併與標籤。", "依格式相容"],
-  ["excel", "公式與函數", "數學、統計、邏輯、日期、查閱、陣列、跨表公式與命名範圍。", "已驗證"],
-  ["excel", "資料整理", "格式化表格、排序、篩選、群組、移除重複值、分欄與凍結窗格。", "已驗證"],
-  ["excel", "資料品質", "資料驗證、下拉選單、條件格式、註解、保護與共用檢視。", "已驗證"],
+  ["excel", "公式與函數", "數學、統計、邏輯、日期、查閱、陣列、跨表公式與命名範圍。", "編輯引擎"],
+  ["excel", "資料整理", "格式化表格、排序、篩選、群組、移除重複值、分欄與凍結窗格。", "編輯引擎"],
+  ["excel", "資料品質", "資料驗證、下拉選單、條件格式、註解、保護與共用檢視。", "編輯引擎"],
   ["excel", "分析與圖表", "圖表、趨勢線、樞紐分析、切片器、假設分析與小計。", "依格式相容"],
-  ["excel", "工作表與列印", "多頁籤、隱藏工作表、列印範圍、重複標題列、頁首頁尾與 PDF。", "已驗證"],
+  ["excel", "工作表與列印", "多頁籤、隱藏工作表、列印範圍、重複標題列、頁首頁尾與 PDF。", "編輯引擎"],
   ["excel", "外部資料", "CSV、文字匯入、外部連結與資料連線；來源權限需逐檔確認。", "安全掃描"],
-  ["powerpoint", "佈景與母片", "投影片大小、佈景、色彩、字型、版面、母片與預留位置。", "已驗證"],
-  ["powerpoint", "文字與物件", "文字、表格、圖表、圖片、形狀、SmartArt、方程式與對齊群組。", "已驗證"],
+  ["powerpoint", "佈景與母片", "投影片大小、佈景、色彩、字型、版面、母片與預留位置。", "編輯引擎"],
+  ["powerpoint", "文字與物件", "文字、表格、圖表、圖片、形狀、方程式與對齊群組；複雜 SmartArt 需逐檔確認。", "編輯引擎"],
   ["powerpoint", "媒體", "音訊、視訊、螢幕錄製、超連結與動作按鈕。", "依媒體編碼"],
-  ["powerpoint", "播放效果", "轉場、常用動畫、順序、觸發與放映設定。複雜動作路徑需逐檔確認。", "轉場已驗證"],
-  ["powerpoint", "簡報工具", "備忘稿、簡報者檢視、投影片編號、頁尾、講義、列印與 PDF。", "已驗證"],
-  ["pdf", "PDF 閱讀與輸出", "搜尋、選取、註解、列印，並由本機 LibreOffice 將 Office 文件轉為 PDF。", "本機處理"],
-  ["pdf", "PDF 表單", "建立及填寫 PDF 表單；掃描 PDF 需另行 OCR。", "編輯引擎"],
+  ["powerpoint", "播放效果", "轉場、常用動畫、順序、觸發與放映設定。複雜動作路徑需逐檔確認。", "編輯引擎"],
+  ["powerpoint", "簡報工具", "備忘稿、簡報者檢視、投影片編號、頁尾、講義、列印與 PDF。", "編輯引擎"],
+  ["pdf", "PDF 閱讀、編輯與輸出", "搜尋、頁面、內容、註解、列印及 Word／Excel／簡報／圖片匯出。", "內建 AcroPDF 核心"],
+  ["pdf", "PDF 表單、簽章與安全", "建立／填寫／扁平化表單、PFX／P12 簽署、驗證、AES-256 與永久遮蔽。", "內建 AcroPDF 核心"],
   ["safety", "版本備份", "每次開啟與轉檔前建立副本，原檔保持原格式。", "全能文件工作台"],
   ["safety", "格式風險掃描", "VBA、ActiveX、外部連結、嵌入物件、SmartArt 與缺少字型。", "全能文件工作台"],
   ["safety", "MAGI V2／V3", "只連線目前唯一運作版本；結果直接顯示，離線候選測試不算啟用衝突。", "本機 Agent"],
@@ -180,7 +180,7 @@ const pdfTabs = {
       ["pdf-new", "新增空白 PDF", "建立新文件、插入空白頁，再加入文字、頁碼或註解。", "同視窗 → 新增 PDF", "workspace", "new"],
       ["pdf-tools", "完整 PDF 工具中心", "一次看到頁面整理、編輯、註解、OCR、保護、比較與智慧工具。", "同視窗 PDF 工具架", "workspace", "tools"],
       ["pdf-report", "PDF 健康報告", "檢查頁數、文字頁、掃描頁、影像、表單、簽章、註解、附件與中繼資料。", "工作台直接完成", "report", ""],
-      ["pdf-print", "列印與頁面預覽", "先在同視窗逐頁預覽，再使用系統列印設定頁面範圍、雙面、方向與印表機。", "同視窗預覽 → 系統列印", "editor", "read"],
+      ["pdf-print", "列印與頁面預覽", "先在同視窗逐頁預覽，再使用系統列印設定頁面範圍、雙面、方向與印表機。", "同視窗預覽 → 系統列印", "editor", "print"],
       ["pdf-live", "PDF LIVE 驗證", "實際渲染首末頁、記憶體重新封裝並再次開啟，確認文件可安全處理。", "工作台＋內建 PDF 核心", "live", ""],
     ],
   },
@@ -204,8 +204,8 @@ const pdfTabs = {
       ["pdf-image", "編輯圖片", "選取、移動、縮放、取代或刪除 PDF 內圖片。", "工具 → 編輯圖片", "editor", "edit_image"],
       ["pdf-annotate", "螢光筆與註解", "螢光筆、底線、刪除線、便利貼、文字框、圖形、箭頭、手繪與圖章。", "標記工具列", "editor", "annotate"],
       ["pdf-links", "連結、書籤與附件", "加入網頁／頁面連結、階層書籤及內嵌附件。", "工具 → 連結／書籤／附件", "editor", "tools"],
-      ["pdf-layers", "圖層、尺規與格線", "管理選用內容圖層，使用尺規、格線、距離與面積測量。", "檢視／工具 → 圖層", "editor", "tools"],
-      ["pdf-summary", "註解摘要與匯入匯出", "彙整所有註解，支援 XFDF 往返與註解扁平化。", "工具 → 標注摘要", "editor", "annotate"],
+      ["pdf-layers", "圖層與測量", "檢查及切換選用內容圖層，並以座標與比例進行距離或面積測量。", "同視窗 → 圖層／測量", "editor", "layers"],
+      ["pdf-summary", "註解摘要與扁平化", "彙整各類註解數量，並可將註解與表單外觀永久扁平化。", "同視窗 → 註解摘要／扁平化", "editor", "annotation_summary"],
     ],
   },
   forms: {
@@ -214,7 +214,7 @@ const pdfTabs = {
     tasks: [
       ["pdf-fill", "填寫既有表單", "列出文字、核取、單選、下拉與簽名欄，驗證欄位後再填入。", "工具 → 表單填寫", "editor", "forms"],
       ["pdf-form-design", "建立可填表單", "加入文字、核取、單選、選單、按鈕與簽名欄，設定 Tab 順序。", "工具 → 表單設計", "editor", "form_design"],
-      ["pdf-form-data", "表單資料與扁平化", "匯入／匯出 FDF；交付定稿時可將欄位外觀扁平化。", "表單 → 資料／扁平化", "editor", "forms"],
+      ["pdf-form-data", "表單資料與扁平化", "以本機 JSON 匯入／匯出欄位資料；交付定稿時可將欄位外觀扁平化。", "同視窗 → 表單資料／扁平化", "editor", "form_data"],
       ["pdf-sign", "數位簽章與驗證", "使用本機憑證簽署、檢查簽章狀態；簽署後修改會影響有效性。", "工具 → 數位簽章", "editor", "sign"],
     ],
   },
@@ -386,6 +386,9 @@ const state = {
   pdfPages: 0,
   pdfZoom: 1.25,
   pdfRenderToken: 0,
+  pdfPassword: "",
+  pdfSearchHits: [],
+  lastPdfBackup: null,
   featureTab: "all",
 };
 const $ = (selector) => document.querySelector(selector);
@@ -497,6 +500,12 @@ async function selectDocument(path) {
   if (!path) return;
   try {
     const analysis = await invoke("scan_document", { path });
+    if (path !== state.selectedPath) {
+      state.pdfPassword = "";
+      state.lastPdfBackup = null;
+      if ($("#pdf-password")) $("#pdf-password").value = "";
+      if ($("#pdf-undo")) $("#pdf-undo").disabled = true;
+    }
     state.selectedPath = path;
     state.selectedAnalysis = analysis;
     $("#workspace").classList.remove("hidden");
@@ -769,7 +778,7 @@ function renderPdfTab() {
     <article class="pdf-task-card">
       <div class="pdf-task-icon" aria-hidden="true">${action === "report" ? "✓" : action === "live" ? "LIVE" : action === "magi" ? "AI" : "PDF"}</div>
       <div class="pdf-task-copy"><h3>${escapeHtml(title)}</h3><p>${escapeHtml(detail)}</p><small>${escapeHtml(location)}</small></div>
-      <button class="pdf-task-action" data-pdf-task="${id}">${action === "report" ? "立即檢查" : action === "live" ? "開始驗證" : action === "magi" ? "交給 MAGI" : action === "workspace" ? "啟動工具" : "備份並開啟"}</button>
+      <button class="pdf-task-action" data-pdf-task="${id}">${action === "report" ? "立即檢查" : action === "live" ? "開始驗證" : action === "magi" ? "交給 MAGI" : action === "workspace" ? "啟動工具" : "在此視窗使用"}</button>
     </article>`).join("");
   $$('[data-pdf-task]').forEach((button) => button.addEventListener("click", () => runPdfTask(button.dataset.pdfTask)));
 }
@@ -786,15 +795,28 @@ const pdfToolMap = {
   merge: "merge",
   split: "split",
   extract: "extract",
-  edit_text: "add-text",
-  annotate: "note",
+  edit_text: "edit-text",
+  edit_image: "image-replace",
+  annotate: "mark",
+  annotation_summary: "annotation-summary",
+  layers: "layers",
+  print: "print",
   watermark: "watermark",
   header_footer: "header-footer",
+  forms: "fill-form",
+  form_data: "export-form-data",
+  form_design: "create-field",
+  sign: "sign",
   ocr: "ocr",
+  convert: "export",
   optimize: "optimize",
   protect: "encrypt",
   redact: "redact",
   compare: "compare",
+  preflight: "audit",
+  accessibility: "accessibility",
+  batch: "batch",
+  filing: "filing",
 };
 
 async function openPdfWorkspace(path, tool = "tools") {
@@ -802,6 +824,8 @@ async function openPdfWorkspace(path, tool = "tools") {
   if (!source) return null;
   const result = await invoke("open_in_acropdf", { path: source, tool: tool || null });
   state.pdfPage = 0;
+  state.lastPdfBackup = null;
+  $("#pdf-undo").disabled = true;
   $("#pdf-inline-workspace").classList.remove("hidden");
   $("#pdf-inline-file").textContent = source;
   $("#pdf-inline-status").textContent = result.message;
@@ -866,10 +890,38 @@ async function createBlankPdf() {
 function renderPdfPageButtons() {
   const root = $("#pdf-page-buttons");
   root.innerHTML = Array.from({ length: state.pdfPages }, (_, index) => `
-    <button class="${index === state.pdfPage ? "active" : ""}" data-pdf-page="${index}" aria-label="前往第 ${index + 1} 頁">
+    <button class="pdf-page-button ${index === state.pdfPage ? "active" : ""}" data-pdf-page="${index}" draggable="true" aria-label="前往第 ${index + 1} 頁；可拖曳重新排列">
       <span>${index + 1}</span><small>第 ${index + 1} 頁</small>
     </button>`).join("");
-  $$('[data-pdf-page]').forEach((button) => button.addEventListener("click", () => renderPdfPage(Number(button.dataset.pdfPage))));
+  $$('[data-pdf-page]').forEach((button) => {
+    button.addEventListener("click", () => renderPdfPage(Number(button.dataset.pdfPage)));
+    button.addEventListener("dragstart", (event) => {
+      event.dataTransfer.effectAllowed = "move";
+      event.dataTransfer.setData("text/plain", button.dataset.pdfPage);
+      button.classList.add("dragging");
+    });
+    button.addEventListener("dragend", () => button.classList.remove("dragging"));
+    button.addEventListener("dragover", (event) => {
+      event.preventDefault();
+      event.dataTransfer.dropEffect = "move";
+    });
+    button.addEventListener("drop", async (event) => {
+      event.preventDefault();
+      const from = Number(event.dataTransfer.getData("text/plain"));
+      const to = Number(button.dataset.pdfPage);
+      if (!Number.isInteger(from) || from === to) return;
+      const order = Array.from({ length: state.pdfPages }, (_, index) => index);
+      const [moved] = order.splice(from, 1);
+      order.splice(to, 0, moved);
+      try {
+        await applyPdfOperation("reorder", { order });
+        state.pdfPage = to;
+        await renderPdfPage(to);
+      } catch (error) {
+        toast(`頁面重排失敗：${error}`, 9000);
+      }
+    });
+  });
 }
 
 async function renderPdfPage(page = state.pdfPage) {
@@ -885,7 +937,7 @@ async function renderPdfPage(page = state.pdfPage) {
       path: state.selectedPath,
       page: Math.max(0, page),
       scale: state.pdfZoom,
-      password: null,
+      password: state.pdfPassword || null,
     });
     if (token !== state.pdfRenderToken) return;
     state.pdfPages = Number(result.pages) || 1;
@@ -914,8 +966,13 @@ async function renderPdfPage(page = state.pdfPage) {
 async function applyPdfOperation(operation, options = {}, output = null) {
   if (!isPdfPath(state.selectedPath)) throw new Error("請先選擇 PDF 文件");
   const source = state.selectedPath;
+  if (state.pdfPassword && !options.password) options.password = state.pdfPassword;
   $("#pdf-inline-status").textContent = "正在處理；完成前請勿關閉文件…";
   const result = await invoke("pdf_apply_operation", { path: source, operation, options, output });
+  if (result.backup) {
+    state.lastPdfBackup = result.backup;
+    $("#pdf-undo").disabled = false;
+  }
   if (operation === "split") {
     const count = result.outputs?.length || 0;
     $("#pdf-inline-status").textContent = `已分割為 ${count} 份 PDF。`;
@@ -944,17 +1001,100 @@ const pdfToolDefinitions = {
       { name: "font_size", label: "字型大小", type: "number", value: 12, min: 6, max: 72 },
     ],
   },
+  "edit-text": {
+    title: "搜尋並取代 PDF 文字",
+    detail: "搜尋指定文字、永久移除原內容，再寫入替代文字。複雜字距與段落重排仍需逐頁確認。",
+    operation: "edit_text",
+    fields: [
+      { name: "text", label: "要取代的文字", type: "text", required: true },
+      { name: "replacement", label: "替代文字（留白代表刪除）", type: "text" },
+      { name: "font_size", label: "替代文字大小", type: "number", value: 11, min: 5, max: 72 },
+    ],
+  },
   note: {
     title: "加入便利貼註解",
     detail: "在目前頁加入可繼續編輯的 PDF 註解。",
     operation: "note",
     fields: [{ name: "text", label: "註解內容", type: "textarea", required: true, placeholder: "輸入註解" }],
   },
+  "free-text": {
+    title: "加入可編輯文字框",
+    detail: "在目前頁加入 PDF FreeText 註解，可由相容 PDF 編輯器繼續修改。",
+    operation: "free_text",
+    fields: [
+      { name: "text", label: "文字框內容", type: "textarea", required: true },
+      { name: "font_size", label: "字型大小", type: "number", value: 11, min: 6, max: 72 },
+      { name: "x", label: "左側位置（pt）", type: "number", value: 72, min: 0 },
+      { name: "y", label: "上方位置（pt）", type: "number", value: 72, min: 0 },
+      { name: "width", label: "寬度（pt）", type: "number", value: 260, min: 20 },
+      { name: "height", label: "高度（pt）", type: "number", value: 72, min: 20 },
+    ],
+  },
   highlight: {
     title: "搜尋並標示",
     detail: "搜尋整份 PDF 的相同文字並加上螢光標示。",
     operation: "highlight_search",
     fields: [{ name: "text", label: "要標示的文字", type: "text", required: true }],
+  },
+  mark: {
+    title: "搜尋並加入文字標記",
+    detail: "支援螢光、底線、刪除線及波浪線，保留為可編輯 PDF 註解。",
+    operation: "mark_search",
+    fields: [
+      { name: "text", label: "要標記的文字", type: "text", required: true },
+      { name: "style", label: "標記類型", type: "select", value: "highlight", options: [["highlight", "螢光"], ["underline", "底線"], ["strikeout", "刪除線"], ["squiggly", "波浪線"]] },
+      { name: "color", label: "顏色（十六進位）", type: "text", value: "#FFD43B" },
+      { name: "opacity", label: "透明度", type: "number", value: 0.55, min: 0.05, max: 1, step: 0.05 },
+    ],
+  },
+  shape: {
+    title: "加入圖形、箭頭、圖章或手繪",
+    detail: "在目前頁指定區域加入可編輯 PDF 註解。",
+    operation: "shape",
+    fields: [
+      { name: "kind", label: "物件類型", type: "select", value: "rectangle", options: [["rectangle", "矩形"], ["circle", "圓形"], ["line", "線條"], ["arrow", "箭頭"], ["stamp", "草稿圖章"], ["ink", "手繪線"]] },
+      { name: "x", label: "左側位置（pt）", type: "number", value: 72, min: 0 },
+      { name: "y", label: "上方位置（pt）", type: "number", value: 72, min: 0 },
+      { name: "width", label: "寬度（pt）", type: "number", value: 180, min: 10 },
+      { name: "height", label: "高度（pt）", type: "number", value: 80, min: 10 },
+      { name: "color", label: "線條顏色", type: "text", value: "#D7263D" },
+      { name: "border_width", label: "線條粗細", type: "number", value: 2, min: 0.5, max: 20, step: 0.5 },
+    ],
+  },
+  measure: {
+    title: "距離與面積測量",
+    detail: "用 PDF 點數量測指定矩形的對角距離或面積；可輸入圖面比例換算成實際單位。",
+    operation: "measure",
+    fields: [
+      { name: "mode", label: "測量類型", type: "select", value: "distance", options: [["distance", "距離"], ["area", "面積"]] },
+      { name: "x", label: "起點 X（pt）", type: "number", value: 72, min: 0 },
+      { name: "y", label: "起點 Y（pt）", type: "number", value: 72, min: 0 },
+      { name: "width", label: "水平距離（pt）", type: "number", value: 144, min: 1 },
+      { name: "height", label: "垂直距離（pt）", type: "number", value: 72, min: 1 },
+      { name: "scale", label: "每 1 pt 對應的單位數", type: "number", value: 1, min: 0.0001, step: 0.01 },
+      { name: "unit", label: "單位", type: "text", value: "pt" },
+    ],
+  },
+  link: {
+    title: "加入網頁連結",
+    detail: "在目前頁指定區域建立可點擊的 HTTPS／網頁連結。",
+    operation: "link",
+    fields: [
+      { name: "uri", label: "網址", type: "url", required: true, placeholder: "https://example.com" },
+      { name: "x", label: "左側位置（pt）", type: "number", value: 72, min: 0 },
+      { name: "y", label: "上方位置（pt）", type: "number", value: 72, min: 0 },
+      { name: "width", label: "寬度（pt）", type: "number", value: 220, min: 10 },
+      { name: "height", label: "高度（pt）", type: "number", value: 28, min: 8 },
+    ],
+  },
+  bookmark: {
+    title: "加入頁面書籤",
+    detail: "把目前頁加入 PDF 導覽書籤，可指定層級。",
+    operation: "bookmark",
+    fields: [
+      { name: "title", label: "書籤名稱", type: "text", required: true },
+      { name: "level", label: "書籤層級", type: "number", value: 1, min: 1, max: 12 },
+    ],
   },
   watermark: {
     title: "加入文字浮水印",
@@ -979,11 +1119,45 @@ const pdfToolDefinitions = {
       { name: "font_size", label: "字型大小", type: "number", value: 10, min: 6, max: 30 },
     ],
   },
+  "create-field": {
+    title: "建立 PDF 表單欄位",
+    detail: "在目前頁加入文字、核取、下拉選單或簽名欄。欄位名稱必須唯一。",
+    operation: "create_field",
+    fields: [
+      { name: "field_type", label: "欄位類型", type: "select", value: "text", options: [["text", "文字欄位"], ["checkbox", "核取方塊"], ["choice", "下拉選單"], ["signature", "簽名欄"]] },
+      { name: "name", label: "欄位名稱", type: "text", required: true },
+      { name: "label", label: "欄位標籤", type: "text" },
+      { name: "value", label: "預設值", type: "text" },
+      { name: "choices", label: "下拉選項（逗號分隔）", type: "text" },
+      { name: "x", label: "左側位置（pt）", type: "number", value: 72, min: 0 },
+      { name: "y", label: "上方位置（pt）", type: "number", value: 72, min: 0 },
+      { name: "width", label: "寬度（pt）", type: "number", value: 220, min: 10 },
+      { name: "height", label: "高度（pt）", type: "number", value: 30, min: 8 },
+    ],
+  },
+  accessibility: {
+    title: "設定文件標題與主要語言",
+    detail: "補上 PDF/UA 基礎中繼資料；完整結構樹與閱讀順序仍需專業標記工具逐項處理。",
+    operation: "accessibility_metadata",
+    fields: [
+      { name: "title", label: "文件標題", type: "text", required: true },
+      { name: "author", label: "作者", type: "text" },
+      { name: "language", label: "主要語言", type: "text", value: "zh-TW" },
+    ],
+  },
   redact: {
     title: "永久遮蔽文字",
     detail: "搜尋整份文件並永久移除符合內容。完成後無法從目前版本還原，但會保留自動備份。",
     operation: "redact_search",
     fields: [{ name: "text", label: "要永久遮蔽的文字", type: "text", required: true }],
+  },
+  "redact-pattern": {
+    title: "依格式永久遮蔽",
+    detail: "可遮蔽電子郵件、台灣身分證字號或自訂正規表示式。執行前請先用備份確認規則。",
+    operation: "redact_pattern",
+    fields: [
+      { name: "pattern", label: "正規表示式（預設：台灣身分證字號）", type: "text", value: "[A-Z][12]\\d{8}" },
+    ],
   },
   encrypt: {
     title: "設定 PDF 密碼",
@@ -1006,10 +1180,17 @@ function pdfToolFieldHtml(field) {
     field.max !== undefined ? `max="${field.max}"` : "",
     field.step !== undefined ? `step="${field.step}"` : "",
   ].filter(Boolean).join(" ");
-  const control = field.type === "textarea"
-    ? `<textarea ${attributes}>${field.value ? escapeHtml(String(field.value)) : ""}</textarea>`
-    : `<input type="${field.type || "text"}" ${attributes} />`;
-  return `<label><span>${escapeHtml(field.label)}</span>${control}</label>`;
+  let control;
+  if (field.type === "textarea") {
+    control = `<textarea ${attributes}>${field.value ? escapeHtml(String(field.value)) : ""}</textarea>`;
+  } else if (field.type === "select") {
+    control = `<select ${attributes}>${(field.options || []).map(([value, label]) => `<option value="${escapeHtml(String(value))}" ${String(value) === String(field.value) ? "selected" : ""}>${escapeHtml(String(label))}</option>`).join("")}</select>`;
+  } else if (field.type === "checkbox") {
+    control = `<input type="checkbox" ${attributes} ${field.value ? "checked" : ""} />`;
+  } else {
+    control = `<input type="${field.type || "text"}" ${attributes} />`;
+  }
+  return `<label class="pdf-tool-field"><span>${escapeHtml(field.label)}</span>${control}</label>`;
 }
 
 function requestPdfToolOptions(definition) {
@@ -1029,13 +1210,289 @@ function requestPdfToolOptions(definition) {
       const options = {};
       for (const field of definition.fields) {
         const raw = data.get(field.name);
-        options[field.name] = field.type === "number" ? Number(raw) : String(raw || "");
+        if (field.type === "number") options[field.name] = Number(raw);
+        else if (field.type === "checkbox") options[field.name] = raw !== null;
+        else options[field.name] = String(raw || "");
       }
       resolve(options);
     }, { once: true });
     dialog.showModal();
-    $("#pdf-tool-fields input, #pdf-tool-fields textarea")?.focus();
+    $("#pdf-tool-fields input, #pdf-tool-fields textarea, #pdf-tool-fields select")?.focus();
   });
+}
+
+function pathLeaf(path) {
+  return String(path || "文件").split(/[\\/]/).pop() || "文件";
+}
+
+function pathStem(path) {
+  return pathLeaf(path).replace(/\.[^.]+$/, "");
+}
+
+function joinLocalPath(directory, fileName) {
+  const separator = String(directory).includes("\\") && !String(directory).includes("/") ? "\\" : "/";
+  return `${String(directory).replace(/[\\/]$/, "")}${separator}${fileName}`;
+}
+
+async function queryCurrentPdf(query, options = {}) {
+  if (!isPdfPath(state.selectedPath)) throw new Error("請先選擇 PDF 文件");
+  if (state.pdfPassword && !options.password) options.password = state.pdfPassword;
+  return invoke("pdf_query", { path: state.selectedPath, query, options });
+}
+
+async function searchCurrentPdf() {
+  const text = $("#pdf-search-text").value.trim();
+  if (!text) {
+    toast("請先輸入要搜尋的文字。");
+    return;
+  }
+  const result = await queryCurrentPdf("search", { text });
+  state.pdfSearchHits = result.hits || [];
+  if (!result.matches) {
+    $("#pdf-inline-status").textContent = `找不到「${text}」。`;
+    toast(`找不到「${text}」。`);
+    return;
+  }
+  const first = state.pdfSearchHits[0];
+  await renderPdfPage(Number(first.page) || 0);
+  $("#pdf-inline-status").textContent = `找到 ${result.matches} 處「${text}」；已前往第一筆，第 ${Number(first.page) + 1} 頁。`;
+  toast(`找到 ${result.matches} 處；已前往第一筆。`, 7000);
+}
+
+async function fillPdfForm() {
+  const result = await queryCurrentPdf("forms");
+  const editable = (result.fields || []).filter((field) => !field.read_only && field.type_id !== 6);
+  if (!editable.length) {
+    toast("這份 PDF 沒有可填寫的表單欄位。", 7000);
+    return;
+  }
+  const fields = editable.map((field, index) => {
+    let type = "text";
+    let options;
+    if (String(field.type).toLowerCase().includes("check")) {
+      type = "select";
+      options = [["Off", "未勾選"], ["Yes", "已勾選"]];
+    } else if (field.choices?.length) {
+      type = "select";
+      options = field.choices.map((value) => [value, value]);
+    }
+    return {
+      name: `field_${index}`,
+      label: `${field.label || field.name}（第 ${Number(field.page) + 1} 頁・${field.type}）`,
+      type,
+      value: field.value || (options?.[0]?.[0] ?? ""),
+      options,
+    };
+  });
+  const values = await requestPdfToolOptions({
+    title: "填寫 PDF 表單",
+    detail: `共 ${editable.length} 個可填欄位；儲存前會保留原始版本。`,
+    fields,
+  });
+  if (!values) return;
+  const mapped = {};
+  editable.forEach((field, index) => { mapped[field.name] = values[`field_${index}`]; });
+  const applied = await applyPdfOperation("fill_form", { values: mapped });
+  toast(`已更新 ${applied.fields_changed || 0} 個表單欄位。`, 8000);
+}
+
+async function exportCurrentPdf() {
+  const choice = await requestPdfToolOptions({
+    title: "匯出 PDF 內容",
+    detail: "文字與網頁採可編輯內容；PPTX 以頁面影像保留版面，文字放入備忘稿。",
+    fields: [{
+      name: "format",
+      label: "匯出格式",
+      type: "select",
+      value: "docx",
+      options: [["docx", "Word（可編輯文字重排）"], ["xlsx", "Excel（每頁一張工作表）"], ["pptx", "PowerPoint（版面影像＋備忘稿）"], ["txt", "純文字"], ["html", "HTML 網頁"], ["png", "目前頁 PNG"], ["jpg", "目前頁 JPEG"]],
+    }],
+  });
+  if (!choice) return;
+  const format = choice.format;
+  const destination = await save({
+    defaultPath: `${pathStem(state.selectedPath)}_匯出.${format}`,
+    filters: [{ name: `${format.toUpperCase()} 檔案`, extensions: [format === "jpg" ? "jpg" : format] }],
+  });
+  if (!destination) return;
+  const result = await applyPdfOperation("export", { format, page: state.pdfPage, dpi: 200 }, destination);
+  $("#pdf-inline-status").textContent = `${result.output}・${result.fidelity}`;
+}
+
+async function runPdfAudit() {
+  const result = await queryCurrentPdf("audit");
+  const firstIssues = (result.issues || []).slice(0, 4).map((issue) => issue.message).join("；");
+  const summary = `預檢完成：${result.errors || 0} 個錯誤、${result.warnings || 0} 個提醒、${result.fonts_not_embedded || 0} 個未確認嵌入字型、${result.low_resolution_images || 0} 張低解析度影像。`;
+  $("#pdf-inline-status").textContent = firstIssues ? `${summary} ${firstIssues}` : `${summary} 沒有發現已知交付問題。`;
+  toast(summary, 11000);
+}
+
+async function verifyPdfSignatures() {
+  const result = await queryCurrentPdf("signatures");
+  if (!result.available) {
+    toast(result.message, 9000);
+    return;
+  }
+  const valid = (result.signatures || []).filter((signature) => signature.valid && signature.intact).length;
+  const message = result.count ? `找到 ${result.count} 個數位簽章，其中 ${valid} 個內容完整且簽章有效。` : "這份 PDF 沒有數位簽章。";
+  $("#pdf-inline-status").textContent = message;
+  toast(message, 9000);
+}
+
+async function signCurrentPdf() {
+  const certificate = await open({ multiple: false, directory: false, filters: [{ name: "PKCS#12 憑證", extensions: ["p12", "pfx"] }] });
+  if (typeof certificate !== "string") return;
+  const options = await requestPdfToolOptions({
+    title: "使用本機憑證簽署 PDF",
+    detail: "簽章會另存新檔；憑證與密碼只交給本機簽章核心。",
+    fields: [
+      { name: "certificate_password", label: "憑證密碼", type: "password" },
+      { name: "field_name", label: "簽章欄位名稱", type: "text", value: "Signature1" },
+      { name: "reason", label: "簽署原因", type: "text" },
+      { name: "location", label: "簽署地點", type: "text", value: "Taiwan" },
+    ],
+  });
+  if (!options) return;
+  const destination = await save({ defaultPath: `${pathStem(state.selectedPath)}_已簽署.pdf`, filters: [{ name: "PDF 文件", extensions: ["pdf"] }] });
+  if (!destination) return;
+  options.certificate = certificate;
+  options.page = state.pdfPage;
+  await applyPdfOperation("sign", options, destination);
+}
+
+async function batchProcessPdfs() {
+  const files = await open({ multiple: true, directory: false, filters: [{ name: "PDF 文件", extensions: ["pdf"] }] });
+  if (!Array.isArray(files) || !files.length) return;
+  const outputDir = await open({ multiple: false, directory: true, title: "選擇批次輸出資料夾" });
+  if (typeof outputDir !== "string") return;
+  const options = await requestPdfToolOptions({
+    title: "批次處理 PDF",
+    detail: `將同一項操作套用到 ${files.length} 份 PDF，全部另存新檔。`,
+    fields: [
+      { name: "batch_operation", label: "操作", type: "select", value: "watermark", options: [["watermark", "加入浮水印"], ["header_footer", "加入頁碼"], ["optimize", "最佳化"]] },
+      { name: "text", label: "浮水印文字", type: "text", value: "機密" },
+      { name: "footer", label: "頁尾／頁碼", type: "text", value: "第 {page} 頁，共 {pages} 頁" },
+    ],
+  });
+  if (!options) return;
+  const operation = options.batch_operation;
+  const results = [];
+  for (const path of files) {
+    const destination = joinLocalPath(outputDir, `${pathStem(path)}_批次.pdf`);
+    const operationOptions = operation === "watermark"
+      ? { text: options.text, opacity: 0.22, font_size: 56 }
+      : operation === "header_footer"
+        ? { footer: options.footer, font_size: 10 }
+        : { remove_metadata: false };
+    try {
+      await invoke("pdf_apply_operation", { path, operation, options: operationOptions, output: destination });
+      results.push({ path, ok: true });
+    } catch (error) {
+      results.push({ path, ok: false, error: String(error) });
+    }
+  }
+  const passed = results.filter((result) => result.ok).length;
+  const message = `批次完成：${passed}/${results.length} 份成功，輸出到 ${outputDir}。`;
+  $("#pdf-inline-status").textContent = message;
+  toast(message, 10000);
+}
+
+async function smartFileCurrentPdf() {
+  const outputDir = await open({ multiple: false, directory: true, title: "選擇智慧歸檔根資料夾" });
+  if (typeof outputDir !== "string") return;
+  const result = await applyPdfOperation("smart_file", {}, outputDir);
+  const message = `已歸檔到「${result.category}」：${result.output}`;
+  $("#pdf-inline-status").textContent = message;
+  toast(message, 10000);
+}
+
+async function showAnnotationSummary() {
+  const result = await queryCurrentPdf("annotations");
+  const counts = new Map();
+  for (const annotation of result.annotations || []) {
+    counts.set(annotation.type, (counts.get(annotation.type) || 0) + 1);
+  }
+  const detail = [...counts.entries()].map(([type, count]) => `${type} ${count} 則`).join("、");
+  const message = result.count ? `共 ${result.count} 則註解：${detail}` : "這份 PDF 沒有註解。";
+  $("#pdf-inline-status").textContent = message;
+  toast(message, 9000);
+}
+
+async function managePdfLayers() {
+  const result = await queryCurrentPdf("layers");
+  if (!result.count) {
+    toast("這份 PDF 沒有選用內容圖層（OCG）。", 7000);
+    return;
+  }
+  const choice = await requestPdfToolOptions({
+    title: "切換 PDF 圖層顯示",
+    detail: "選擇一個圖層並切換顯示狀態；鎖定圖層不會被改動。",
+    fields: [{
+      name: "number",
+      label: "圖層",
+      type: "select",
+      value: String(result.layers[0].number),
+      options: result.layers.map((layer) => [String(layer.number), `${layer.on ? "顯示" : "隱藏"}・${layer.text}${layer.locked ? "（鎖定）" : ""}`]),
+    }],
+  });
+  if (!choice) return;
+  const layer = result.layers.find((item) => String(item.number) === String(choice.number));
+  if (layer?.locked) {
+    toast("這個 PDF 圖層已鎖定，不能切換。", 7000);
+    return;
+  }
+  await applyPdfOperation("layer_visibility", { number: Number(choice.number) });
+}
+
+async function extractPdfAttachment() {
+  const result = await queryCurrentPdf("attachments");
+  if (!result.count) {
+    toast("這份 PDF 沒有嵌入附件。", 7000);
+    return;
+  }
+  const choice = await requestPdfToolOptions({
+    title: "擷取 PDF 附件",
+    detail: "附件只會寫入您選擇的位置，不會自動開啟。",
+    fields: [{ name: "name", label: "附件", type: "select", value: result.attachments[0].name, options: result.attachments.map((attachment) => [attachment.name, attachment.filename]) }],
+  });
+  if (!choice) return;
+  const selected = result.attachments.find((attachment) => attachment.name === choice.name);
+  const destination = await save({ defaultPath: selected?.filename || choice.name });
+  if (!destination) return;
+  await applyPdfOperation("extract_attachment", { name: choice.name }, destination);
+}
+
+async function exportPdfFormData() {
+  const destination = await save({ defaultPath: `${pathStem(state.selectedPath)}_表單資料.json`, filters: [{ name: "JSON 表單資料", extensions: ["json"] }] });
+  if (!destination) return;
+  const result = await applyPdfOperation("export_form_data", {}, destination);
+  toast(`已匯出 ${result.fields || 0} 個表單欄位。`, 8000);
+}
+
+async function importPdfFormData() {
+  const data = await open({ multiple: false, directory: false, filters: [{ name: "JSON 表單資料", extensions: ["json"] }] });
+  if (typeof data !== "string") return;
+  const result = await applyPdfOperation("import_form_data", { data });
+  toast(`已匯入並更新 ${result.fields_changed || 0} 個表單欄位。`, 8000);
+}
+
+async function printCurrentPdf() {
+  if (!isPdfPath(state.selectedPath)) return;
+  if (state.pdfPages > 200 && !window.confirm(`這份 PDF 有 ${state.pdfPages} 頁，準備列印預覽可能需要較多記憶體。要繼續嗎？`)) return;
+  const root = $("#pdf-print-root");
+  root.innerHTML = "";
+  $("#pdf-inline-status").textContent = `正在準備 ${state.pdfPages} 頁列印預覽…`;
+  for (let page = 0; page < state.pdfPages; page += 1) {
+    const rendered = await invoke("pdf_render_page", {
+      path: state.selectedPath,
+      page,
+      scale: 2,
+      password: state.pdfPassword || null,
+    });
+    root.insertAdjacentHTML("beforeend", `<section class="pdf-print-page"><img src="${rendered.data_url}" alt="第 ${page + 1} 頁" /></section>`);
+  }
+  $("#pdf-inline-status").textContent = "列印預覽已完成；請在系統對話框選擇頁碼範圍與印表機。";
+  window.setTimeout(() => window.print(), 100);
 }
 
 async function runEmbeddedPdfTool(tool) {
@@ -1101,6 +1558,95 @@ async function runEmbeddedPdfTool(tool) {
       toast(message, 10000);
       return;
     }
+    if (tool === "search") {
+      await searchCurrentPdf();
+      return;
+    }
+    if (tool === "fill-form") {
+      await fillPdfForm();
+      return;
+    }
+    if (tool === "annotation-summary") {
+      await showAnnotationSummary();
+      return;
+    }
+    if (tool === "layers") {
+      await managePdfLayers();
+      return;
+    }
+    if (tool === "extract-attachment") {
+      await extractPdfAttachment();
+      return;
+    }
+    if (tool === "export-form-data") {
+      await exportPdfFormData();
+      return;
+    }
+    if (tool === "import-form-data") {
+      await importPdfFormData();
+      return;
+    }
+    if (tool === "print") {
+      await printCurrentPdf();
+      return;
+    }
+    if (tool === "export") {
+      await exportCurrentPdf();
+      return;
+    }
+    if (tool === "audit") {
+      await runPdfAudit();
+      return;
+    }
+    if (tool === "verify-signatures") {
+      await verifyPdfSignatures();
+      return;
+    }
+    if (tool === "sign") {
+      await signCurrentPdf();
+      return;
+    }
+    if (tool === "batch") {
+      await batchProcessPdfs();
+      return;
+    }
+    if (tool === "filing") {
+      await smartFileCurrentPdf();
+      return;
+    }
+    if (tool === "attach-file") {
+      const attachment = await open({ multiple: false, directory: false, title: "選擇要嵌入 PDF 的附件" });
+      if (typeof attachment !== "string") return;
+      await applyPdfOperation("attach_file", { attachment, name: pathLeaf(attachment) });
+      return;
+    }
+    if (tool === "image-delete" || tool === "image-replace") {
+      const selection = await requestPdfToolOptions({
+        title: tool === "image-delete" ? "刪除頁面圖片" : "替換頁面圖片",
+        detail: "圖片序號從 1 開始；同一圖片資源在目前頁出現多次時會一併處理。",
+        fields: [{ name: "image_number", label: "目前頁圖片序號", type: "number", value: 1, min: 1 }],
+      });
+      if (!selection) return;
+      const options = { image_index: Math.max(0, Number(selection.image_number) - 1), page: state.pdfPage };
+      if (tool === "image-replace") {
+        const image = await open({ multiple: false, directory: false, filters: [{ name: "圖片", extensions: ["png", "jpg", "jpeg", "webp"] }] });
+        if (typeof image !== "string") return;
+        options.image = image;
+      } else if (!window.confirm("確定刪除指定圖片？原始版本會保留在安全備份資料夾。")) return;
+      await applyPdfOperation(tool === "image-delete" ? "image_delete" : "image_replace", options);
+      return;
+    }
+    if (tool === "flatten") {
+      if (!window.confirm("扁平化會把註解與表單外觀永久燒入頁面，之後不能繼續編輯欄位。確定繼續嗎？")) return;
+      await applyPdfOperation("flatten", { annotations: true, forms: true });
+      return;
+    }
+    if (tool === "decrypt") {
+      const output = await save({ defaultPath: `${pathStem(state.selectedPath)}_解除密碼.pdf`, filters: [{ name: "PDF 文件", extensions: ["pdf"] }] });
+      if (!output) return;
+      await applyPdfOperation("decrypt", { password: state.pdfPassword }, output);
+      return;
+    }
     if (tool === "optimize") {
       if (!window.confirm("要最佳化目前 PDF 嗎？程式會先自動備份，並移除未使用物件。")) return;
       await applyPdfOperation("optimize", { remove_metadata: false });
@@ -1135,7 +1681,7 @@ async function runEmbeddedPdfTool(tool) {
 
 async function loadPdfReport(path, shouldScroll = false) {
   try {
-    const report = await invoke("pdf_report", { path });
+    const report = await invoke("pdf_report", { path, password: state.pdfPassword || null });
     state.pdfReport = report;
     $("#pdf-current").classList.remove("hidden");
     $("#pdf-report-title").textContent = report.file_name;
@@ -1182,7 +1728,7 @@ async function runPdfLiveCheck(path = state.selectedPath) {
   button.disabled = true;
   button.textContent = "正在渲染與往返驗證…";
   try {
-    const result = await invoke("pdf_live_validate", { path });
+    const result = await invoke("pdf_live_validate", { path, password: state.pdfPassword || null });
     if (!result.passed) throw new Error(result.reason || "PDF LIVE 驗證未通過");
     toast(`PDF LIVE 驗證通過：渲染 ${result.rendered_pages} 頁，重新封裝 ${Number(result.roundtrip_bytes).toLocaleString("zh-TW")} 位元組並成功再開啟。`, 10000);
   } catch (error) {
@@ -1332,6 +1878,35 @@ $("#pdf-zoom-fit").addEventListener("click", () => {
   const available = Math.max(360, $("#pdf-canvas-viewport").clientWidth - 64);
   state.pdfZoom = Math.min(3, Math.max(0.35, Math.round((available / 595) * 100) / 100));
   renderPdfPage();
+});
+$("#pdf-search-run").addEventListener("click", () => searchCurrentPdf().catch((error) => toast(`搜尋失敗：${error}`, 9000)));
+$("#pdf-search-text").addEventListener("keydown", (event) => {
+  if (event.key !== "Enter") return;
+  event.preventDefault();
+  searchCurrentPdf().catch((error) => toast(`搜尋失敗：${error}`, 9000));
+});
+$("#pdf-password-apply").addEventListener("click", async () => {
+  state.pdfPassword = $("#pdf-password").value;
+  try {
+    await loadPdfReport(state.selectedPath);
+    await renderPdfPage(state.pdfPage);
+    toast("PDF 密碼已在本機套用到目前工作階段。", 7000);
+  } catch (error) {
+    toast(`無法解鎖 PDF：${error}`, 9000);
+  }
+});
+$("#pdf-undo").addEventListener("click", async () => {
+  if (!state.lastPdfBackup || !isPdfPath(state.selectedPath)) return;
+  try {
+    const result = await invoke("pdf_restore_backup", { path: state.selectedPath, backup: state.lastPdfBackup });
+    state.lastPdfBackup = null;
+    $("#pdf-undo").disabled = true;
+    await loadPdfReport(state.selectedPath);
+    await renderPdfPage(state.pdfPage);
+    toast(result.message, 8000);
+  } catch (error) {
+    toast(`無法復原：${error}`, 9000);
+  }
 });
 $$('[data-pdf-operation]').forEach((button) => button.addEventListener("click", () => runEmbeddedPdfTool(button.dataset.pdfOperation)));
 $("#pdf-live-check").addEventListener("click", () => runPdfLiveCheck());

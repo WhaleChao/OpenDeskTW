@@ -1,6 +1,6 @@
 # 安全熱修與版本更新
 
-OpenDesk TW 2 使用 Tauri 2 Updater。macOS 與 Windows 更新包必須由專用私鑰簽章，App 只內建公開金鑰；簽章錯誤、版本不相容或下載不完整時不會安裝。
+全能文件工作台使用 Tauri 2 Updater。macOS 與 Windows 更新包必須由專用私鑰簽章，App 只內建公開金鑰；簽章錯誤、版本不相容或下載不完整時不會安裝。
 
 ## 安全原則
 

@@ -166,15 +166,19 @@ button:focus-visible, input:focus-visible { outline: 3px solid rgba(8, 126, 131,
 .pdf-inline-toolbar button.danger { color: #a52f2b; border-color: #e8b9b5; background: #fff2f0; }
 .pdf-inline-toolbar label { display: flex; align-items: center; gap: 5px; color: #6e514f; font-size: 9px; }
 .pdf-inline-toolbar input { width: 54px; padding: 5px 6px; border: 1px solid #ddc7c4; border-radius: 7px; background: #fff; color: #342522; text-align: center; }
+.pdf-inline-toolbar .pdf-search-control input { width: 126px; text-align: left; }
+.pdf-inline-toolbar .pdf-password-control input { width: 116px; text-align: left; }
 .pdf-inline-toolbar span { flex: 0 0 auto; color: #705754; font-size: 10px; }
 .pdf-toolbar-separator { width: 1px; height: 25px; margin: 0 3px; background: #dfc9c6; }
-.pdf-inline-grid { display: grid; grid-template-columns: 116px minmax(420px, 1fr) 178px; min-height: 610px; }
+.pdf-inline-grid { display: grid; grid-template-columns: 116px minmax(420px, 1fr) 225px; min-height: 610px; }
 .pdf-page-list { padding: 10px 8px; overflow: auto; border-right: 1px solid #dec9c6; background: #f8f3f2; }
 .pdf-page-list > b { display: block; margin: 0 4px 8px; color: #6b4441; font-size: 10px; }
+.pdf-page-list > small { display: block; margin: -4px 4px 8px; color: #947471; font-size: 8px; }
 #pdf-page-buttons { display: grid; gap: 5px; }
 .pdf-page-button { display: grid; grid-template-columns: 24px minmax(0, 1fr); gap: 5px; align-items: center; width: 100%; padding: 7px; color: #654744; border-color: transparent; background: transparent; font-size: 9px; text-align: left; }
 .pdf-page-button span { display: grid; place-items: center; width: 22px; height: 28px; border: 1px solid #dbc5c2; border-radius: 3px; background: #fff; color: #9a5b56; font-size: 8px; }
 .pdf-page-button.active { border-color: #d99f99; background: #fff; box-shadow: none; }
+.pdf-page-button.dragging { opacity: .42; transform: scale(.97); }
 .pdf-canvas-viewport { position: relative; display: flex; align-items: flex-start; justify-content: center; min-width: 0; padding: 22px; overflow: auto; background: #c9c6c4; }
 #pdf-page-image { display: block; max-width: none; min-width: 1px; min-height: 1px; background: #fff; box-shadow: 0 8px 28px rgba(0,0,0,.28); }
 .pdf-render-message { position: absolute; z-index: 2; top: 22px; left: 50%; padding: 8px 11px; border-radius: 8px; transform: translateX(-50%); background: rgba(34, 28, 27, .82); color: #fff; font-size: 10px; }
@@ -184,6 +188,7 @@ button:focus-visible, input:focus-visible { outline: 3px solid rgba(8, 126, 131,
 .pdf-tool-shelf b { color: #6b3a37; font-size: 10px; }
 .pdf-tool-shelf button { padding: 7px 8px; color: #6d403d; border-color: #ead3d0; border-radius: 7px; background: #fff; font-size: 9px; text-align: left; }
 .pdf-inline-status { padding: 8px 11px; color: #6d504e; border-top: 1px solid #dec9c6; background: #fff; font-size: 9px; }
+#pdf-print-root { display: none; }
 .pdf-tool-dialog { width: min(540px, calc(100vw - 40px)); padding: 0; color: #332927; border: 1px solid #dfb6b2; border-radius: 16px; background: #fffafa; box-shadow: 0 24px 70px rgba(61, 31, 28, .3); }
 .pdf-tool-dialog::backdrop { background: rgba(35, 26, 25, .58); backdrop-filter: blur(4px); }
 .pdf-tool-dialog form { margin: 0; }
@@ -208,6 +213,14 @@ button:focus-visible, input:focus-visible { outline: 3px solid rgba(8, 126, 131,
 .magi-instruction { flex: 1; }
 .magi-result { margin: 12px 0 8px; padding: 13px; border-radius: 10px; background: #fff; color: #334155; font-size: 13px; line-height: 1.65; white-space: pre-wrap; max-height: 420px; overflow: auto; }
 .risk-badge { padding: 6px 10px; border-radius: 999px; color: #06734b; background: #e6f8ef; font-size: 12px; font-weight: 800; }
+
+@media print {
+  body > *:not(#pdf-print-root) { display: none !important; }
+  #pdf-print-root { display: block !important; }
+  .pdf-print-page { display: grid; place-items: center; break-after: page; page-break-after: always; width: 100%; min-height: 98vh; }
+  .pdf-print-page:last-child { break-after: auto; page-break-after: auto; }
+  .pdf-print-page img { display: block; max-width: 100%; max-height: 98vh; object-fit: contain; }
+}
 .recent-list { display: grid; grid-template-columns: repeat(2, 1fr); gap: 9px; }
 .recent-item { display: flex; align-items: center; justify-content: space-between; padding: 12px; border: 1px solid var(--line); border-radius: 12px; background: #fff; }
 .recent-item span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }

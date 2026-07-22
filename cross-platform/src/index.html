@@ -193,6 +193,13 @@
               <button id="pdf-zoom-in" title="放大">＋</button>
               <button id="pdf-zoom-fit" title="適合寬度">適合寬度</button>
               <span class="pdf-toolbar-separator"></span>
+              <label class="pdf-search-control">搜尋 <input id="pdf-search-text" type="search" placeholder="輸入文字" /></label>
+              <button id="pdf-search-run">尋找</button>
+              <span class="pdf-toolbar-separator"></span>
+              <label class="pdf-password-control">密碼 <input id="pdf-password" type="password" autocomplete="current-password" placeholder="受保護時輸入" /></label>
+              <button id="pdf-password-apply">解鎖</button>
+              <button id="pdf-undo" disabled>復原上次修改</button>
+              <span class="pdf-toolbar-separator"></span>
               <button data-pdf-operation="rotate-left">↶ 左轉</button>
               <button data-pdf-operation="rotate-right">↷ 右轉</button>
               <button data-pdf-operation="move-page-left">← 前移</button>
@@ -202,7 +209,7 @@
             </div>
             <div class="pdf-inline-grid">
               <aside class="pdf-page-list" aria-label="PDF 頁面清單">
-                <b>頁面</b>
+                <b>頁面</b><small>拖曳即可重排</small>
                 <div id="pdf-page-buttons"></div>
               </aside>
               <div class="pdf-canvas-viewport" id="pdf-canvas-viewport">
@@ -211,9 +218,12 @@
               </div>
               <aside class="pdf-tool-shelf" aria-label="PDF 編輯工具">
                 <div><b>整理頁面</b><button data-pdf-operation="merge">合併 PDF</button><button data-pdf-operation="extract">擷取此頁</button><button data-pdf-operation="split">逐頁分割</button></div>
-                <div><b>內容與註解</b><button data-pdf-operation="add-text">加入文字</button><button data-pdf-operation="note">加入便利貼</button><button data-pdf-operation="highlight">搜尋並標示</button></div>
+                <div><b>文字與圖片</b><button data-pdf-operation="add-text">加入永久文字</button><button data-pdf-operation="edit-text">搜尋取代文字</button><button data-pdf-operation="image-replace">替換圖片</button><button data-pdf-operation="image-delete">刪除圖片</button></div>
+                <div><b>註解與連結</b><button data-pdf-operation="note">便利貼</button><button data-pdf-operation="free-text">文字框</button><button data-pdf-operation="mark">螢光／底線／刪除線</button><button data-pdf-operation="shape">圖形／箭頭／圖章</button><button data-pdf-operation="measure">距離／面積測量</button><button data-pdf-operation="annotation-summary">註解摘要</button><button data-pdf-operation="link">網頁連結</button><button data-pdf-operation="bookmark">頁面書籤</button><button data-pdf-operation="layers">圖層顯示</button><button data-pdf-operation="attach-file">嵌入附件</button><button data-pdf-operation="extract-attachment">擷取附件</button></div>
+                <div><b>表單與簽署</b><button data-pdf-operation="fill-form">填寫既有表單</button><button data-pdf-operation="create-field">建立表單欄位</button><button data-pdf-operation="export-form-data">匯出表單資料</button><button data-pdf-operation="import-form-data">匯入表單資料</button><button data-pdf-operation="flatten">扁平化表單與註解</button><button data-pdf-operation="sign">憑證簽署</button><button data-pdf-operation="verify-signatures">驗證簽章</button></div>
                 <div><b>版面與批次</b><button data-pdf-operation="watermark">加入浮水印</button><button data-pdf-operation="header-footer">頁首頁尾／頁碼</button><button data-pdf-operation="optimize">最佳化檔案</button></div>
-                <div><b>安全與智慧</b><button data-pdf-operation="ocr">繁中 OCR</button><button data-pdf-operation="redact">永久遮蔽文字</button><button data-pdf-operation="encrypt">設定密碼</button><button data-pdf-operation="compare">比較另一份 PDF</button></div>
+                <div><b>轉換與交付</b><button data-pdf-operation="print">列印全部頁面</button><button data-pdf-operation="export">匯出 Word／Excel／簡報／圖片</button><button data-pdf-operation="audit">印刷與 PDF/UA 預檢</button><button data-pdf-operation="accessibility">標題與主要語言</button><button data-pdf-operation="batch">批次處理</button><button data-pdf-operation="filing">智慧歸檔</button></div>
+                <div><b>安全與智慧</b><button data-pdf-operation="ocr">繁中 OCR</button><button data-pdf-operation="redact">永久遮蔽文字</button><button data-pdf-operation="redact-pattern">依格式遮蔽個資</button><button data-pdf-operation="encrypt">設定 AES-256 密碼</button><button data-pdf-operation="decrypt">解除密碼副本</button><button data-pdf-operation="compare">比較另一份 PDF</button></div>
               </aside>
             </div>
             <div class="pdf-inline-status" id="pdf-inline-status" aria-live="polite">內建 PDF 工作區已就緒。</div>
@@ -308,6 +318,7 @@
         <div class="pdf-tool-actions"><button value="cancel">取消</button><button class="pdf-primary" id="pdf-tool-confirm" value="default">套用並自動備份</button></div>
       </form>
     </dialog>
+    <div id="pdf-print-root" aria-hidden="true"></div>
     <div class="toast hidden" id="toast" role="status" aria-live="polite"></div>
     <script type="module" src="main.js"></script>
   </body>
