@@ -3,7 +3,7 @@
 全能文件工作台採 `AGPL-3.0-or-later`。每個正式 GitHub Release 均在安裝包旁提供：
 
 1. GitHub 自動產生、與版本標籤完全一致的專案 Source code 壓縮檔。
-2. `全能文件工作台-<版本>-第三方對應原始碼.tar.gz`，包含當次建置所用 npm、Cargo
+2. `complete-document-workbench-<版本>-corresponding-source.tar.gz`，包含當次建置所用 npm、Cargo
    與 Python／PyMuPDF 上游來源封包、授權清單及校驗資訊。
 3. 本儲存庫內的完整建置腳本、鎖定檔、安裝資訊及 AGPL 條文。
 

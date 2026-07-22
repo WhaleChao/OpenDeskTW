@@ -51,7 +51,7 @@ assert(tauri.build.beforeBuildCommand.includes("legal:bundle"), "正式安裝包
 const release = read(".github/workflows/release.yml");
 assert(release.includes("AGPL-3.0-or-later"), "Release 說明缺少 AGPL 與對應原始碼告知");
 assert(release.includes("npm run legal:source"), "Release 未自動建立對應原始碼包");
-assert(release.includes("第三方對應原始碼.tar.gz"), "Release 未上傳對應原始碼包");
+assert(release.includes("corresponding-source.tar.gz"), "Release 未上傳對應原始碼包");
 
 const bundleRoot = path.join(projectRoot, "src-tauri/resources/licenses/third-party");
 assert(existsSync(path.join(bundleRoot, "README.md")), "缺少第三方授權封裝摘要");

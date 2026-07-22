@@ -21,7 +21,10 @@ const version = JSON.parse(readFileSync(path.join(projectRoot, "package.json"), 
 const distRoot = path.join(projectRoot, "dist");
 const stageRoot = path.join(distRoot, `corresponding-source-${version}`);
 const sourcesRoot = path.join(stageRoot, "sources");
-const finalArchive = path.join(distRoot, `全能文件工作台-${version}-第三方對應原始碼.tar.gz`);
+const finalArchive = path.join(
+  distRoot,
+  `complete-document-workbench-${version}-corresponding-source.tar.gz`,
+);
 const finalChecksum = `${finalArchive}.sha256`;
 const dependencyManifestPath = path.join(
   projectRoot,

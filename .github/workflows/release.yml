@@ -102,6 +102,6 @@ jobs:
         run: |
           source_version=$(node -p "require('./package.json').version")
           gh release upload "v${source_version}" \
-            "dist/全能文件工作台-${source_version}-第三方對應原始碼.tar.gz" \
-            "dist/全能文件工作台-${source_version}-第三方對應原始碼.tar.gz.sha256" \
+            "dist/complete-document-workbench-${source_version}-corresponding-source.tar.gz#全能文件工作台 ${source_version}－AGPL 對應原始碼" \
+            "dist/complete-document-workbench-${source_version}-corresponding-source.tar.gz.sha256#AGPL 對應原始碼 SHA-256" \
             --clobber
