@@ -13,7 +13,7 @@
         <div class="brand-mark" aria-hidden="true">▤</div>
         <div class="hero-copy">
           <h1>OpenDesk TW</h1>
-          <p>完整日常文書・Office 格式優先・全繁體中文・本機安全</p>
+          <p>文件・試算表・簡報・PDF・MAGI 一站整合・全繁體中文・本機安全</p>
         </div>
         <div class="system-summary" id="system-summary" aria-live="polite">正在檢查本機環境…</div>
       </header>
@@ -95,6 +95,71 @@
             <section class="word-report-card warnings-card">
               <div class="mini-heading"><b>列印與無障礙檢查</b><span>問題直接說人話</span></div>
               <div id="word-warnings"></div>
+            </section>
+          </div>
+        </div>
+      </section>
+
+      <section class="section pdf-center" id="pdf-center" aria-labelledby="pdf-center-title">
+        <div class="section-heading pdf-heading">
+          <div>
+            <span class="eyebrow pdf-eyebrow">PDF 文件中心</span>
+            <h2 id="pdf-center-title">PDF 想怎麼處理？</h2>
+            <p>OpenDesk 統一選檔、備份與檢查；AcroPDF 提供完整本機編輯工作區。</p>
+          </div>
+          <div class="word-start-actions">
+            <button class="pdf-primary" id="open-pdf-document">開啟 PDF</button>
+            <button id="launch-pdf-workspace">啟動 PDF 工作區</button>
+          </div>
+        </div>
+        <div class="pdf-engine-line" id="pdf-engine-line" aria-live="polite">正在檢查 AcroPDF 本機引擎…</div>
+        <div class="pdf-ribbon" role="tablist" aria-label="PDF 功能區">
+          <button class="active" id="pdf-tab-home" role="tab" aria-selected="true" aria-controls="pdf-task-panel" tabindex="0" data-pdf-tab="home">常用</button>
+          <button id="pdf-tab-pages" role="tab" aria-selected="false" aria-controls="pdf-task-panel" tabindex="-1" data-pdf-tab="pages">整理頁面</button>
+          <button id="pdf-tab-edit" role="tab" aria-selected="false" aria-controls="pdf-task-panel" tabindex="-1" data-pdf-tab="edit">編輯與註解</button>
+          <button id="pdf-tab-forms" role="tab" aria-selected="false" aria-controls="pdf-task-panel" tabindex="-1" data-pdf-tab="forms">表單與簽署</button>
+          <button id="pdf-tab-convert" role="tab" aria-selected="false" aria-controls="pdf-task-panel" tabindex="-1" data-pdf-tab="convert">轉換與 OCR</button>
+          <button id="pdf-tab-protect" role="tab" aria-selected="false" aria-controls="pdf-task-panel" tabindex="-1" data-pdf-tab="protect">保護與檢查</button>
+          <button id="pdf-tab-automation" role="tab" aria-selected="false" aria-controls="pdf-task-panel" tabindex="-1" data-pdf-tab="automation">批次與 MAGI</button>
+        </div>
+        <div class="pdf-workspace-grid">
+          <div id="pdf-task-panel" role="tabpanel" aria-labelledby="pdf-tab-home">
+            <div class="word-tab-intro" id="pdf-tab-intro"></div>
+            <div class="pdf-task-grid" id="pdf-task-grid"></div>
+          </div>
+          <aside class="pdf-guide">
+            <b>一站式安全流程</b>
+            <ol>
+              <li>選擇 PDF，先看結構與風險。</li>
+              <li>開啟前自動建立原檔備份。</li>
+              <li>修改、遮蔽或簽署都在本機完成。</li>
+            </ol>
+            <p>AcroPDF 私有引擎不會上傳到公開 OpenDesk 儲存庫。</p>
+          </aside>
+        </div>
+
+        <div class="pdf-current hidden" id="pdf-current">
+          <div class="word-current-head">
+            <div><span class="eyebrow pdf-eyebrow">目前 PDF</span><h3 id="pdf-report-title">PDF 健康報告</h3></div>
+            <div class="action-row">
+              <button class="pdf-primary" id="pdf-edit">備份並編輯</button>
+              <button id="pdf-live-check">LIVE 驗證</button>
+              <button id="pdf-report-refresh">重新檢查</button>
+            </div>
+          </div>
+          <div class="word-stats pdf-stats" id="pdf-stats"></div>
+          <div class="pdf-report-grid">
+            <section class="word-report-card">
+              <div class="mini-heading"><b>內容與導覽</b><span>文字化與閱讀結構</span></div>
+              <div class="review-metrics" id="pdf-content-metrics"></div>
+            </section>
+            <section class="word-report-card">
+              <div class="mini-heading"><b>互動與安全</b><span>表單、簽章、註解與附件</span></div>
+              <div class="review-metrics" id="pdf-interactive-metrics"></div>
+            </section>
+            <section class="word-report-card warnings-card">
+              <div class="mini-heading"><b>交付前提醒</b><span>OCR、列印與中繼資料</span></div>
+              <div id="pdf-warnings"></div>
             </section>
           </div>
         </div>

@@ -11,6 +11,9 @@
   --word: #185abd;
   --word-dark: #12478f;
   --word-soft: #edf4ff;
+  --pdf: #c43f3a;
+  --pdf-dark: #8e2928;
+  --pdf-soft: #fff0ee;
 }
 * { box-sizing: border-box; }
 body { margin: 0; min-width: 900px; background: radial-gradient(circle at 85% 5%, #d9f4f2 0, transparent 28rem), #eef5f6; }
@@ -95,6 +98,38 @@ button:focus-visible, input:focus-visible { outline: 3px solid rgba(8, 126, 131,
 .word-warning:last-child { border-bottom: 0; }
 .word-warning span { padding: 3px 5px; border-radius: 5px; background: #fff0c8; color: #76510a; font-size: 8px; font-weight: 900; text-align: center; }
 .word-warning p { margin: 1px 0 0; color: #655b46; font-size: 9px; line-height: 1.45; }
+.pdf-center { position: relative; overflow: hidden; border-color: #ebc3bf; background: linear-gradient(145deg, rgba(255,255,255,.96), rgba(255,247,246,.96)); }
+.pdf-center::before { content: "PDF"; position: absolute; right: -22px; top: -20px; color: rgba(196,63,58,.045); font: 900 112px/1 system-ui; pointer-events: none; }
+.pdf-heading { position: relative; align-items: end; }
+.pdf-eyebrow { color: var(--pdf); }
+.pdf-primary { border-color: transparent; background: linear-gradient(135deg, #d75349, #a82e2d); color: #fff; }
+.pdf-engine-line { margin: -5px 0 10px; color: #775b59; font-size: 10px; }
+.pdf-engine-line.ready { color: #19714b; }
+.pdf-engine-line.error { color: #ad342f; }
+.pdf-ribbon { position: relative; display: flex; gap: 2px; margin: 2px -4px 15px; padding: 0 4px; overflow-x: auto; border-bottom: 1px solid #ebd0cd; scrollbar-width: thin; }
+.pdf-ribbon button { flex: 0 0 auto; padding: 9px 12px 10px; border: 0; border-bottom: 3px solid transparent; border-radius: 7px 7px 0 0; background: transparent; color: #715d5b; font-size: 12px; box-shadow: none; }
+.pdf-ribbon button:hover { color: var(--pdf); background: rgba(196,63,58,.055); box-shadow: none; }
+.pdf-ribbon button.active { color: var(--pdf-dark); border-bottom-color: var(--pdf); background: #fff; }
+.pdf-workspace-grid { position: relative; display: grid; grid-template-columns: minmax(0, 1fr) 238px; gap: 14px; align-items: start; }
+.pdf-task-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.pdf-task-card { display: grid; grid-template-columns: 34px minmax(0, 1fr) auto; gap: 9px; align-items: start; min-height: 120px; padding: 11px; border: 1px solid #efd9d6; border-radius: 12px; background: rgba(255,255,255,.84); transition: transform .15s ease, border-color .15s ease; }
+.pdf-task-card:hover { transform: translateY(-1px); border-color: #dca9a4; }
+.pdf-task-icon { display: grid; place-items: center; width: 32px; height: 32px; border-radius: 9px; background: var(--pdf-soft); color: var(--pdf); font-size: 10px; font-weight: 900; }
+.pdf-task-copy h3 { margin: 1px 0 5px; color: #52312f; font-size: 13px; }
+.pdf-task-copy p { margin: 0; color: var(--muted); font-size: 11px; line-height: 1.48; }
+.pdf-task-copy small { display: block; margin-top: 7px; color: var(--pdf); font-size: 10px; font-weight: 750; }
+.pdf-task-action { align-self: end; padding: 6px 8px; border-color: #e6c8c5; border-radius: 8px; color: var(--pdf-dark); background: #fff8f7; font-size: 10px; white-space: nowrap; }
+.pdf-guide { padding: 14px; border: 1px solid #efd8d5; border-radius: 13px; background: #fff8f7; color: #65504e; font-size: 11px; line-height: 1.55; }
+.pdf-guide b { color: #6d3532; font-size: 12px; }
+.pdf-guide ol { margin: 9px 0 12px; padding-left: 19px; }
+.pdf-guide li + li { margin-top: 6px; }
+.pdf-guide p { margin: 0; padding-top: 10px; border-top: 1px solid #eedbd8; color: var(--muted); }
+.pdf-current { position: relative; margin-top: 16px; padding-top: 15px; border-top: 1px solid #ebcfcc; }
+.pdf-stats strong { color: var(--pdf-dark); }
+.pdf-stats > div { border-color: #f0ddda; background: #fffafa; }
+.pdf-report-grid { display: grid; grid-template-columns: 1fr 1fr 1.1fr; gap: 9px; }
+.pdf-current .review-metrics > div { background: #fff8f7; }
+.pdf-current .word-warning span { background: #ffe2dc; color: #8a302a; }
 .action-row { display: flex; gap: 9px; flex-wrap: wrap; }
 .analysis-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-top: 14px; }
 .analysis-card { padding: 12px; border-radius: 12px; background: #f5f8f9; border: 1px solid #e1eaec; }
@@ -130,13 +165,13 @@ footer { display: flex; justify-content: space-between; padding: 18px 5px 0; col
 .hidden { display: none !important; }
 @media (max-width: 1080px) {
   .quick-grid, .feature-grid { grid-template-columns: repeat(2, 1fr); }
-  .word-workspace-grid { grid-template-columns: 1fr; }
-  .word-guide { display: none; }
-  .word-report-grid { grid-template-columns: repeat(2, 1fr); }
+  .word-workspace-grid, .pdf-workspace-grid { grid-template-columns: 1fr; }
+  .word-guide, .pdf-guide { display: none; }
+  .word-report-grid, .pdf-report-grid { grid-template-columns: repeat(2, 1fr); }
   .warnings-card { grid-column: 1 / -1; }
 }
 @media (prefers-color-scheme: dark) {
-  :root { color: #e8f0f2; background: #101719; --panel: rgba(24, 34, 37, .95); --line: #33464a; --muted: #9baeb3; --word-soft: #1a3152; }
+  :root { color: #e8f0f2; background: #101719; --panel: rgba(24, 34, 37, .95); --line: #33464a; --muted: #9baeb3; --word-soft: #1a3152; --pdf-soft: #4a2726; }
   body { background: radial-gradient(circle at 85% 5%, #123b3d 0, transparent 28rem), #101719; }
   button, .recent-item, .feature-card, .test-group, .search, .magi-controls select, .magi-controls input { background: #1d292c; color: #e8f0f2; }
   .analysis-card, .test-result, .quiet { background: #182326; }
@@ -152,4 +187,11 @@ footer { display: flex; justify-content: space-between; padding: 18px 5px 0; col
   .warnings-card { background: #2b281e; }
   .word-warning { border-bottom-color: #494332; }
   .word-warning p { color: #d9cfb8; }
+  .pdf-center { border-color: #68413e; background: linear-gradient(145deg, rgba(24,34,37,.98), rgba(45,27,27,.98)); }
+  .pdf-ribbon { border-bottom-color: #62403d; }
+  .pdf-ribbon button.active, .pdf-task-card, .pdf-report-card { background: #292322; }
+  .pdf-task-copy h3, .pdf-current .word-current-head h3 { color: #f4ddda; }
+  .pdf-guide, .pdf-stats > div, .pdf-current .review-metrics > div { background: #2c2322; border-color: #5f413e; }
+  .pdf-guide b, .pdf-current .review-metrics b { color: #f1d8d4; }
+  .pdf-task-card { border-color: #5f413e; }
 }
