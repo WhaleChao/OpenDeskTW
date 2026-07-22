@@ -27,7 +27,7 @@ test -n "${TAURI_SIGNING_PRIVATE_KEY:-}"
 test -n "${TAURI_SIGNING_PRIVATE_KEY_PASSWORD:-}"
 npm run build -- --bundles app,dmg
 
-APP_BUNDLE="$(/usr/bin/find src-tauri/target/release/bundle/macos -maxdepth 1 -name 'OpenDesk TW.app' -type d -print -quit)"
+APP_BUNDLE="$(/usr/bin/find src-tauri/target/release/bundle/macos -maxdepth 1 -name '全能文件工作台.app' -type d -print -quit)"
 DMG="$(/usr/bin/find src-tauri/target/release/bundle/dmg -maxdepth 1 -name '*.dmg' -type f -print -quit)"
 UPDATER_ARCHIVE="$(/usr/bin/find src-tauri/target/release/bundle/macos -maxdepth 1 -name '*.app.tar.gz' -type f -print -quit)"
 test -n "$APP_BUNDLE"

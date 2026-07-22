@@ -30,15 +30,31 @@ jobs:
           node-version: "22"
           cache: npm
           cache-dependency-path: cross-platform/package-lock.json
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
       - name: 安裝前端與 Tauri 相依套件
         working-directory: cross-platform
         run: npm ci
-      - name: Rust 靜態檢查
+      - name: 安裝並封裝內建 PDF 核心
         working-directory: cross-platform
-        run: npm run check
+        run: |
+          python -m pip install --disable-pip-version-check pyinstaller==6.19.0 pymupdf==1.27.1 python-docx==1.2.0 openpyxl==3.1.5 python-pptx==1.0.2 pyHanko==0.34.1 pyhanko-certvalidator==0.30.2 xsdata==26.2
+          npm run pdf-core:build
+          npm run test:sidecar
+      - name: 靜態檢查
+        working-directory: cross-platform
+        run: |
+          npm run frontend:build
+          npm run check
       - name: 核心自動測試
         working-directory: cross-platform
-        run: cargo test --manifest-path src-tauri/Cargo.toml --lib
+        run: |
+          npm run test:traditional
+          npm run test:contracts
+          npm run test:pdf-core
+          npm run test:legal
+          cargo test --manifest-path src-tauri/Cargo.toml --lib
       - name: 建置並附加至 GitHub Release
         uses: tauri-apps/tauri-action@v0
         env:
@@ -48,9 +64,44 @@ jobs:
         with:
           projectPath: cross-platform
           tagName: v__VERSION__
-          releaseName: "OpenDesk TW v__VERSION__"
-          releaseBody: "全繁體中文跨平台 Office 工作台。包含 macOS App／DMG、Windows NSIS 安裝程式與強制簽章熱修資訊。"
+          releaseName: "全能文件工作台 v__VERSION__"
+          releaseBody: "文字、試算表、簡報、內建 PDF 與 MAGI 一站式全繁體中文工作台。採 AGPL-3.0-or-later；本頁的 GitHub Source code 是同標籤專案原始碼，另附含 npm、Cargo、Python／PyMuPDF 上游來源、雜湊及第三方授權的「第三方對應原始碼」包。另含 macOS App／DMG、Windows NSIS 安裝程式與強制簽章熱修資訊。"
           releaseDraft: false
           prerelease: false
           updaterJsonPreferNsis: true
           args: ${{ matrix.args }}
+
+  source-bundle:
+    name: 建立 AGPL 對應原始碼包
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: cross-platform/package-lock.json
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: 安裝鎖定的建置相依套件
+        working-directory: cross-platform
+        run: |
+          npm ci
+          python -m pip install --disable-pip-version-check pyinstaller==6.19.0 pymupdf==1.27.1 python-docx==1.2.0 openpyxl==3.1.5 python-pptx==1.0.2 pyHanko==0.34.1 pyhanko-certvalidator==0.30.2 xsdata==26.2
+      - name: 產生並驗證對應原始碼包
+        working-directory: cross-platform
+        run: npm run legal:source
+      - name: 附加對應原始碼包至 GitHub Release
+        working-directory: cross-platform
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          source_version=$(node -p "require('./package.json').version")
+          gh release upload "v${source_version}" \
+            "dist/全能文件工作台-${source_version}-第三方對應原始碼.tar.gz" \
+            "dist/全能文件工作台-${source_version}-第三方對應原始碼.tar.gz.sha256" \
+            --clobber

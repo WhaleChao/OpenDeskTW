@@ -5,10 +5,13 @@ dist/
 Tests/
 cross-platform/node_modules/
 cross-platform/src-tauri/target/
+cross-platform/src-tauri/binaries/
 cross-platform/src-tauri/gen/
 cross-platform/dist/
 *.key
 *.key.pub
 latest.json
 npm-debug.log*
-
+__pycache__/
+*.py[cod]
+cross-platform/src-tauri/resources/licenses/third-party/

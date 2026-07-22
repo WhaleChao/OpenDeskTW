@@ -1,3 +1,3 @@
 fn main() {
-    opendesk_tw_lib::run()
+    document_workbench_tw_lib::run()
 }

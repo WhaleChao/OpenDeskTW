@@ -1,13 +1,19 @@
+// Copyright (c) 2026 WhaleChao and contributors.
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 use chrono::Local;
 use regex::Regex;
 use serde::Serialize;
 use serde_json::{json, Value};
 use std::collections::BTreeSet;
 use std::fs::{self, File};
-use std::io::{Read, Write};
+use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{SocketAddr, TcpStream};
 use std::path::{Path, PathBuf};
-use std::process::{Command, Output, Stdio};
+use std::process::{Child, ChildStdin, Command, Output, Stdio};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
+use std::sync::{Mutex, OnceLock};
 use std::thread;
 use std::time::{Duration, Instant};
 use tauri::{Manager, Runtime};
@@ -131,42 +137,178 @@ struct AcroPdfRuntime {
     display_path: String,
 }
 
+struct AcroPdfServer {
+    runtime: AcroPdfRuntime,
+    child: Child,
+    stdin: ChildStdin,
+    responses: Receiver<String>,
+}
+
+enum AcroPdfServerError {
+    Core(String),
+    Transport(String),
+}
+
+static ACROPDF_SERVER: OnceLock<Mutex<Option<AcroPdfServer>>> = OnceLock::new();
+static ACROPDF_REQUEST_ID: AtomicU64 = AtomicU64::new(1);
+
+impl AcroPdfServer {
+    fn request(&mut self, args: &[String], timeout: Duration) -> Result<Value, AcroPdfServerError> {
+        if let Some(status) = self
+            .child
+            .try_wait()
+            .map_err(|error| AcroPdfServerError::Transport(error.to_string()))?
+        {
+            return Err(AcroPdfServerError::Transport(format!(
+                "內建 PDF 核心已結束（{status}）"
+            )));
+        }
+        let request_id = ACROPDF_REQUEST_ID.fetch_add(1, Ordering::Relaxed);
+        let payload = json!({"request_id": request_id, "args": args});
+        writeln!(self.stdin, "{payload}")
+            .and_then(|_| self.stdin.flush())
+            .map_err(|error| AcroPdfServerError::Transport(error.to_string()))?;
+        let line = match self.responses.recv_timeout(timeout) {
+            Ok(line) => line,
+            Err(RecvTimeoutError::Timeout) => {
+                return Err(AcroPdfServerError::Transport(
+                    "內建 PDF 核心回應逾時".into(),
+                ));
+            }
+            Err(RecvTimeoutError::Disconnected) => {
+                return Err(AcroPdfServerError::Transport(
+                    "內建 PDF 核心連線已中斷".into(),
+                ));
+            }
+        };
+        let value: Value = serde_json::from_str(&line).map_err(|error| {
+            AcroPdfServerError::Transport(format!("內建 PDF 核心回應格式錯誤：{error}"))
+        })?;
+        if value.get("request_id").and_then(Value::as_u64) != Some(request_id) {
+            return Err(AcroPdfServerError::Transport(
+                "內建 PDF 核心回應順序錯誤".into(),
+            ));
+        }
+        if value.get("protocol_version").and_then(Value::as_u64) != Some(2) {
+            return Err(AcroPdfServerError::Transport(
+                "內建 PDF 核心協定版本不相容".into(),
+            ));
+        }
+        if value.get("ok").and_then(Value::as_bool) == Some(false) {
+            return Err(AcroPdfServerError::Core(
+                value
+                    .get("error")
+                    .and_then(Value::as_str)
+                    .unwrap_or("內建 PDF 核心無法處理此文件")
+                    .to_string(),
+            ));
+        }
+        Ok(value)
+    }
+
+    fn stop(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
+}
+
+impl Drop for AcroPdfServer {
+    fn drop(&mut self) {
+        self.stop();
+    }
+}
+
+fn python_candidates() -> Vec<PathBuf> {
+    let mut candidates = Vec::new();
+    if let Ok(python) = std::env::var("DOCUMENT_WORKBENCH_PYTHON") {
+        candidates.push(PathBuf::from(python));
+    }
+    #[cfg(target_os = "macos")]
+    candidates.extend(
+        [
+            "/opt/homebrew/bin/python3",
+            "/usr/local/bin/python3",
+            "/usr/bin/python3",
+        ]
+        .into_iter()
+        .map(PathBuf::from),
+    );
+    #[cfg(target_os = "windows")]
+    candidates.extend([PathBuf::from("python.exe"), PathBuf::from("python3.exe")]);
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    candidates.push(PathBuf::from("python3"));
+    candidates
+}
+
 fn acropdf_runtime_candidates() -> Vec<AcroPdfRuntime> {
     let mut candidates = Vec::new();
-    if let Ok(executable) = std::env::var("ACROPDF_EXECUTABLE") {
+    if let Ok(executable) = std::env::var("DOCUMENT_WORKBENCH_PDF_CORE") {
         candidates.push(AcroPdfRuntime {
             display_path: executable.clone(),
             executable: PathBuf::from(executable),
             prefix_args: Vec::new(),
         });
     }
-    if let Some(desktop) = dirs::desktop_dir() {
-        let source = desktop.join("acropdf/main.py");
-        if source.is_file() {
-            let python = std::env::var("ACROPDF_PYTHON")
-                .map(PathBuf::from)
-                .unwrap_or_else(|_| {
-                    #[cfg(target_os = "macos")]
-                    {
-                        [
-                            "/opt/homebrew/bin/python3",
-                            "/usr/local/bin/python3",
-                            "/usr/bin/python3",
-                        ]
-                        .into_iter()
-                        .map(PathBuf::from)
-                        .find(|path| path.is_file())
-                        .unwrap_or_else(|| PathBuf::from("python3"))
-                    }
-                    #[cfg(target_os = "windows")]
-                    {
-                        PathBuf::from("python.exe")
-                    }
-                    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
-                    {
-                        PathBuf::from("python3")
-                    }
+
+    // `cargo test` 與開發模式的執行檔位於 target 目錄，不會和 Tauri
+    // sidecar 放在同一層；直接採用封裝腳本產生的平台檔名，確保 CI
+    // 驗證的也是實際隨安裝包出貨的核心，而不是碰巧可用的系統 Python。
+    let development_sidecar_name = if cfg!(all(target_os = "macos", target_arch = "aarch64")) {
+        Some("document-pdf-core-aarch64-apple-darwin")
+    } else if cfg!(all(target_os = "macos", target_arch = "x86_64")) {
+        Some("document-pdf-core-x86_64-apple-darwin")
+    } else if cfg!(all(target_os = "windows", target_arch = "x86_64")) {
+        Some("document-pdf-core-x86_64-pc-windows-msvc.exe")
+    } else if cfg!(all(target_os = "windows", target_arch = "aarch64")) {
+        Some("document-pdf-core-aarch64-pc-windows-msvc.exe")
+    } else {
+        None
+    };
+    if let Some(name) = development_sidecar_name {
+        let sidecar = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("binaries")
+            .join(name);
+        if sidecar.is_file() {
+            candidates.push(AcroPdfRuntime {
+                executable: sidecar.clone(),
+                prefix_args: Vec::new(),
+                display_path: sidecar.to_string_lossy().to_string(),
+            });
+        }
+    }
+
+    if let Ok(current_executable) = std::env::current_exe() {
+        if let Some(binary_root) = current_executable.parent() {
+            let sidecar = if cfg!(target_os = "windows") {
+                binary_root.join("document-pdf-core.exe")
+            } else {
+                binary_root.join("document-pdf-core")
+            };
+            if sidecar.is_file() {
+                candidates.push(AcroPdfRuntime {
+                    executable: sidecar.clone(),
+                    prefix_args: Vec::new(),
+                    display_path: sidecar.to_string_lossy().to_string(),
                 });
+            }
+        }
+    }
+
+    let mut source_candidates =
+        vec![PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("resources/acropdf-core/embedded_core.py")];
+    if let Ok(current_executable) = std::env::current_exe() {
+        if let Some(binary_root) = current_executable.parent() {
+            source_candidates.push(binary_root.join("resources/acropdf-core/embedded_core.py"));
+            source_candidates
+                .push(binary_root.join("../Resources/resources/acropdf-core/embedded_core.py"));
+        }
+    }
+    for source in source_candidates {
+        if !source.is_file() {
+            continue;
+        }
+        for python in python_candidates() {
             candidates.push(AcroPdfRuntime {
                 executable: python,
                 prefix_args: vec![source.to_string_lossy().to_string()],
@@ -174,48 +316,94 @@ fn acropdf_runtime_candidates() -> Vec<AcroPdfRuntime> {
             });
         }
     }
-    #[cfg(target_os = "macos")]
-    {
-        let mut apps = vec![PathBuf::from("/Applications/AcroPDF.app")];
-        if let Some(home) = dirs::home_dir() {
-            apps.push(home.join("Applications/AcroPDF.app"));
-        }
-        if let Some(desktop) = dirs::desktop_dir() {
-            apps.push(desktop.join("acropdf/dist/AcroPDF.app"));
-        }
-        for app in apps {
-            let binary = app.join("Contents/MacOS/AcroPDF");
-            if binary.is_file() {
-                candidates.push(AcroPdfRuntime {
-                    executable: binary,
-                    prefix_args: Vec::new(),
-                    display_path: app.to_string_lossy().to_string(),
-                });
+    candidates
+}
+
+fn spawn_acropdf_server(runtime: AcroPdfRuntime) -> Result<AcroPdfServer, String> {
+    let mut command = Command::new(&runtime.executable);
+    command
+        .args(&runtime.prefix_args)
+        .arg("--embedded-server")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    let mut child = command.spawn().map_err(|error| error.to_string())?;
+    let stdin = child.stdin.take().ok_or("無法連接內建 PDF 核心輸入")?;
+    let stdout = child.stdout.take().ok_or("無法連接內建 PDF 核心輸出")?;
+    let stderr = child.stderr.take().ok_or("無法連接內建 PDF 核心錯誤輸出")?;
+    let (sender, responses) = mpsc::channel();
+    thread::spawn(move || {
+        for line in BufReader::new(stdout).lines() {
+            let Ok(line) = line else { break };
+            if sender.send(line).is_err() {
+                break;
             }
         }
-    }
-    #[cfg(target_os = "windows")]
-    {
-        for key in ["ProgramFiles", "ProgramFiles(x86)", "LOCALAPPDATA"] {
-            if let Ok(root) = std::env::var(key) {
-                for relative in [
-                    "AcroPDF/AcroPDF.exe",
-                    "Programs/AcroPDF/AcroPDF.exe",
-                    "AcroPDF/AcroPDF/AcroPDF.exe",
-                ] {
-                    let executable = PathBuf::from(&root).join(relative);
-                    if executable.is_file() {
-                        candidates.push(AcroPdfRuntime {
-                            display_path: executable.to_string_lossy().to_string(),
-                            executable,
-                            prefix_args: Vec::new(),
-                        });
-                    }
+    });
+    thread::spawn(move || {
+        for line in BufReader::new(stderr).lines() {
+            if line.is_err() {
+                break;
+            }
+        }
+    });
+    Ok(AcroPdfServer {
+        runtime,
+        child,
+        stdin,
+        responses,
+    })
+}
+
+fn persistent_acropdf_call_args(
+    args: &[String],
+    timeout: Duration,
+) -> Result<(Value, AcroPdfRuntime), AcroPdfServerError> {
+    let server_slot = ACROPDF_SERVER.get_or_init(|| Mutex::new(None));
+    let mut server_guard = server_slot
+        .lock()
+        .map_err(|_| AcroPdfServerError::Transport("內建 PDF 核心狀態鎖定失敗".into()))?;
+    if server_guard.is_none() {
+        let status_args = vec!["--integration-status".to_string()];
+        let mut last_error = "找不到全能文件工作台的內建 PDF 核心".to_string();
+        for runtime in acropdf_runtime_candidates() {
+            let mut candidate = match spawn_acropdf_server(runtime) {
+                Ok(candidate) => candidate,
+                Err(error) => {
+                    last_error = error;
+                    continue;
+                }
+            };
+            match candidate.request(&status_args, Duration::from_secs(30)) {
+                Ok(_) => {
+                    *server_guard = Some(candidate);
+                    break;
+                }
+                Err(AcroPdfServerError::Core(error))
+                | Err(AcroPdfServerError::Transport(error)) => {
+                    last_error = error;
+                    candidate.stop();
                 }
             }
         }
+        if server_guard.is_none() {
+            return Err(AcroPdfServerError::Transport(last_error));
+        }
     }
-    candidates
+    let result = server_guard
+        .as_mut()
+        .ok_or_else(|| AcroPdfServerError::Transport("內建 PDF 核心尚未啟動".into()))?;
+    let runtime = result.runtime.clone();
+    match result.request(args, timeout) {
+        Ok(value) => Ok((value, runtime)),
+        Err(error @ AcroPdfServerError::Core(_)) => Err(error),
+        Err(AcroPdfServerError::Transport(error)) => {
+            if let Some(mut server) = server_guard.take() {
+                server.stop();
+            }
+            Err(AcroPdfServerError::Transport(error))
+        }
+    }
 }
 
 fn command_output_with_timeout(
@@ -238,44 +426,41 @@ fn command_output_with_timeout(
             None => {
                 let _ = child.kill();
                 let _ = child.wait();
-                return Err("AcroPDF 本機整合回應逾時".into());
+                return Err("內建 PDF 核心回應逾時".into());
             }
         }
     }
 }
 
-fn acropdf_call(flag: &str, path: Option<&Path>) -> Result<(Value, AcroPdfRuntime), String> {
-    let mut last_error = "找不到支援 OpenDesk 整合協定的 AcroPDF 1.0.18 以上版本".to_string();
-    let timeout = match flag {
-        "--integration-status" => Duration::from_secs(3),
-        "--integration-inspect" => Duration::from_secs(30),
-        "--integration-live-test" => Duration::from_secs(180),
-        _ => Duration::from_secs(8),
+fn acropdf_call_args(
+    args: Vec<String>,
+    timeout: Duration,
+) -> Result<(Value, AcroPdfRuntime), String> {
+    let mut last_error = match persistent_acropdf_call_args(&args, timeout) {
+        Ok(result) => return Ok(result),
+        Err(AcroPdfServerError::Core(error)) => return Err(error),
+        Err(AcroPdfServerError::Transport(error)) => error,
     };
     for runtime in acropdf_runtime_candidates() {
-        let mut args = vec![flag.to_string()];
-        if let Some(path) = path {
-            args.push(path.to_string_lossy().to_string());
-        }
         match command_output_with_timeout(&runtime, &args, timeout) {
             Ok(output) if output.status.success() => {
                 match serde_json::from_slice::<Value>(&output.stdout) {
                     Ok(value)
-                        if value.get("protocol_version").and_then(Value::as_u64) == Some(1) =>
+                        if value.get("protocol_version").and_then(Value::as_u64) == Some(2) =>
                     {
                         return Ok((value, runtime));
                     }
-                    Ok(_) => last_error = "AcroPDF 整合協定版本不相容".into(),
-                    Err(error) => last_error = format!("AcroPDF 回應格式錯誤：{error}"),
+                    Ok(_) => last_error = "內建 PDF 核心協定版本不相容".into(),
+                    Err(error) => last_error = format!("內建 PDF 核心回應格式錯誤：{error}"),
                 }
             }
             Ok(output) => {
                 if let Ok(value) = serde_json::from_slice::<Value>(&output.stdout) {
-                    if value.get("protocol_version").and_then(Value::as_u64) == Some(1) {
+                    if value.get("protocol_version").and_then(Value::as_u64) == Some(2) {
                         return Err(value
                             .get("error")
                             .and_then(Value::as_str)
-                            .unwrap_or("AcroPDF 無法處理此文件")
+                            .unwrap_or("內建 PDF 核心無法處理此文件")
                             .to_string());
                     }
                 }
@@ -290,10 +475,24 @@ fn acropdf_call(flag: &str, path: Option<&Path>) -> Result<(Value, AcroPdfRuntim
     Err(last_error)
 }
 
+fn acropdf_call(flag: &str, path: Option<&Path>) -> Result<(Value, AcroPdfRuntime), String> {
+    let mut args = vec![flag.to_string()];
+    if let Some(path) = path {
+        args.push(path.to_string_lossy().to_string());
+    }
+    let timeout = match flag {
+        "--integration-status" => Duration::from_secs(8),
+        "--integration-inspect" => Duration::from_secs(45),
+        "--integration-live-test" => Duration::from_secs(180),
+        _ => Duration::from_secs(60),
+    };
+    acropdf_call_args(args, timeout)
+}
+
 fn acropdf_engine_status() -> EngineStatus {
     match acropdf_call("--integration-status", None) {
         Ok((value, runtime)) => EngineStatus {
-            name: "AcroPDF PDF 引擎".into(),
+            name: "內建 PDF 核心".into(),
             installed: true,
             path: Some(runtime.display_path),
             version: value
@@ -302,7 +501,7 @@ fn acropdf_engine_status() -> EngineStatus {
                 .map(str::to_string),
         },
         Err(_) => EngineStatus {
-            name: "AcroPDF PDF 引擎".into(),
+            name: "內建 PDF 核心".into(),
             installed: false,
             path: None,
             version: None,
@@ -316,7 +515,7 @@ fn acropdf_status() -> Result<Value, String> {
 }
 
 #[tauri::command]
-fn pdf_report(path: String) -> Result<Value, String> {
+fn pdf_report(path: String, password: Option<String>) -> Result<Value, String> {
     let source = PathBuf::from(path);
     if !source.is_file() {
         return Err("找不到 PDF 文件".into());
@@ -329,11 +528,18 @@ fn pdf_report(path: String) -> Result<Value, String> {
     {
         return Err("PDF 文件中心只接受 PDF".into());
     }
-    acropdf_call("--integration-inspect", Some(&source)).map(|(value, _)| value)
+    let mut args = vec![
+        "--integration-inspect".into(),
+        source.to_string_lossy().to_string(),
+    ];
+    if let Some(password) = password.filter(|value| !value.is_empty()) {
+        args.extend(["--password".into(), password]);
+    }
+    acropdf_call_args(args, Duration::from_secs(45)).map(|(value, _)| value)
 }
 
 #[tauri::command]
-fn pdf_live_validate(path: String) -> Result<Value, String> {
+fn pdf_live_validate(path: String, password: Option<String>) -> Result<Value, String> {
     let source = PathBuf::from(path);
     if !source.is_file() {
         return Err("找不到 PDF 文件".into());
@@ -346,7 +552,240 @@ fn pdf_live_validate(path: String) -> Result<Value, String> {
     {
         return Err("PDF LIVE 驗證只接受 PDF".into());
     }
-    acropdf_call("--integration-live-test", Some(&source)).map(|(value, _)| value)
+    let mut args = vec![
+        "--integration-live-test".into(),
+        source.to_string_lossy().to_string(),
+    ];
+    if let Some(password) = password.filter(|value| !value.is_empty()) {
+        args.extend(["--password".into(), password]);
+    }
+    acropdf_call_args(args, Duration::from_secs(180)).map(|(value, _)| value)
+}
+
+#[tauri::command]
+fn pdf_query(path: String, query: String, options: Value) -> Result<Value, String> {
+    const ALLOWED_QUERIES: &[&str] = &[
+        "search",
+        "forms",
+        "annotations",
+        "layers",
+        "attachments",
+        "audit",
+        "signatures",
+    ];
+    if !ALLOWED_QUERIES.contains(&query.as_str()) {
+        return Err("不支援的 PDF 查詢".into());
+    }
+    if !options.is_object() {
+        return Err("PDF 查詢選項格式錯誤".into());
+    }
+    let source = PathBuf::from(path);
+    validate_pdf_source(&source)?;
+    let args = vec![
+        "--embedded-query".into(),
+        source.to_string_lossy().to_string(),
+        "--query".into(),
+        query,
+        "--options-json".into(),
+        serde_json::to_string(&options).map_err(|error| error.to_string())?,
+    ];
+    acropdf_call_args(args, Duration::from_secs(240)).map(|(value, _)| value)
+}
+
+#[tauri::command]
+fn pdf_render_page(
+    path: String,
+    page: usize,
+    scale: f64,
+    password: Option<String>,
+) -> Result<Value, String> {
+    let source = PathBuf::from(path);
+    validate_pdf_source(&source)?;
+    let mut args = vec![
+        "--embedded-render".into(),
+        source.to_string_lossy().to_string(),
+        "--page".into(),
+        page.to_string(),
+        "--scale".into(),
+        scale.to_string(),
+    ];
+    if let Some(password) = password.filter(|value| !value.is_empty()) {
+        args.extend(["--password".into(), password]);
+    }
+    acropdf_call_args(args, Duration::from_secs(90)).map(|(value, _)| value)
+}
+
+fn validate_pdf_source(source: &Path) -> Result<(), String> {
+    if !source.is_file() {
+        return Err("找不到 PDF 文件".into());
+    }
+    if !source
+        .extension()
+        .and_then(|value| value.to_str())
+        .unwrap_or("")
+        .eq_ignore_ascii_case("pdf")
+    {
+        return Err("內建 PDF 工作區只接受 PDF 文件".into());
+    }
+    Ok(())
+}
+
+#[tauri::command]
+fn pdf_apply_operation(
+    path: String,
+    operation: String,
+    options: Value,
+    output: Option<String>,
+) -> Result<Value, String> {
+    const ALLOWED_OPERATIONS: &[&str] = &[
+        "rotate",
+        "delete",
+        "insert_blank",
+        "reorder",
+        "merge",
+        "extract",
+        "split",
+        "watermark",
+        "header_footer",
+        "add_text",
+        "edit_text",
+        "image_delete",
+        "image_replace",
+        "note",
+        "free_text",
+        "highlight_search",
+        "mark_search",
+        "shape",
+        "measure",
+        "layer_visibility",
+        "link",
+        "bookmark",
+        "attach_file",
+        "extract_attachment",
+        "redact_search",
+        "redact_pattern",
+        "fill_form",
+        "create_field",
+        "export_form_data",
+        "import_form_data",
+        "flatten",
+        "accessibility_metadata",
+        "metadata",
+        "optimize",
+        "encrypt",
+        "decrypt",
+        "ocr",
+        "export",
+        "sign",
+        "smart_file",
+    ];
+    if !ALLOWED_OPERATIONS.contains(&operation.as_str()) {
+        return Err("不支援的內建 PDF 操作".into());
+    }
+    if !options.is_object() {
+        return Err("PDF 操作選項格式錯誤".into());
+    }
+    let source = PathBuf::from(path);
+    validate_pdf_source(&source)?;
+    let destination = output
+        .as_deref()
+        .map(PathBuf::from)
+        .unwrap_or_else(|| source.clone());
+    let backup = if destination == source {
+        Some(create_backup(&source)?)
+    } else {
+        None
+    };
+    let mut args = vec![
+        "--embedded-operate".into(),
+        source.to_string_lossy().to_string(),
+        "--operation".into(),
+        operation.clone(),
+        "--options-json".into(),
+        serde_json::to_string(&options).map_err(|error| error.to_string())?,
+        "--output".into(),
+        destination.to_string_lossy().to_string(),
+    ];
+    if operation == "split" {
+        args.truncate(args.len() - 2);
+    }
+    let timeout = if operation == "ocr" {
+        Duration::from_secs(900)
+    } else {
+        Duration::from_secs(240)
+    };
+    let (mut value, _) = acropdf_call_args(args, timeout)?;
+    if let (Some(backup), Some(object)) = (backup, value.as_object_mut()) {
+        object.insert(
+            "backup".into(),
+            Value::String(backup.to_string_lossy().to_string()),
+        );
+    }
+    Ok(value)
+}
+
+#[tauri::command]
+fn pdf_restore_backup(path: String, backup: String) -> Result<ActionResult, String> {
+    let destination = PathBuf::from(path);
+    let backup = PathBuf::from(backup);
+    validate_pdf_source(&destination)?;
+    validate_pdf_source(&backup)?;
+    let backup_root = data_root()?.join("Backups");
+    let canonical_root = backup_root
+        .canonicalize()
+        .map_err(|_| "找不到安全備份資料夾".to_string())?;
+    let canonical_backup = backup
+        .canonicalize()
+        .map_err(|_| "找不到指定的安全備份".to_string())?;
+    if !canonical_backup.starts_with(&canonical_root) {
+        return Err("只能復原由全能文件工作台建立的安全備份".into());
+    }
+    create_backup(&destination)?;
+    fs::copy(&canonical_backup, &destination).map_err(|error| error.to_string())?;
+    Ok(ActionResult {
+        path: destination.to_string_lossy().to_string(),
+        file_name: destination
+            .file_name()
+            .and_then(|value| value.to_str())
+            .unwrap_or("PDF")
+            .to_string(),
+        message: "已復原上一次 PDF 修改；復原前版本也已另行備份。".into(),
+    })
+}
+
+#[tauri::command]
+fn pdf_create_blank(destination: String, pages: usize) -> Result<Value, String> {
+    let destination = PathBuf::from(destination);
+    if !destination
+        .extension()
+        .and_then(|value| value.to_str())
+        .unwrap_or("")
+        .eq_ignore_ascii_case("pdf")
+    {
+        return Err("新 PDF 必須使用 .pdf 副檔名".into());
+    }
+    let args = vec![
+        "--embedded-new".into(),
+        destination.to_string_lossy().to_string(),
+        "--pages".into(),
+        pages.clamp(1, 100).to_string(),
+    ];
+    acropdf_call_args(args, Duration::from_secs(90)).map(|(value, _)| value)
+}
+
+#[tauri::command]
+fn pdf_compare(path: String, other: String) -> Result<Value, String> {
+    let source = PathBuf::from(path);
+    let other = PathBuf::from(other);
+    validate_pdf_source(&source)?;
+    validate_pdf_source(&other)?;
+    let args = vec![
+        "--embedded-compare".into(),
+        source.to_string_lossy().to_string(),
+        "--other".into(),
+        other.to_string_lossy().to_string(),
+    ];
+    acropdf_call_args(args, Duration::from_secs(240)).map(|(value, _)| value)
 }
 
 #[tauri::command]
@@ -355,6 +794,7 @@ fn open_in_acropdf(path: Option<String>, tool: Option<String>) -> Result<ActionR
         "tools",
         "new",
         "read",
+        "print",
         "pages",
         "merge",
         "split",
@@ -362,9 +802,12 @@ fn open_in_acropdf(path: Option<String>, tool: Option<String>) -> Result<ActionR
         "edit_text",
         "edit_image",
         "annotate",
+        "annotation_summary",
+        "layers",
         "watermark",
         "header_footer",
         "forms",
+        "form_data",
         "form_design",
         "sign",
         "ocr",
@@ -384,7 +827,7 @@ fn open_in_acropdf(path: Option<String>, tool: Option<String>) -> Result<ActionR
             return Err("不支援的 PDF 工具入口".into());
         }
     }
-    let (_, runtime) = acropdf_call("--integration-status", None)?;
+    acropdf_call("--integration-status", None)?;
     let source = path.map(PathBuf::from);
     let backup = if let Some(source) = source.as_ref() {
         if !source.is_file() {
@@ -396,25 +839,16 @@ fn open_in_acropdf(path: Option<String>, tool: Option<String>) -> Result<ActionR
             .unwrap_or("")
             .eq_ignore_ascii_case("pdf")
         {
-            return Err("AcroPDF 工作區只接受 PDF 文件".into());
+            return Err("內建 PDF 工作區只接受 PDF 文件".into());
         }
         Some(create_backup(source)?)
     } else {
         None
     };
-    let mut command = Command::new(&runtime.executable);
-    command.args(&runtime.prefix_args).arg("--opendesk");
-    if let Some(tool) = tool {
-        command.args(["--opendesk-tool", &tool]);
-    }
-    if let Some(source) = source.as_ref() {
-        command.arg(source);
-    }
-    command.spawn().map_err(|error| error.to_string())?;
     let display_path = source
         .as_ref()
         .map(|value| value.to_string_lossy().to_string())
-        .unwrap_or_else(|| runtime.display_path.clone());
+        .unwrap_or_default();
     let file_name = source
         .as_ref()
         .and_then(|value| value.file_name())
@@ -422,8 +856,8 @@ fn open_in_acropdf(path: Option<String>, tool: Option<String>) -> Result<ActionR
         .unwrap_or("PDF 工作區")
         .to_string();
     let message = backup
-        .map(|value| format!("已備份原始 PDF 至 {}，正在開啟 PDF 工作區", value.display()))
-        .unwrap_or_else(|| "正在開啟 OpenDesk PDF 工作區".into());
+        .map(|value| format!("已備份原始 PDF 至 {}，內建工作區已就緒", value.display()))
+        .unwrap_or_else(|| "內建 PDF 工作區已就緒；不會開啟其他 APP".into());
     Ok(ActionResult {
         path: display_path,
         file_name,
@@ -581,7 +1015,7 @@ fn onlyoffice_current_language() -> String {
     }
     #[cfg(not(target_os = "macos"))]
     {
-        "由 OpenDesk 啟動時固定為 zh-TW".into()
+        "由全能文件工作台啟動時固定為 zh-TW".into()
     }
 }
 
@@ -877,9 +1311,9 @@ fn repair_onlyoffice_traditional_chinese<R: Runtime>(
         .unwrap_or_default();
     Ok(ActionResult {
         path: plugin_destination.to_string_lossy().to_string(),
-        file_name: "繁中寫作工具（OpenDesk TW）".into(),
+        file_name: "繁中寫作工具（全能文件）".into(),
         message: format!(
-            "已固定 ONLYOFFICE 為 zh-TW、補齊繁中介面並鎖定數字字級{backup_message}。重新開啟 ONLYOFFICE 後，可使用「OpenDesk TW」工具列的數字字級、分散對齊、智慧補齊、台灣標點與快捷鍵。"
+            "已固定 ONLYOFFICE 為 zh-TW、補齊繁中介面並鎖定數字字級{backup_message}。重新開啟 ONLYOFFICE 後，可使用「全能文件」工具列的數字字級、分散對齊、智慧補齊、台灣標點與快捷鍵。"
         ),
     })
 }
@@ -1560,7 +1994,7 @@ fn magi_analyze(path: String, mode: String, instruction: String) -> Result<MagiR
     } else {
         "已擷取完整可讀文字"
     };
-    let prompt = format!("你是整合在 OpenDesk TW 裡的 MAGI 文件分析助手。請全程使用繁體中文，嚴格依據擷取內容，不要臆測；若無法從文字確認視覺版面，請明確說明。\n\n【任務】\n{task}\n{extra}\n\n【文件】\n名稱：{file_name}\n擷取範圍：{range}\n\n【內容開始】\n{text}\n【內容結束】\n\n請用清楚的小標題與條列回答，不要覆寫原檔。");
+    let prompt = format!("你是整合在全能文件工作台裡的 MAGI 文件分析助手。請全程使用繁體中文，嚴格依據擷取內容，不要臆測；若無法從文字確認視覺版面，請明確說明。\n\n【任務】\n{task}\n{extra}\n\n【文件】\n名稱：{file_name}\n擷取範圍：{range}\n\n【內容開始】\n{text}\n【內容結束】\n\n請用清楚的小標題與條列回答，不要覆寫原檔。");
     let (api_key, tenant) = magi_credentials(&status.active_version)?;
     let body = serde_json::to_vec(&json!({"prompt": prompt, "timeout_sec": 90, "allow_fallback": true, "allow_template_fallback": true, "user_id": "opendesk-tw", "platform": "OPENDESK_TW", "role": "user"}))
         .map_err(|error| error.to_string())?;
@@ -1839,9 +2273,13 @@ fn scan_document(path: String) -> Result<DocumentAnalysis, String> {
 }
 
 fn data_root() -> Result<PathBuf, String> {
-    dirs::data_local_dir()
-        .map(|root| root.join("OpenDesk TW"))
-        .ok_or_else(|| "找不到本機資料目錄".into())
+    let base = dirs::data_local_dir().ok_or_else(|| "找不到本機資料目錄".to_string())?;
+    let current = base.join("全能文件工作台");
+    let legacy = base.join("OpenDesk TW");
+    if !current.exists() && legacy.exists() && fs::rename(&legacy, &current).is_err() {
+        fs::create_dir_all(&current).map_err(|error| error.to_string())?;
+    }
+    Ok(current)
 }
 
 fn create_backup(source: &Path) -> Result<PathBuf, String> {
@@ -1951,7 +2389,7 @@ fn convert_pdf(path: String) -> Result<String, String> {
     let source = PathBuf::from(path);
     let output = dirs::document_dir()
         .ok_or("找不到文件資料夾")?
-        .join("OpenDesk TW Exports")
+        .join("全能文件工作台輸出")
         .join(format!(
             "{}-{}",
             source
@@ -2043,6 +2481,43 @@ fn open_backup_folder() -> Result<String, String> {
     Ok(path.to_string_lossy().to_string())
 }
 
+const SOURCE_REPOSITORY: &str = "https://github.com/WhaleChao/OpenDeskTW";
+
+#[tauri::command]
+fn read_legal_document<R: Runtime>(
+    app: tauri::AppHandle<R>,
+    document: String,
+) -> Result<String, String> {
+    let relative = match document.as_str() {
+        "agpl" => "resources/licenses/AGPL-3.0.txt",
+        "third-party" => "resources/licenses/THIRD_PARTY_NOTICES.md",
+        "source-offer" => "resources/licenses/SOURCE_OFFER.md",
+        _ => return Err("不支援的授權文件".into()),
+    };
+    let path = resource_path(&app, relative)?;
+    fs::read_to_string(path).map_err(|error| format!("無法讀取授權文件：{error}"))
+}
+
+#[tauri::command]
+fn open_source_repository() -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    Command::new("/usr/bin/open")
+        .arg(SOURCE_REPOSITORY)
+        .spawn()
+        .map_err(|error| error.to_string())?;
+    #[cfg(target_os = "windows")]
+    Command::new("rundll32.exe")
+        .args(["url.dll,FileProtocolHandler", SOURCE_REPOSITORY])
+        .spawn()
+        .map_err(|error| error.to_string())?;
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    Command::new("xdg-open")
+        .arg(SOURCE_REPOSITORY)
+        .spawn()
+        .map_err(|error| error.to_string())?;
+    Ok(())
+}
+
 #[tauri::command]
 fn run_self_test<R: Runtime>(app: tauri::AppHandle<R>) -> SelfTestReport {
     let engines = [
@@ -2126,6 +2601,53 @@ fn run_self_test<R: Runtime>(app: tauri::AppHandle<R>) -> SelfTestReport {
         .and_then(|pdf| acropdf_call("--integration-live-test", Some(pdf)).ok())
         .and_then(|(value, _)| value.get("passed").and_then(Value::as_bool))
         .unwrap_or(false);
+    let acropdf_capabilities_passed = acropdf_call("--integration-status", None)
+        .ok()
+        .and_then(|(value, _)| {
+            value
+                .get("capabilities")
+                .and_then(Value::as_array)
+                .map(|capabilities| capabilities.len() >= 10)
+        })
+        .unwrap_or(false);
+    let (acropdf_audit_passed, acropdf_edit_passed) = converted_pdf
+        .as_ref()
+        .and_then(|pdf| {
+            let feature_copy = temporary_root.join("pdf-feature-roundtrip.pdf");
+            fs::copy(pdf, &feature_copy).ok()?;
+            let audit = acropdf_call_args(
+                vec![
+                    "--embedded-query".into(),
+                    feature_copy.to_string_lossy().to_string(),
+                    "--query".into(),
+                    "audit".into(),
+                    "--options-json".into(),
+                    "{}".into(),
+                ],
+                Duration::from_secs(90),
+            )
+            .ok()
+            .map(|(value, _)| value.get("pages").and_then(Value::as_u64).unwrap_or(0) > 0)
+            .unwrap_or(false);
+            let edit = acropdf_call_args(
+                vec![
+                    "--embedded-operate".into(),
+                    feature_copy.to_string_lossy().to_string(),
+                    "--operation".into(),
+                    "note".into(),
+                    "--options-json".into(),
+                    r#"{"page":0,"text":"全能文件工作台自我測試"}"#.into(),
+                    "--output".into(),
+                    feature_copy.to_string_lossy().to_string(),
+                ],
+                Duration::from_secs(90),
+            )
+            .ok()
+            .map(|(value, _)| value.get("pages").and_then(Value::as_u64).unwrap_or(0) > 0)
+            .unwrap_or(false);
+            Some((audit, edit))
+        })
+        .unwrap_or((false, false));
     let onlyoffice_tw = onlyoffice_tw_status_value();
     let _ = fs::remove_dir_all(&temporary_root);
     let magi = magi_status();
@@ -2172,6 +2694,13 @@ fn run_self_test<R: Runtime>(app: tauri::AppHandle<R>) -> SelfTestReport {
             total: 1,
         },
         TestGroup {
+            name: "內建 PDF 完整工具".into(),
+            passed: usize::from(acropdf_capabilities_passed)
+                + usize::from(acropdf_audit_passed)
+                + usize::from(acropdf_edit_passed),
+            total: 3,
+        },
+        TestGroup {
             name: "MAGI V2／V3 安全連線".into(),
             passed: usize::from(magi.available && magi.v2_v3_safe),
             total: 1,
@@ -2208,6 +2737,12 @@ pub fn run() {
             acropdf_status,
             pdf_report,
             pdf_live_validate,
+            pdf_query,
+            pdf_render_page,
+            pdf_apply_operation,
+            pdf_restore_backup,
+            pdf_create_blank,
+            pdf_compare,
             open_in_acropdf,
             backup_and_open,
             create_document,
@@ -2215,10 +2750,12 @@ pub fn run() {
             magi_analyze,
             reveal_path,
             open_backup_folder,
+            read_legal_document,
+            open_source_repository,
             run_self_test
         ])
         .run(tauri::generate_context!())
-        .expect("OpenDesk TW 啟動失敗");
+        .expect("全能文件工作台啟動失敗");
 }
 
 #[cfg(test)]
@@ -2303,6 +2840,26 @@ mod tests {
         ] {
             assert!(surface.contains(marker), "快捷鍵總覽缺少：{marker}");
         }
+    }
+
+    #[test]
+    fn primary_interface_displays_agpl_notices_and_source_offer() {
+        let interface = include_str!("../../src/index.html");
+        let frontend = include_str!("../../src/main.js");
+        let bundled_license = include_str!("../resources/licenses/AGPL-3.0.txt");
+        for marker in [
+            "GNU AGPL v3+",
+            "本程式不附帶任何擔保",
+            "完整授權條文",
+            "第三方授權",
+            "對應原始碼說明",
+            "檢視原始碼",
+        ] {
+            assert!(interface.contains(marker), "AGPL 介面告知缺少：{marker}");
+        }
+        assert!(frontend.contains("read_legal_document"));
+        assert!(frontend.contains("open_source_repository"));
+        assert!(bundled_license.contains("GNU AFFERO GENERAL PUBLIC LICENSE"));
     }
 
     #[test]
@@ -2456,6 +3013,26 @@ mod tests {
     }
 
     #[test]
+    fn persistent_pdf_core_reuses_process() {
+        let (status, _) =
+            acropdf_call("--integration-status", None).expect("內建 PDF 核心應能以常駐模式啟動");
+        assert_eq!(
+            status.get("protocol_version").and_then(Value::as_u64),
+            Some(2)
+        );
+        assert_eq!(
+            status.get("persistent_server").and_then(Value::as_bool),
+            Some(true)
+        );
+        let warm_started = Instant::now();
+        acropdf_call("--integration-status", None).expect("常駐 PDF 核心應能重複回應");
+        assert!(
+            warm_started.elapsed() < Duration::from_secs(3),
+            "PDF 核心沒有重用常駐程序"
+        );
+    }
+
+    #[test]
     #[ignore = "需要正在運作的本機 MAGI V2 或 V3"]
     fn live_magi_v2_v3_request() {
         let status = magi_status();
@@ -2557,7 +3134,7 @@ mod tests {
         let (acro_status, _) = acropdf_call("--integration-status", None).unwrap();
         assert_eq!(
             acro_status.get("protocol_version").and_then(Value::as_u64),
-            Some(1)
+            Some(2)
         );
         let (acro_live, _) = acropdf_call("--integration-live-test", Some(&pdf)).unwrap();
         assert_eq!(acro_live.get("passed").and_then(Value::as_bool), Some(true));

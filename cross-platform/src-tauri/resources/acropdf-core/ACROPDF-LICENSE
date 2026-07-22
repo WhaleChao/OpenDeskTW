@@ -1,0 +1,18 @@
+AcroPDF Integration License Notice
+
+Copyright (c) 2026 WhaleChao.
+
+The AcroPDF-derived embedded core in this directory has been relicensed by its
+copyright holder as part of Complete Document Workbench / 全能文件工作台 under
+the GNU Affero General Public License, version 3 or (at your option) any later
+version (SPDX-License-Identifier: AGPL-3.0-or-later).
+
+The complete license text is available in the repository root LICENSE file and
+in ../licenses/AGPL-3.0.txt inside distributed application bundles.
+
+Third-party components retain their respective copyright notices and licenses.
+In particular, PyMuPDF and MuPDF are used under the GNU AGPL route. See
+THIRD_PARTY_NOTICES.md and the generated third-party license bundle.
+
+This program is distributed WITHOUT ANY WARRANTY; without even the implied
+warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.

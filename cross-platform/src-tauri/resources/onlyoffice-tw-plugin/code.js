@@ -125,7 +125,7 @@
         "字級顯示：一律使用 9、10.5、12 等數字，不混用初號、五號等名稱",
         "粗體／斜體／底線：Ctrl／⌘+B、I、U",
         "靠左／置中／左右對齊：Ctrl／⌘+L、E、J",
-        "更多內容請在 OpenDesk TW 開啟「快捷鍵總覽」。",
+        "更多內容請在全能文件工作台開啟「快捷鍵總覽」。",
       ].join("\n"),
     );
   }
@@ -137,7 +137,7 @@
         tabs: [
           {
             id: "opendesk-tw-tab",
-            text: "OpenDesk TW",
+            text: "全能文件",
             items: [
               {
                 id: "opendesk-distributed",

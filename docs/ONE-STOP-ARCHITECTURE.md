@@ -1,19 +1,19 @@
-# OpenDesk TW 一站式文件整合架構
+# 全能文件工作台一站式整合架構
 
 ## 產品定位
 
-OpenDesk TW 是單一入口、狀態中心與安全層，不重新實作整套 Office 或 PDF 引擎。使用者在同一個全繁體中文介面選擇文件工作，OpenDesk 依格式與任務把文件交給最適合的本機原生引擎。
+全能文件工作台是單一入口、狀態中心與安全層。Office 格式交由成熟的開源編輯引擎，AcroPDF 的無視窗核心則直接封裝在 App 內，讓 PDF 瀏覽、修改、轉檔與驗證留在同一個視窗。
 
 ```text
-OpenDesk TW 單一入口
+全能文件工作台單一入口
 ├─ DOCX／XLSX／PPTX ── ONLYOFFICE（主要編輯）
 ├─ 舊格式／ODF／救援 ─ LibreOffice（相容與轉換）
-├─ PDF ────────────── AcroPDF（完整 PDF 工作區）
+├─ PDF ────────────── 內建 AcroPDF 核心（同視窗工作區）
 ├─ 分析 ───────────── MAGI V2 或 V3（唯一啟用版本）
 └─ 共用安全層 ─────── 格式掃描、版本備份、LIVE 驗證、熱修
 ```
 
-這個分工保留各引擎的完整原生功能，也避免為了「看起來整合」而複製不完整的編輯器。OpenDesk 的 PDF 中心負責直覺導覽、文件摘要、備份與驗證；AcroPDF 負責實際 PDF 編輯。
+AcroPDF 不再另開程式或網頁。Tauri 介面透過固定 JSON 協定呼叫封裝 sidecar，預覽、搜尋、頁面、內容、註解、表單、簽章、OCR、轉換、保護、批次與歸檔都在同一個工作區完成。
 
 ## 多角度設計檢查
 
@@ -28,24 +28,27 @@ OpenDesk TW 單一入口
 
 - Office 編輯交給 ONLYOFFICE／LibreOffice，保留格式、頁首頁尾、頁碼、目錄、表格、字型、試算表與簡報功能。
 - PDF 編輯交給既有 AcroPDF，涵蓋頁面、內容、註解、表單、簽署、OCR、轉換、最佳化、安全、永久遮蔽、比較、預檢、無障礙、批次與歸檔。
-- MAGI 透過相容層支援 V2／V3；若同時啟用兩版，OpenDesk 會停止呼叫並明確警示。
+- MAGI 透過相容層支援 V2／V3；若同時啟用兩版，工作台會停止呼叫並明確警示。
 
 ### 架構與維護
 
-- OpenDesk 與 AcroPDF 使用 `protocol_version: 1` 的本機 JSON 協定，避免 UI 與私有核心緊耦合。
+- 工作台與 AcroPDF 使用 `protocol_version: 2` 的本機 JSON 協定，避免 UI 與核心緊耦合。
+- 封裝核心第一次使用時啟動一次並常駐；後續翻頁、搜尋與編輯重用同一程序。Rust 以逐筆編號、序列化鎖與逾時監控回應，連線中斷時會終止故障程序並安全回退。
 - 引擎狀態探測、文件報告與 LIVE 驗證皆有明確逾時，故障不會無限卡住主程式。
 - PDF 工具名稱採雙邊白名單，不能透過參數執行任意命令。
-- OpenDesk 與 AcroPDF 可各自熱修、測試與發版，協定版本負責相容性。
+- UI、Rust 橋接層與 AcroPDF sidecar 可分層測試；正式更新仍由同一個已簽章的 Tauri 更新包交付，避免版本錯配。
 
 ### 授權與發行
 
-- OpenDesk TW 啟動器維持 MIT License。
-- AcroPDF 維持私有授權並獨立安裝；其原始碼或二進位檔不進入公開 OpenDesk 儲存庫或發行包。
-- 使用者看到的是單一入口，但安裝包仍尊重每個引擎的授權界線。
+- 全能文件工作台結合作品整體採 `AGPL-3.0-or-later`。
+- AcroPDF 衍生核心已由原作者／著作權人明確重新授權為 `AGPL-3.0-or-later`。
+- PyMuPDF／MuPDF 明確採 GNU AGPL 路線；安裝包與對應標籤的完整原始碼同處提供。
+- App 內提供授權、無擔保、第三方告知及原始碼入口；正式建置自動封裝當次依賴的授權檔。
+- ONLYOFFICE、LibreOffice 與 MAGI 等獨立程式維持各自授權與程序界線。
 
 ### 隱私與安全
 
-- 文件、分析與轉換預設皆在本機進行，OpenDesk 本身沒有登入、遙測或雲端上傳。
+- 文件、分析與轉換預設皆在本機進行，工作台本身沒有登入、遙測或雲端上傳。
 - PDF 報告只回傳統計、結構與警示，不回傳全文；加密 PDF 不繞過密碼。
 - 編輯既有文件前建立時間戳記備份；巨集與高風險物件另有安全副本與警示。
 - MAGI 只在使用者明確要求分析時接收擷取內容，且只連線目前唯一運作的本機版本。
@@ -66,8 +69,8 @@ OpenDesk TW 單一入口
 
 發行前必須同時通過：
 
-1. AcroPDF Python 單元／整合測試。
-2. OpenDesk Rust 單元測試、Clippy 與前端 production build。
+1. AcroPDF Python 實際 PDF 往返測試，含 Office 匯出、加密與 PFX 簽章。
+2. 工作台 Rust 單元測試、Clippy 與前端 production build。
 3. Office 完整功能矩陣。
 4. 本機完整 LIVE pipeline：Office 引擎、三種 OOXML、中文標題重編、PDF 轉換、AcroPDF 渲染往返、MAGI V2／V3 契約。
 5. 介面 LIVE 檢查：桌面與縮窄視窗、鍵盤頁籤、主控台零錯誤。

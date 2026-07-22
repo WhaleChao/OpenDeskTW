@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="color-scheme" content="light dark" />
-    <title>OpenDesk TW</title>
+    <title>全能文件工作台</title>
     <link rel="stylesheet" href="styles.css" />
   </head>
   <body>
@@ -12,7 +12,7 @@
       <header class="hero">
         <div class="brand-mark" aria-hidden="true">▤</div>
         <div class="hero-copy">
-          <h1>OpenDesk TW</h1>
+          <h1>全能文件工作台</h1>
           <p>文件・試算表・簡報・PDF・MAGI 一站整合・全繁體中文・本機安全</p>
         </div>
         <div class="system-summary" id="system-summary" aria-live="polite">正在檢查本機環境…</div>
@@ -73,7 +73,7 @@
             <b>最直覺的使用方式</b>
             <ol>
               <li>先選功能，不必先找選單。</li>
-              <li>OpenDesk 先備份並檢查文件。</li>
+              <li>全能文件工作台先備份並檢查文件。</li>
               <li>需要精細排版時，直接開啟本機編輯器完成。</li>
             </ol>
             <p>⌘／Ctrl＋S 儲存　⌘／Ctrl＋Z 復原<br>⌘／Ctrl＋B 粗體　⌘／Ctrl＋F 尋找</p>
@@ -113,14 +113,14 @@
           <div>
             <span class="eyebrow pdf-eyebrow">PDF 文件中心</span>
             <h2 id="pdf-center-title">PDF 想怎麼處理？</h2>
-            <p>OpenDesk 統一選檔、備份與檢查；AcroPDF 提供完整本機編輯工作區。</p>
+            <p>文字、試算表、簡報與 AcroPDF 核心都在同一個視窗完成。</p>
           </div>
           <div class="word-start-actions">
             <button class="pdf-primary" id="open-pdf-document">開啟 PDF</button>
-            <button id="launch-pdf-workspace">啟動 PDF 工作區</button>
+            <button id="create-pdf-document">新增空白 PDF</button>
           </div>
         </div>
-        <div class="pdf-engine-line" id="pdf-engine-line" aria-live="polite">正在檢查 AcroPDF 本機引擎…</div>
+        <div class="pdf-engine-line" id="pdf-engine-line" aria-live="polite">正在檢查內建 AcroPDF 核心…</div>
         <div class="pdf-ribbon" role="tablist" aria-label="PDF 功能區">
           <button class="active" id="pdf-tab-home" role="tab" aria-selected="true" aria-controls="pdf-task-panel" tabindex="0" data-pdf-tab="home">常用</button>
           <button id="pdf-tab-pages" role="tab" aria-selected="false" aria-controls="pdf-task-panel" tabindex="-1" data-pdf-tab="pages">整理頁面</button>
@@ -142,7 +142,7 @@
               <li>開啟前自動建立原檔備份。</li>
               <li>修改、遮蔽或簽署都在本機完成。</li>
             </ol>
-            <p>AcroPDF 私有引擎不會上傳到公開 OpenDesk 儲存庫。</p>
+            <p>內建核心不會開啟另一套 APP，也不會把文件傳送到網路。</p>
           </aside>
         </div>
 
@@ -150,7 +150,7 @@
           <div class="word-current-head">
             <div><span class="eyebrow pdf-eyebrow">目前 PDF</span><h3 id="pdf-report-title">PDF 健康報告</h3></div>
             <div class="action-row">
-              <button class="pdf-primary" id="pdf-edit">備份並編輯</button>
+              <button class="pdf-primary" id="pdf-edit">在此視窗編輯</button>
               <button id="pdf-live-check">LIVE 驗證</button>
               <button id="pdf-report-refresh">重新檢查</button>
             </div>
@@ -170,6 +170,64 @@
               <div id="pdf-warnings"></div>
             </section>
           </div>
+          <section class="pdf-inline-workspace hidden" id="pdf-inline-workspace" aria-labelledby="pdf-inline-title">
+            <div class="pdf-inline-head">
+              <div>
+                <span class="eyebrow pdf-eyebrow">內建 ACROPDF 核心</span>
+                <h3 id="pdf-inline-title">同視窗 PDF 編輯器</h3>
+                <p id="pdf-inline-file">尚未載入文件</p>
+              </div>
+              <div class="pdf-inline-head-actions">
+                <span>每次修改前自動備份</span>
+                <button id="pdf-inline-close">收合編輯器</button>
+              </div>
+            </div>
+            <div class="pdf-inline-toolbar" role="toolbar" aria-label="PDF 檢視與頁面工具">
+              <button id="pdf-page-previous" title="上一頁">←</button>
+              <label>頁碼 <input id="pdf-page-number" type="number" min="1" value="1" /></label>
+              <span id="pdf-page-total">／1</span>
+              <button id="pdf-page-next" title="下一頁">→</button>
+              <span class="pdf-toolbar-separator"></span>
+              <button id="pdf-zoom-out" title="縮小">−</button>
+              <span id="pdf-zoom-label">125%</span>
+              <button id="pdf-zoom-in" title="放大">＋</button>
+              <button id="pdf-zoom-fit" title="適合寬度">適合寬度</button>
+              <span class="pdf-toolbar-separator"></span>
+              <label class="pdf-search-control">搜尋 <input id="pdf-search-text" type="search" placeholder="輸入文字" /></label>
+              <button id="pdf-search-run">尋找</button>
+              <span class="pdf-toolbar-separator"></span>
+              <label class="pdf-password-control">密碼 <input id="pdf-password" type="password" autocomplete="current-password" placeholder="受保護時輸入" /></label>
+              <button id="pdf-password-apply">解鎖</button>
+              <button id="pdf-undo" disabled>復原上次修改</button>
+              <span class="pdf-toolbar-separator"></span>
+              <button data-pdf-operation="rotate-left">↶ 左轉</button>
+              <button data-pdf-operation="rotate-right">↷ 右轉</button>
+              <button data-pdf-operation="move-page-left">← 前移</button>
+              <button data-pdf-operation="move-page-right">後移 →</button>
+              <button data-pdf-operation="insert-blank">＋ 空白頁</button>
+              <button class="danger" data-pdf-operation="delete-page">刪除此頁</button>
+            </div>
+            <div class="pdf-inline-grid">
+              <aside class="pdf-page-list" aria-label="PDF 頁面清單">
+                <b>頁面</b><small>拖曳即可重排</small>
+                <div id="pdf-page-buttons"></div>
+              </aside>
+              <div class="pdf-canvas-viewport" id="pdf-canvas-viewport">
+                <div class="pdf-render-message" id="pdf-render-message">正在準備頁面…</div>
+                <img id="pdf-page-image" alt="目前 PDF 頁面" />
+              </div>
+              <aside class="pdf-tool-shelf" aria-label="PDF 編輯工具">
+                <div><b>整理頁面</b><button data-pdf-operation="merge">合併 PDF</button><button data-pdf-operation="extract">擷取此頁</button><button data-pdf-operation="split">逐頁分割</button></div>
+                <div><b>文字與圖片</b><button data-pdf-operation="add-text">加入永久文字</button><button data-pdf-operation="edit-text">搜尋取代文字</button><button data-pdf-operation="image-replace">替換圖片</button><button data-pdf-operation="image-delete">刪除圖片</button></div>
+                <div><b>註解與連結</b><button data-pdf-operation="note">便利貼</button><button data-pdf-operation="free-text">文字框</button><button data-pdf-operation="mark">螢光／底線／刪除線</button><button data-pdf-operation="shape">圖形／箭頭／圖章</button><button data-pdf-operation="measure">距離／面積測量</button><button data-pdf-operation="annotation-summary">註解摘要</button><button data-pdf-operation="link">網頁連結</button><button data-pdf-operation="bookmark">頁面書籤</button><button data-pdf-operation="layers">圖層顯示</button><button data-pdf-operation="attach-file">嵌入附件</button><button data-pdf-operation="extract-attachment">擷取附件</button></div>
+                <div><b>表單與簽署</b><button data-pdf-operation="fill-form">填寫既有表單</button><button data-pdf-operation="create-field">建立表單欄位</button><button data-pdf-operation="export-form-data">匯出表單資料</button><button data-pdf-operation="import-form-data">匯入表單資料</button><button data-pdf-operation="flatten">扁平化表單與註解</button><button data-pdf-operation="sign">憑證簽署</button><button data-pdf-operation="verify-signatures">驗證簽章</button></div>
+                <div><b>版面與批次</b><button data-pdf-operation="watermark">加入浮水印</button><button data-pdf-operation="header-footer">頁首頁尾／頁碼</button><button data-pdf-operation="optimize">最佳化檔案</button></div>
+                <div><b>轉換與交付</b><button data-pdf-operation="print">列印全部頁面</button><button data-pdf-operation="export">匯出 Word／Excel／簡報／圖片</button><button data-pdf-operation="audit">印刷與 PDF/UA 預檢</button><button data-pdf-operation="accessibility">標題與主要語言</button><button data-pdf-operation="batch">批次處理</button><button data-pdf-operation="filing">智慧歸檔</button></div>
+                <div><b>安全與智慧</b><button data-pdf-operation="ocr">繁中 OCR</button><button data-pdf-operation="redact">永久遮蔽文字</button><button data-pdf-operation="redact-pattern">依格式遮蔽個資</button><button data-pdf-operation="encrypt">設定 AES-256 密碼</button><button data-pdf-operation="decrypt">解除密碼副本</button><button data-pdf-operation="compare">比較另一份 PDF</button></div>
+              </aside>
+            </div>
+            <div class="pdf-inline-status" id="pdf-inline-status" aria-live="polite">內建 PDF 工作區已就緒。</div>
+          </section>
         </div>
       </section>
 
@@ -236,7 +294,11 @@
         <div id="self-test-result" class="test-result">尚未執行。</div>
       </section>
 
-      <footer><span id="app-version">OpenDesk TW</span><span>文件預設留在本機・更新包必須通過密碼學簽章</span></footer>
+      <footer>
+        <span id="app-version">全能文件工作台</span>
+        <span>文件預設留在本機・更新包必須通過密碼學簽章</span>
+        <button class="footer-license" id="legal-open">GNU AGPL v3+・授權與原始碼</button>
+      </footer>
     </main>
     <dialog class="shortcut-dialog" id="shortcut-dialog" aria-labelledby="shortcut-title">
       <div class="shortcut-dialog-head">
@@ -248,8 +310,40 @@
       </label>
       <div class="shortcut-platform-note" id="shortcut-platform-note"></div>
       <div class="shortcut-grid" id="shortcut-grid"></div>
-      <p class="shortcut-boundary">分散對齊、智慧補齊與台灣標點位於 ONLYOFFICE 的「OpenDesk TW」工具列；自訂外掛按鈕不冒用系統層全域熱鍵，避免與輸入法及既有快捷鍵衝突。</p>
+      <p class="shortcut-boundary">分散對齊、智慧補齊與台灣標點位於 ONLYOFFICE 的「全能文件」工具列；自訂外掛按鈕不冒用系統層全域熱鍵，避免與輸入法及既有快捷鍵衝突。</p>
     </dialog>
+    <dialog class="pdf-tool-dialog" id="pdf-tool-dialog" aria-labelledby="pdf-tool-title">
+      <form method="dialog" id="pdf-tool-form">
+        <div class="pdf-tool-dialog-head">
+          <div><span class="eyebrow pdf-eyebrow">內建 PDF 工具</span><h2 id="pdf-tool-title">PDF 操作</h2><p id="pdf-tool-detail"></p></div>
+          <button value="cancel" aria-label="關閉 PDF 工具">關閉</button>
+        </div>
+        <div class="pdf-tool-fields" id="pdf-tool-fields"></div>
+        <div class="pdf-tool-actions"><button value="cancel">取消</button><button class="pdf-primary" id="pdf-tool-confirm" value="default">套用並自動備份</button></div>
+      </form>
+    </dialog>
+    <dialog class="shortcut-dialog legal-dialog" id="legal-dialog" aria-labelledby="legal-title">
+      <div class="shortcut-dialog-head">
+        <div>
+          <span class="eyebrow">自由軟體與對應原始碼</span>
+          <h2 id="legal-title">GNU AGPL v3+ 授權告知</h2>
+          <p>全能文件工作台與 AcroPDF 衍生內建核心採 AGPL-3.0-or-later。</p>
+        </div>
+        <button id="legal-close" aria-label="關閉授權告知">關閉</button>
+      </div>
+      <div class="legal-summary">
+        <p><b>本程式不附帶任何擔保</b>，包括適售性或特定用途適用性的默示擔保。您可依 GNU AGPL v3 或更新版本複製、散布及修改。</p>
+        <p>散布執行檔或透過網路提供修改版功能時，必須依 AGPL 向使用者提供相同版本的完整對應原始碼與建置、安裝資訊。</p>
+      </div>
+      <div class="legal-actions">
+        <button class="primary" id="legal-license">完整授權條文</button>
+        <button id="legal-third-party">第三方授權</button>
+        <button id="legal-source-offer">對應原始碼說明</button>
+        <button id="legal-source">在瀏覽器檢視原始碼</button>
+      </div>
+      <pre class="legal-text" id="legal-text" tabindex="0">請選擇要檢視的授權文件；完整條文已隨 App 離線提供。</pre>
+    </dialog>
+    <div id="pdf-print-root" aria-hidden="true"></div>
     <div class="toast hidden" id="toast" role="status" aria-live="polite"></div>
     <script type="module" src="main.js"></script>
   </body>

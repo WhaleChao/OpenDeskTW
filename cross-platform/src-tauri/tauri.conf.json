@@ -1,18 +1,18 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "OpenDesk TW",
-  "version": "2.2.2",
+  "productName": "全能文件工作台",
+  "version": "2.4.0",
   "identifier": "tw.opendesk.crossplatform",
   "build": {
     "beforeDevCommand": "npm run frontend:dev",
     "devUrl": "http://127.0.0.1:1420",
-    "beforeBuildCommand": "npm run frontend:build",
+    "beforeBuildCommand": "npm run legal:bundle && npm run frontend:build",
     "frontendDist": "../dist"
   },
   "app": {
     "windows": [
       {
-        "title": "OpenDesk TW",
+        "title": "全能文件工作台",
         "width": 1180,
         "height": 820,
         "minWidth": 900,
@@ -30,15 +30,18 @@
     "active": true,
     "targets": "all",
     "createUpdaterArtifacts": true,
-    "copyright": "Copyright © OpenDesk TW Contributors",
+    "copyright": "Copyright © 全能文件工作台貢獻者",
     "category": "Productivity",
-    "shortDescription": "全繁體中文、Office 格式優先的本機文件工作台",
-    "longDescription": "整合 ONLYOFFICE、LibreOffice、文件備份、PDF、相容性掃描、MAGI 與安全熱修。",
+    "shortDescription": "文字、試算表、簡報、PDF 與 MAGI 一站式本機工作台",
+    "longDescription": "整合文字、試算表、簡報、內建 PDF 核心、文件備份、格式掃描、MAGI V2／V3 與安全熱修。",
+    "externalBin": ["binaries/document-pdf-core"],
     "resources": ["resources/**/*"],
     "icon": ["icons/32x32.png", "icons/128x128.png", "icons/128x128@2x.png", "icons/icon.icns", "icons/icon.ico"],
     "macOS": {
       "minimumSystemVersion": "10.15",
-      "signingIdentity": "-"
+      "signingIdentity": "-",
+      "hardenedRuntime": true,
+      "entitlements": "Entitlements.plist"
     },
     "windows": {
       "webviewInstallMode": { "type": "embedBootstrapper" },
