@@ -340,6 +340,7 @@ def _atomic_save(
     owner_pw: str = "",
     user_pw: str = "",
     permissions: int = -1,
+    close_before_replace: tuple[fitz.Document, ...] = (),
 ) -> Path:
     destination = Path(output).expanduser().resolve()
     if destination.suffix.lower() != ".pdf":
@@ -361,6 +362,10 @@ def _atomic_save(
             user_pw=user_pw,
             permissions=permissions,
         )
+        # Windows 不允許取代仍由 MuPDF 開啟中的同名來源檔。
+        # 臨時檔完成後才關閉控制代碼，仍可確保寫入失敗時保留原檔。
+        for opened_document in close_before_replace:
+            opened_document.close()
         os.replace(temporary, destination)
     finally:
         temporary.unlink(missing_ok=True)
@@ -1336,6 +1341,7 @@ def operate_pdf(
             user_password = str(options.get("user_password") or "")
             if not owner_password:
                 raise ValueError("請設定擁有者密碼")
+            close_documents = (document,) if destination == source else ()
             saved = _atomic_save(
                 document,
                 destination,
@@ -1343,11 +1349,18 @@ def operate_pdf(
                 owner_pw=owner_password,
                 user_pw=user_password,
                 permissions=int(options.get("permissions") or -1),
+                close_before_replace=close_documents,
             )
             result["output"] = str(saved)
             return {"protocol_version": PROTOCOL_VERSION, **result}
         elif operation == "decrypt":
-            saved = _atomic_save(document, destination, encryption=fitz.PDF_ENCRYPT_NONE)
+            close_documents = (document,) if destination == source else ()
+            saved = _atomic_save(
+                document,
+                destination,
+                encryption=fitz.PDF_ENCRYPT_NONE,
+                close_before_replace=close_documents,
+            )
             result["output"] = str(saved)
             return {"protocol_version": PROTOCOL_VERSION, **result}
         elif operation == "ocr":
@@ -1368,14 +1381,27 @@ def operate_pdf(
             raise ValueError(f"不支援的內建 PDF 操作：{operation}")
 
         target = replacement or document
-        saved = _atomic_save(target, destination)
+        page_count = target.page_count
+        close_documents = ()
+        if destination == source:
+            close_documents = (
+                (document, replacement)
+                if replacement is not None
+                else (document,)
+            )
+        saved = _atomic_save(
+            target,
+            destination,
+            close_before_replace=close_documents,
+        )
         result["output"] = str(saved)
-        result["pages"] = target.page_count
+        result["pages"] = page_count
         return {"protocol_version": PROTOCOL_VERSION, **result}
     finally:
-        if replacement is not None:
+        if replacement is not None and not replacement.is_closed:
             replacement.close()
-        document.close()
+        if not document.is_closed:
+            document.close()
 
 
 def create_blank(output: str | Path, pages: int = 1) -> dict[str, Any]:

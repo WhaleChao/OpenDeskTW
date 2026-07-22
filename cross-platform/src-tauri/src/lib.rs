@@ -247,6 +247,33 @@ fn acropdf_runtime_candidates() -> Vec<AcroPdfRuntime> {
         });
     }
 
+    // `cargo test` 與開發模式的執行檔位於 target 目錄，不會和 Tauri
+    // sidecar 放在同一層；直接採用封裝腳本產生的平台檔名，確保 CI
+    // 驗證的也是實際隨安裝包出貨的核心，而不是碰巧可用的系統 Python。
+    let development_sidecar_name = if cfg!(all(target_os = "macos", target_arch = "aarch64")) {
+        Some("document-pdf-core-aarch64-apple-darwin")
+    } else if cfg!(all(target_os = "macos", target_arch = "x86_64")) {
+        Some("document-pdf-core-x86_64-apple-darwin")
+    } else if cfg!(all(target_os = "windows", target_arch = "x86_64")) {
+        Some("document-pdf-core-x86_64-pc-windows-msvc.exe")
+    } else if cfg!(all(target_os = "windows", target_arch = "aarch64")) {
+        Some("document-pdf-core-aarch64-pc-windows-msvc.exe")
+    } else {
+        None
+    };
+    if let Some(name) = development_sidecar_name {
+        let sidecar = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("binaries")
+            .join(name);
+        if sidecar.is_file() {
+            candidates.push(AcroPdfRuntime {
+                executable: sidecar.clone(),
+                prefix_args: Vec::new(),
+                display_path: sidecar.to_string_lossy().to_string(),
+            });
+        }
+    }
+
     if let Ok(current_executable) = std::env::current_exe() {
         if let Some(binary_root) = current_executable.parent() {
             let sidecar = if cfg!(target_os = "windows") {
