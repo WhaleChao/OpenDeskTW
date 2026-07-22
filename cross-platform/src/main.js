@@ -48,9 +48,11 @@ const wordTabs = {
     tasks: [
       ["font", "字型與文字", "字型、大小、粗體、斜體、底線、色彩、醒目提示、上下標與清除格式。", "常用 → 字型", "editor"],
       ["paragraph", "段落與定位點", "左右／分散對齊、縮排、行距、段前段後、框線、底紋、尺規與定位點。", "常用 → 段落", "editor"],
+      ["distributed", "分散對齊（選取段落）", "補上 ONLYOFFICE 未顯示的繁中公文功能；先選取一個或多個段落，再按工具列。", "OpenDesk TW → 分散對齊", "twtools"],
+      ["paired-punctuation", "智慧成對標點", "依巢狀順序判斷要補上）、」、】、〕、》或其他正確結尾，支援選取文字與目前句子。", "OpenDesk TW → 智慧補齊／台灣標點", "twtools"],
       ["styles", "樣式與標題", "用標題 1–4 建立一致結構，之後才能自動產生目錄與導覽。", "常用 → 樣式", "editor"],
       ["lists", "項目符號與多層清單", "建立項目符號、數字編號、多層清單，並調整縮排與重新開始編號。", "常用 → 段落 → 清單", "editor"],
-      ["format", "格式刷與貼上選項", "複製格式、選擇性貼上、保留來源格式或只保留文字。", "常用 → 複製樣式／貼上", "editor"],
+      ["format", "格式刷與貼上選項", "複製格式、選擇性貼上、保留來源格式或只保留文字；⌘⌥C／V 或 Ctrl+Alt+C／V 可直接複製與套用格式。", "常用 → 複製樣式／貼上", "editor"],
       ["find", "尋找、取代與選取", "依文字或格式尋找，全部取代，快速選取相同格式內容。", "常用 → 尋找與取代", "editor"],
       ["voice", "聽寫、朗讀與輔助輸入", "可用 Windows／macOS 系統聽寫輸入繁體中文；朗讀與沉浸閱讀依本機編輯器支援。", "系統聽寫＋檢視 → 閱讀模式", "editor"],
       ["renumber", "中文標題安全重編", "辨識〔壹、〕〔一、〕（一）與 1.，先備份，再建立套用標題樣式的新副本。", "OpenDesk 直接完成", "renumber"],
@@ -250,7 +252,127 @@ const pdfTabs = {
   },
 };
 
-const state = { status: null, selectedPath: null, selectedAnalysis: null, wordReport: null, wordTab: "home", pdfReport: null, pdfTab: "home", pdfEngine: null, featureTab: "all" };
+const wordShortcuts = [
+  ["文件", "開啟檔案", "Ctrl+O", "⌘O"],
+  ["文件", "儲存", "Ctrl+S", "⌘S"],
+  ["文件", "另存／下載為", "Ctrl+Shift+S", "⇧⌘S"],
+  ["文件", "列印", "Ctrl+P", "⌘P"],
+  ["文件", "關閉文件", "Ctrl+W", "⌘W"],
+  ["文件", "下一個文件頁籤", "Ctrl+Tab", "Control+Tab"],
+  ["文件", "上一個文件頁籤", "Ctrl+Shift+Tab", "Control+Shift+Tab"],
+  ["文件", "更新目錄與欄位", "F9", "Fn+F9"],
+  ["編輯", "復原", "Ctrl+Z", "⌘Z"],
+  ["編輯", "取消復原／重做", "Ctrl+Y", "⌘Y／⇧⌘Z"],
+  ["編輯", "剪下", "Ctrl+X", "⌘X"],
+  ["編輯", "複製", "Ctrl+C", "⌘C"],
+  ["編輯", "貼上", "Ctrl+V", "⌘V"],
+  ["編輯", "只貼上文字", "Ctrl+Shift+V", "⇧⌘V"],
+  ["編輯", "全選", "Ctrl+A", "⌘A"],
+  ["編輯", "尋找", "Ctrl+F", "⌘F"],
+  ["編輯", "尋找與取代", "Ctrl+H", "Control+H"],
+  ["編輯", "插入超連結", "Ctrl+K", "⌘K"],
+  ["文字格式", "粗體", "Ctrl+B", "⌘B"],
+  ["文字格式", "斜體", "Ctrl+I", "⌘I"],
+  ["文字格式", "底線", "Ctrl+U", "⌘U"],
+  ["文字格式", "刪除線", "Ctrl+5", "⇧⌘X"],
+  ["文字格式", "上標", "Ctrl+,", "⌘,"],
+  ["文字格式", "下標", "Ctrl+.", "⌘."],
+  ["文字格式", "複製格式", "Ctrl+Alt+C", "⌘⌥C"],
+  ["文字格式", "套用格式", "Ctrl+Alt+V", "⌘⌥V"],
+  ["文字格式", "清除格式", "Ctrl+Space", "⌘+Fn+Space"],
+  ["文字格式", "放大字型一級", "Ctrl+]", "⌘]"],
+  ["文字格式", "縮小字型一級", "Ctrl+[", "⌘["],
+  ["樣式", "套用標題 1", "Alt+1", "⌥⌘1／⌥Control+1"],
+  ["樣式", "套用標題 2", "Alt+2", "⌥⌘2／⌥Control+2"],
+  ["樣式", "套用標題 3", "Alt+3", "⌥⌘3／⌥Control+3"],
+  ["段落", "靠左對齊", "Ctrl+L", "⌘L"],
+  ["段落", "置中對齊", "Ctrl+E", "⌘E"],
+  ["段落", "靠右對齊", "Ctrl+R", "⌘R"],
+  ["段落", "左右對齊", "Ctrl+J", "⌘J"],
+  ["段落", "項目符號", "Ctrl+Shift+L", "⇧⌘L"],
+  ["段落", "增加縮排", "Ctrl+M", "⌘M"],
+  ["段落", "減少縮排", "Ctrl+Shift+M", "⇧⌘M"],
+  ["插入", "分頁符號", "Ctrl+Enter", "⌘Return"],
+  ["插入", "分欄符號", "Ctrl+Shift+Enter", "⇧⌘Return"],
+  ["插入", "插入頁碼", "Ctrl+Shift+P", "⇧⌘P"],
+  ["檢視", "顯示／隱藏格式標記", "Ctrl+Shift+8", "⇧⌘8"],
+  ["檢視", "回到 100% 縮放", "Ctrl+0", "⌘0"],
+  ["校閱", "開啟註解窗格", "Ctrl+Shift+H", "⇧⌘H"],
+  ["校閱", "新增註解", "Alt+H", "⌘⌥A"],
+  ["導覽", "行首／行尾", "Home／End", "⌘←／⌘→"],
+  ["導覽", "文件開頭／結尾", "Ctrl+Home／End", "⌘↑／⌘↓"],
+  ["導覽", "逐字移動", "Ctrl+←／→", "⌥←／→"],
+  ["選取", "選到行首／行尾", "Shift+Home／End", "⇧+Fn+←／→"],
+  ["選取", "選到文件開頭／結尾", "Ctrl+Shift+Home／End", "⇧⌘+Fn+←／→"],
+  ["表格", "移到下一個儲存格", "Tab", "Tab"],
+  ["表格", "移到上一個儲存格", "Shift+Tab", "Shift+Tab"],
+  ["物件", "等比例縮放／限制方向", "Shift+拖曳", "Shift+拖曳"],
+  ["物件", "拖曳時建立副本", "Ctrl+拖曳", "Control+拖曳"],
+  ["文件", "開啟檔案面板", "Alt+F", "Control+Option+F"],
+  ["功能區", "顯示／隱藏功能鍵提示", "Alt", "Option"],
+  ["文件", "說明", "F1", "Fn+F1"],
+  ["文件", "元素快顯功能表", "Shift+F10", "Shift+Fn+F10"],
+  ["文件", "關閉選單／對話框／目前模式", "Esc", "Esc"],
+  ["無障礙", "切換螢幕閱讀器動作傳送", "Ctrl+Alt+Z", "⌘⌥Z／Control+Option+Z"],
+  ["導覽", "上一頁開頭", "Ctrl+Alt+Page Up", "⌘+Fn+↑／⌥+Fn+↑"],
+  ["導覽", "下一頁開頭", "Ctrl+Alt+Page Down", "⌘+Fn+↓／⌥+Fn+↓"],
+  ["導覽", "向上／向下捲動一個畫面", "Page Up／Page Down", "Fn+↑／Fn+↓"],
+  ["導覽", "上一頁／下一頁", "Alt+Page Up／Page Down", "⌥+Page Up／Page Down"],
+  ["檢視", "放大", "Ctrl++", "⌘+"],
+  ["檢視", "縮小", "Ctrl+-", "⌘-"],
+  ["導覽", "逐字元或逐行移動", "方向鍵", "方向鍵"],
+  ["導覽", "對話框移到下一個／上一個控制項", "Tab／Shift+Tab", "Tab／Shift+Tab"],
+  ["頁首頁尾", "移到下一個／上一個頁首頁尾", "Page Down／Page Up", "Fn+↓／Fn+↑"],
+  ["頁首頁尾", "移到下一個／上一個頁首", "Alt+Page Down／Page Up", "⌥+Fn+↓／↑"],
+  ["輸入", "結束段落／新增段落", "Enter", "Return"],
+  ["輸入", "插入換行但不另起段落", "Shift+Enter", "Shift+Return"],
+  ["輸入", "刪除左側字元", "Backspace", "Delete"],
+  ["輸入", "刪除右側字元", "Delete", "Fn+Delete"],
+  ["輸入", "刪除左側一個單字", "Ctrl+Backspace", "Option+Delete"],
+  ["輸入", "刪除右側一個單字", "Ctrl+Delete", "Fn+Option+Delete"],
+  ["輸入", "插入不分行空格", "Ctrl+Shift+Space", "⌘⇧+Fn+Space"],
+  ["輸入", "插入不分行連字號", "Ctrl+Shift+-", "⌘⇧-"],
+  ["選擇性貼上", "保留來源格式", "貼上後 Ctrl，再按 K", "貼上後 Control，再按 K"],
+  ["選擇性貼上", "只保留文字", "貼上後 Ctrl，再按 T", "貼上後 Control，再按 T"],
+  ["選擇性貼上", "覆寫表格儲存格", "貼上後 Ctrl，再按 O", "貼上後 Control，再按 O"],
+  ["選擇性貼上", "貼成巢狀表格", "貼上後 Ctrl，再按 N", "貼上後 Control，再按 N"],
+  ["超連結", "開啟游標所在連結", "Enter", "Return"],
+  ["選取", "向右／向左選取一個字元", "Shift+→／←", "Shift+→／←"],
+  ["選取", "選到單字結尾／開頭", "Ctrl+Shift+→／←", "Shift+Option+→／←"],
+  ["選取", "向上／向下選取一行", "Shift+↑／↓", "Shift+↑／↓"],
+  ["選取", "向上／向下選取一個畫面", "Shift+Page Up／Down", "Shift+Fn+↑／↓"],
+  ["選取", "選到上一頁／下一頁開頭", "Ctrl+Shift+Page Up／Down", "⌘⇧+Fn+↑／↓"],
+  ["段落", "提高清單／縮排層級", "段落開頭按 Tab", "段落開頭按 Tab"],
+  ["段落", "降低清單／縮排層級", "Shift+Tab", "Shift+Tab"],
+  ["段落", "插入定位字元", "Tab", "Tab"],
+  ["物件", "進入圖形或圖表文字", "Enter", "Return"],
+  ["物件", "限制水平／垂直移動", "Shift+拖曳", "Shift+拖曳"],
+  ["物件", "旋轉時鎖定 15 度", "Shift+拖曳旋轉", "Shift+拖曳旋轉"],
+  ["物件", "繪製線條時鎖定 45 度", "Shift+拖曳繪製", "Shift+拖曳繪製"],
+  ["物件", "逐像素移動", "Ctrl+方向鍵", "⌘+方向鍵"],
+  ["物件", "大步移動", "方向鍵", "方向鍵"],
+  ["物件", "移到下一個／上一個物件", "Tab／Shift+Tab", "Tab／Shift+Tab"],
+  ["註腳與尾註", "插入尾註", "Ctrl+Alt+D", "Control+Option+D"],
+  ["註腳與尾註", "插入註腳", "Ctrl+Alt+F", "—"],
+  ["表格", "移到下一列／上一列", "↓／↑", "↓／↑"],
+  ["表格", "在儲存格內新增段落", "Enter", "Return"],
+  ["表格", "在表格末端新增一列", "最後一格按 Tab", "最後一格按 Tab"],
+  ["表格", "插入表格分隔符號", "Ctrl+Shift+Enter", "⌘⇧Return"],
+  ["表單", "移到下一個／上一個欄位", "Tab／Shift+Tab", "Tab／Shift+Tab"],
+  ["表單", "選擇下一個／上一個選項", "↓／↑", "↓／↑"],
+  ["特殊字元", "插入方程式", "Alt+=", "⌥⌘=／⌥Control+="],
+  ["特殊字元", "插入破折號（em dash）", "Ctrl+Alt+數字鍵 -", "⌥⇧-"],
+  ["特殊字元", "插入短橫線（en dash）", "Ctrl+數字鍵 -", "⌥-"],
+  ["特殊字元", "插入版權符號 ©", "Ctrl+Alt+G", "⌘⌥G"],
+  ["特殊字元", "插入歐元符號 €", "Ctrl+Alt+E", "⌘⌥E"],
+  ["特殊字元", "插入註冊商標 ®", "Ctrl+Alt+R", "⌘⌥R"],
+  ["特殊字元", "插入商標 ™", "Ctrl+Alt+T", "⌘⌥T"],
+  ["特殊字元", "插入刪節號", "Ctrl+Alt+.", "⌥;"],
+  ["特殊字元", "把選取的 Unicode 碼轉成符號", "Alt+X", "⌥⌘X／⌥Control+X"],
+  ["OpenDesk TW", "中文標題安全重編", "Ctrl+Alt+Shift+R", "⌥⇧⌘R"],
+];
+
+const state = { status: null, selectedPath: null, selectedAnalysis: null, wordReport: null, wordTab: "home", onlyofficeTw: null, pdfReport: null, pdfTab: "home", pdfEngine: null, featureTab: "all" };
 const $ = (selector) => document.querySelector(selector);
 const $$ = (selector) => [...document.querySelectorAll(selector)];
 
@@ -262,10 +384,35 @@ function toast(message, timeout = 4600) {
   toast.timer = window.setTimeout(() => element.classList.add("hidden"), timeout);
 }
 
+function renderShortcutCatalog() {
+  const query = $("#shortcut-search").value.trim().toLocaleLowerCase("zh-TW");
+  const matched = wordShortcuts.filter((row) => row.join(" ").toLocaleLowerCase("zh-TW").includes(query));
+  const grouped = new Map();
+  for (const row of matched) {
+    if (!grouped.has(row[0])) grouped.set(row[0], []);
+    grouped.get(row[0]).push(row);
+  }
+  $("#shortcut-grid").innerHTML = [...grouped.entries()].map(([category, rows]) => `
+    <section class="shortcut-group">
+      <h3>${escapeHtml(category)}</h3>
+      ${rows.map(([, action, windows, mac]) => `<div class="shortcut-row"><span>${escapeHtml(action)}</span><kbd title="Windows／Linux">${escapeHtml(windows)}</kbd><kbd title="macOS">${escapeHtml(mac)}</kbd></div>`).join("")}
+    </section>`).join("") || '<p class="empty">找不到相符快捷鍵；可改用功能名稱搜尋。</p>';
+  const currentPlatform = /Mac|iPhone|iPad/.test(navigator.platform) ? "目前為 macOS，右欄是主要按法" : "目前為 Windows／Linux，左欄是主要按法";
+  $("#shortcut-platform-note").textContent = `${currentPlatform}・已顯示 ${matched.length}／${wordShortcuts.length} 組`;
+}
+
+function openShortcutCatalog() {
+  const dialog = $("#shortcut-dialog");
+  renderShortcutCatalog();
+  if (!dialog.open) dialog.showModal();
+  $("#shortcut-search").focus();
+}
+
 async function loadStatus() {
   if (!window.__TAURI_INTERNALS__) {
     $("#system-summary").textContent = "介面預覽模式・本機文件功能會在桌面 App 啟用";
     $("#pdf-engine-line").textContent = "介面預覽模式・AcroPDF 會在桌面 App 以本機協定連線";
+    $("#onlyoffice-tw-title").textContent = "介面預覽模式・桌面 App 會固定使用 zh-TW";
     return;
   }
   try {
@@ -273,9 +420,47 @@ async function loadStatus() {
     const engines = state.status.engines.map((item) => `${item.installed ? "●" : "○"} ${item.name}${item.version ? ` ${item.version}` : ""}`).join("　");
     $("#system-summary").textContent = `${state.status.platform}・${engines}・${state.status.magi.summary}`;
     $("#app-version").textContent = `OpenDesk TW ${state.status.app_version}`;
-    await loadPdfEngineStatus();
+    await Promise.all([loadPdfEngineStatus(), loadOnlyOfficeTwStatus()]);
   } catch (error) {
     $("#system-summary").textContent = `環境檢查失敗：${error}`;
+  }
+}
+
+async function loadOnlyOfficeTwStatus() {
+  try {
+    const status = await invoke("onlyoffice_tw_status");
+    state.onlyofficeTw = status;
+    const banner = $("#onlyoffice-tw-banner");
+    const ready = status.installed && status.traditional_chinese && status.plugin_installed;
+    banner.classList.toggle("ready", ready);
+    banner.classList.toggle("warning", !ready);
+    $("#onlyoffice-tw-title").textContent = ready ? "● ONLYOFFICE 繁中工具已就緒" : "○ ONLYOFFICE 繁中工具需要處理";
+    $("#onlyoffice-tw-detail").textContent = `${status.message}・目前語系：${status.current_language}${status.running ? "・ONLYOFFICE 正在運作" : ""}`;
+    $("#repair-onlyoffice-tw").textContent = ready ? "重新驗證／修復" : "一鍵修正繁中＋寫作工具";
+  } catch (error) {
+    $("#onlyoffice-tw-title").textContent = "無法檢查 ONLYOFFICE 繁中狀態";
+    $("#onlyoffice-tw-detail").textContent = String(error);
+  }
+}
+
+async function repairOnlyOfficeTraditionalChinese() {
+  if (!window.__TAURI_INTERNALS__) {
+    toast("介面預覽模式不會更動系統設定；請在 OpenDesk TW 桌面 App 執行繁中修復。", 8000);
+    return;
+  }
+  const button = $("#repair-onlyoffice-tw");
+  const original = button.textContent;
+  button.disabled = true;
+  button.textContent = "正在備份設定並安裝…";
+  try {
+    const result = await invoke("repair_onlyoffice_traditional_chinese");
+    toast(result.message, 12000);
+    await loadOnlyOfficeTwStatus();
+  } catch (error) {
+    toast(`ONLYOFFICE 繁中修復未完成：${error}`, 10000);
+  } finally {
+    button.disabled = false;
+    if (!state.onlyofficeTw?.traditional_chinese || !state.onlyofficeTw?.plugin_installed) button.textContent = original;
   }
 }
 
@@ -389,9 +574,9 @@ function renderWordTab() {
   $("#word-tab-intro").innerHTML = `<b>${escapeHtml(tab.title)}</b><span>${escapeHtml(tab.detail)}</span>`;
   $("#word-task-grid").innerHTML = tab.tasks.map(([id, title, detail, location, action]) => `
     <article class="word-task-card">
-      <div class="word-task-icon" aria-hidden="true">${action === "report" ? "✓" : action === "renumber" ? "↻" : action === "pdf" ? "PDF" : action === "magi" ? "AI" : action === "new" ? "+" : action === "open" ? "↗" : action === "backups" ? "⌕" : "→"}</div>
+      <div class="word-task-icon" aria-hidden="true">${action === "report" ? "✓" : action === "renumber" ? "↻" : action === "pdf" ? "PDF" : action === "magi" ? "AI" : action === "twtools" ? "繁" : action === "new" ? "+" : action === "open" ? "↗" : action === "backups" ? "⌕" : "→"}</div>
       <div class="word-task-copy"><h3>${escapeHtml(title)}</h3><p>${escapeHtml(detail)}</p><small>${escapeHtml(location)}</small></div>
-      <button class="word-task-action" data-word-task="${id}">${action === "report" ? "立即檢查" : action === "renumber" ? "安全重編" : action === "pdf" ? "轉成 PDF" : action === "magi" ? "交給 MAGI" : action === "new" ? "新增文件" : action === "open" ? "選擇文件" : action === "backups" ? "開啟備份" : "開啟使用"}</button>
+      <button class="word-task-action" data-word-task="${id}">${action === "report" ? "立即檢查" : action === "renumber" ? "安全重編" : action === "pdf" ? "轉成 PDF" : action === "magi" ? "交給 MAGI" : action === "twtools" ? "啟用工具" : action === "new" ? "新增文件" : action === "open" ? "選擇文件" : action === "backups" ? "開啟備份" : "開啟使用"}</button>
     </article>`).join("");
   $$('[data-word-task]').forEach((button) => button.addEventListener("click", () => runWordTask(button.dataset.wordTask)));
 }
@@ -423,6 +608,10 @@ async function runWordTask(id) {
     } catch (error) {
       toast(`無法開啟備份資料夾：${error}`, 8000);
     }
+    return;
+  }
+  if (action === "twtools") {
+    await repairOnlyOfficeTraditionalChinese();
     return;
   }
   const path = await ensureWordDocument();
@@ -725,6 +914,13 @@ async function checkUpdate() {
 
 $$('[data-create]').forEach((button) => button.addEventListener("click", () => createDocument(button.dataset.create)));
 $("#open-word-document").addEventListener("click", chooseWordDocument);
+$("#word-shortcuts").addEventListener("click", openShortcutCatalog);
+$("#shortcut-search").addEventListener("input", renderShortcutCatalog);
+$("#shortcut-close").addEventListener("click", () => $("#shortcut-dialog").close());
+$("#shortcut-dialog").addEventListener("click", (event) => {
+  if (event.target === $("#shortcut-dialog")) $("#shortcut-dialog").close();
+});
+$("#repair-onlyoffice-tw").addEventListener("click", repairOnlyOfficeTraditionalChinese);
 $("#open-document").addEventListener("click", async () => {
   const result = await open({ multiple: false, directory: false, filters: [{ name: "Office 與 PDF", extensions: ["docx","docm","doc","rtf","xlsx","xlsm","xls","csv","pptx","pptm","ppt","pdf","odt","ods","odp"] }] });
   if (typeof result === "string") selectDocument(result);
@@ -811,5 +1007,15 @@ $("#feature-search").addEventListener("input", renderFeatures);
 $$('[data-feature-tab]').forEach((button) => button.addEventListener("click", () => { state.featureTab = button.dataset.featureTab; $$('[data-feature-tab]').forEach((item) => item.classList.toggle("active", item === button)); renderFeatures(); }));
 $("#run-self-test").addEventListener("click", runSelfTest);
 $("#check-update").addEventListener("click", checkUpdate);
+
+window.addEventListener("keydown", (event) => {
+  if (!(event.altKey && event.shiftKey && (event.metaKey || event.ctrlKey) && event.key.toLocaleLowerCase("zh-TW") === "r")) return;
+  event.preventDefault();
+  if (!state.selectedPath || !/\.doc[mx]$/i.test(state.selectedPath)) {
+    toast("請先在 Word 文件中心選擇 DOCX／DOCM，再按 ⌥⇧⌘R 或 Ctrl+Alt+Shift+R 安全重編標題。", 8000);
+    return;
+  }
+  renumberCurrentWord();
+});
 
 renderRecent(); renderFeatures(); renderWordTab(); renderPdfTab(); loadStatus();

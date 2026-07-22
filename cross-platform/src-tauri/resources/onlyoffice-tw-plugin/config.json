@@ -1,0 +1,29 @@
+{
+  "name": "繁中寫作工具（OpenDesk TW）",
+  "nameLocale": {
+    "zh": "繁中寫作工具（OpenDesk TW）"
+  },
+  "guid": "asc.{5CBF7C74-7021-4E8C-93F3-5A6C20260722}",
+  "version": "1.1.0",
+  "minVersion": "9.0.0",
+  "variations": [
+    {
+      "description": "提供分散對齊、成對標點智慧補齊、台灣標點整理與繁中快捷鍵提示。",
+      "descriptionLocale": {
+        "zh": "提供分散對齊、成對標點智慧補齊、台灣標點整理與繁中快捷鍵提示。"
+      },
+      "url": "index.html",
+      "icons": ["resources/opendesk.svg"],
+      "isViewer": false,
+      "EditorsSupport": ["word"],
+      "type": "system",
+      "isVisual": false,
+      "isModal": false,
+      "isInsideMode": false,
+      "initDataType": "none",
+      "initData": "",
+      "buttons": [],
+      "events": ["onToolbarMenuClick"]
+    }
+  ]
+}

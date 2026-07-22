@@ -47,6 +47,30 @@ button:focus-visible, input:focus-visible { outline: 3px solid rgba(8, 126, 131,
 .eyebrow { display: block; margin-bottom: 5px; color: var(--word); font-size: 10px; font-weight: 900; letter-spacing: .11em; }
 .word-start-actions { display: flex; gap: 8px; }
 .word-start-actions .primary, .word-current .primary { background: linear-gradient(135deg, #2467c8, #174d9c); }
+.onlyoffice-tw-banner { position: relative; display: flex; align-items: center; justify-content: space-between; gap: 14px; margin: -2px 0 12px; padding: 10px 12px; border: 1px solid #e2d09f; border-radius: 11px; background: #fffaf0; }
+.onlyoffice-tw-banner > div { display: grid; gap: 3px; min-width: 0; }
+.onlyoffice-tw-banner b { color: #6d5314; font-size: 11px; }
+.onlyoffice-tw-banner span { overflow: hidden; color: #7b6b47; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.onlyoffice-tw-banner button { flex: 0 0 auto; padding: 7px 9px; color: #684e0a; border-color: #dfc67e; background: #fff; font-size: 10px; }
+.onlyoffice-tw-banner.ready { border-color: #a9d7c1; background: #f0fbf6; }
+.onlyoffice-tw-banner.ready b { color: #176445; }
+.onlyoffice-tw-banner.ready span { color: #4e7565; }
+.shortcut-dialog { width: min(940px, calc(100vw - 48px)); max-height: min(780px, calc(100vh - 48px)); padding: 0; overflow: hidden; color: #172033; border: 1px solid #b9cfee; border-radius: 18px; background: #f8fbff; box-shadow: 0 26px 80px rgba(15, 40, 75, .28); }
+.shortcut-dialog::backdrop { background: rgba(19, 31, 47, .55); backdrop-filter: blur(4px); }
+.shortcut-dialog-head { display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 18px 20px 14px; border-bottom: 1px solid #d7e3f2; background: #fff; }
+.shortcut-dialog-head h2 { margin: 0; font-size: 20px; }
+.shortcut-dialog-head p { margin: 4px 0 0; color: var(--muted); font-size: 12px; }
+.shortcut-dialog-head button { flex: 0 0 auto; }
+.shortcut-search-label { display: grid; gap: 6px; padding: 14px 20px 8px; color: #4e6078; font-size: 11px; font-weight: 750; }
+.shortcut-search-label input { width: 100%; padding: 10px 12px; color: inherit; border: 1px solid #cbd9e9; border-radius: 10px; background: #fff; }
+.shortcut-platform-note { padding: 0 20px 10px; color: var(--muted); font-size: 11px; }
+.shortcut-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; max-height: calc(100vh - 270px); padding: 0 20px 16px; overflow: auto; }
+.shortcut-group { align-self: start; overflow: hidden; border: 1px solid #dbe6f2; border-radius: 12px; background: #fff; }
+.shortcut-group h3 { margin: 0; padding: 9px 11px; color: #174d9c; border-bottom: 1px solid #e5edf5; background: #f1f6fd; font-size: 12px; }
+.shortcut-row { display: grid; grid-template-columns: minmax(95px, 1fr) minmax(105px, auto) minmax(105px, auto); align-items: center; gap: 8px; padding: 8px 10px; border-bottom: 1px solid #edf2f7; font-size: 11px; }
+.shortcut-row:last-child { border-bottom: 0; }
+.shortcut-row kbd { justify-self: stretch; padding: 4px 6px; overflow: hidden; color: #3d4c62; border: 1px solid #d7e0ea; border-bottom-width: 2px; border-radius: 6px; background: #f8fafc; font: 600 10px/1.2 ui-monospace, SFMono-Regular, Menlo, monospace; text-align: center; text-overflow: ellipsis; white-space: nowrap; }
+.shortcut-boundary { margin: 0; padding: 11px 20px 15px; color: #596b82; border-top: 1px solid #dfe8f2; background: #f3f7fb; font-size: 10px; }
 .word-ribbon { position: relative; display: flex; gap: 2px; margin: 2px -4px 15px; padding: 0 4px; overflow-x: auto; border-bottom: 1px solid #ccdaf0; scrollbar-width: thin; }
 .word-ribbon button { flex: 0 0 auto; padding: 9px 12px 10px; border: 0; border-bottom: 3px solid transparent; border-radius: 7px 7px 0 0; background: transparent; color: #53637a; font-size: 12px; box-shadow: none; }
 .word-ribbon button:hover { color: var(--word); background: rgba(24,90,189,.055); box-shadow: none; }
@@ -187,6 +211,19 @@ footer { display: flex; justify-content: space-between; padding: 18px 5px 0; col
   .warnings-card { background: #2b281e; }
   .word-warning { border-bottom-color: #494332; }
   .word-warning p { color: #d9cfb8; }
+  .onlyoffice-tw-banner, .onlyoffice-tw-banner.ready { border-color: #4e5f58; background: #202b29; }
+  .onlyoffice-tw-banner b, .onlyoffice-tw-banner.ready b { color: #bfe8d5; }
+  .onlyoffice-tw-banner span, .onlyoffice-tw-banner.ready span { color: #9fbcb0; }
+  .onlyoffice-tw-banner button { border-color: #586d64; background: #273633; color: #d6eee3; }
+  .shortcut-dialog { color: #e5eef1; border-color: #435768; background: #20292e; }
+  .shortcut-dialog-head, .shortcut-group { border-color: #3b4a55; background: #252f35; }
+  .shortcut-dialog-head p, .shortcut-platform-note { color: #aabac4; }
+  .shortcut-search-label { color: #c4d0d7; }
+  .shortcut-search-label input { color: #e5eef1; border-color: #43515a; background: #1e272c; }
+  .shortcut-group h3 { color: #b8d4ff; border-color: #3b4a55; background: #293741; }
+  .shortcut-row { border-color: #344149; }
+  .shortcut-row kbd { color: #dce8ee; border-color: #4a5962; background: #222c31; }
+  .shortcut-boundary { color: #b4c3ca; border-color: #3c4a53; background: #222c31; }
   .pdf-center { border-color: #68413e; background: linear-gradient(145deg, rgba(24,34,37,.98), rgba(45,27,27,.98)); }
   .pdf-ribbon { border-bottom-color: #62403d; }
   .pdf-ribbon button.active, .pdf-task-card, .pdf-report-card { background: #292322; }
