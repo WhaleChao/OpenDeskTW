@@ -4,7 +4,7 @@
 `AGPL-3.0.txt`；下列元件仍保留各自的版權、署名與授權條款。
 
 - PyMuPDF／MuPDF：本專案明確選擇 GNU AGPL 路線。
-- ONLYOFFICE Desktop Editors：GNU Affero General Public License v3.0；獨立安裝執行。
+- ONLYOFFICE Desktop Editors：GNU Affero General Public License v3.0；獨立安裝執行。AI 台灣繁中相容語系以本機已安裝的 AI plugin 3.2.2 翻譯鍵為基礎，保留 Ascensio System SIA 版權與上游 AGPL v3／介面文字 CC BY-SA 4.0 告知。
 - LibreOffice：Mozilla Public License 2.0 與其相容授權；獨立安裝執行。
 - Tesseract `tessdata_fast` 4.1.0 模型：Apache License 2.0。
 - Tauri、Rust、npm、PyInstaller 與 Python 相依套件：維持各上游授權；精確版本與

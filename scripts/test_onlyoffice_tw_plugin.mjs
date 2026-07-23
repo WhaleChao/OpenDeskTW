@@ -1,4 +1,6 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
+import { runInNewContext } from "node:vm";
 
 await import("../cross-platform/src-tauri/resources/onlyoffice-tw-plugin/ui-overrides.js");
 await import("../cross-platform/src-tauri/resources/onlyoffice-tw-plugin/ui-patch.js");
@@ -30,9 +32,313 @@ assert.equal(uiPatch.translateText(" 小四 "), " 12 ");
 assert.equal(uiPatch.translateText("單擊鏈接以保存文檔"), "按一下連結以儲存文件");
 assert.equal(uiPatch.translateText("工作簿的單元格數據"), "活頁簿的儲存格資料");
 assert.equal(uiPatch.translateText("打印演示文稿"), "列印簡報");
+assert.equal(uiPatch.translateText("聊天机器人"), "聊天機器人");
+assert.equal(uiPatch.translateText("AI 模型列表與密钥配置"), "AI 模型清單與金鑰設定");
+assert.equal(uiPatch.translateText("翻译"), "翻譯");
+assert.equal(uiPatch.translateText("拼写与语法检查"), "拼字與文法檢查");
+assert.equal(uiPatch.translateText("创建 AI 助手"), "建立 AI 助理");
 assert.ok(
   Object.keys(globalThis.OpenDeskTwUiOverrides.translations).length > 10000,
   "應隨附完整繁中介面覆寫字典",
 );
 
-console.log("ONLYOFFICE 繁中寫作工具：20/20 項通過");
+const pluginCode = await readFile(
+  new URL("../cross-platform/src-tauri/resources/onlyoffice-tw-plugin/code.js", import.meta.url),
+  "utf8",
+);
+assert.match(pluginCode, /id: "home"/);
+assert.match(pluginCode, /id: "opendesk-distributed"/);
+assert.match(pluginCode, /installWordCompatibilityShortcuts\(window\.parent\)/);
+assert.match(pluginCode, /event\.code === "KeyJ"/);
+assert.match(pluginCode, /applyLineSpacing\(key === "5" \? 1\.5 : Number\(key\)\)/);
+assert.match(pluginCode, /applyParagraphStyle\(`Heading \$\{key\}`\)/);
+assert.match(pluginCode, /logicDocument\.Dne\(\)/);
+assert.match(pluginCode, /logicDocument\.Cl\.DT\(copied\)/);
+assert.match(pluginCode, /toggleTrackRevisions/);
+assert.match(pluginCode, /id: "opendesk-renumber-headings"/);
+assert.match(pluginCode, /id: "opendesk-home-magi-summary"/);
+assert.match(pluginCode, /id: "opendesk-magi-tab"/);
+assert.match(pluginCode, /runMagiAnalysis\("summary"/);
+assert.match(pluginCode, /Authorization: `Bearer \$\{bridge\.token\}`/);
+assert.ok(
+  pluginCode.indexOf('id: "opendesk-distributed"') <
+    pluginCode.indexOf('id: "opendesk-tw-tab"'),
+  "分散對齊不應繼續放在獨立的全能文件頁籤",
+);
+
+let keydownHandler;
+let toolbarDefinition;
+let distributedValue;
+let internalDistributedValue;
+let lineSpacing;
+let appliedStyle;
+let tracked = false;
+let nativeComments = 0;
+let copiedFormatting = false;
+let pastedFormatting = false;
+const messages = [];
+const toolbarHandlers = new Map();
+function makeParagraph(initialText) {
+  let text = initialText;
+  return {
+    GetText() {
+      return text;
+    },
+    GetRange(start, end) {
+      return {
+        Delete() {
+          text = text.slice(0, start) + text.slice(end);
+          return true;
+        },
+        AddText(value, position) {
+          if (position === "before") text = text.slice(0, start) + value + text.slice(start);
+          else text = text.slice(0, end) + value + text.slice(end);
+          return true;
+        },
+      };
+    },
+    SetStyle(style) {
+      appliedStyle = style;
+      this.style = style;
+      return true;
+    },
+    SetSpacingLine(value, rule) {
+      lineSpacing = [value, rule];
+      return true;
+    },
+    GetIndLeft() {
+      return 0;
+    },
+    GetIndFirstLine() {
+      return 0;
+    },
+    SetIndLeft() {},
+    SetIndFirstLine() {},
+  };
+}
+const headingParagraphs = [
+  makeParagraph("玖、第一章"),
+  makeParagraph("本文提到壹、一、（一）等格式，但這不是標題。"),
+  makeParagraph("九、第一節"),
+  makeParagraph("（九）第一款"),
+  makeParagraph("9. 第一目"),
+];
+const selectionParagraph = makeParagraph("選取段落");
+const selectionRange = {
+  GetAllParagraphs() {
+    return [selectionParagraph];
+  },
+  GetText() {
+    return "選取段落";
+  },
+  GetTextPr() {
+    return { GetVertAlign: () => "baseline" };
+  },
+  SetVertAlign() {},
+};
+const apiDocument = {
+  Document: {
+    Vt(value) {
+      internalDistributedValue = value;
+    },
+    Dne() {
+      copiedFormatting = true;
+    },
+    yb: {
+      ocb() {
+        return copiedFormatting ? { bold: true } : null;
+      },
+    },
+    Cl: {
+      DT(value) {
+        pastedFormatting = value?.bold === true;
+      },
+    },
+    Kc() {},
+    sj() {},
+    rq() {},
+  },
+  GetRangeBySelect() {
+    return selectionRange;
+  },
+  GetCurrentParagraph() {
+    return selectionParagraph;
+  },
+  GetStyle(name) {
+    return name;
+  },
+  GetAllParagraphs() {
+    return headingParagraphs;
+  },
+  IsTrackRevisions() {
+    return tracked;
+  },
+  SetTrackRevisions(value) {
+    tracked = value;
+  },
+  SelectCurrentWord() {},
+};
+const hostDocument = {
+  addEventListener(type, handler, capture) {
+    if (type === "keydown" && capture === true) keydownHandler = handler;
+  },
+  removeEventListener() {},
+};
+const plugin = {
+  guid: "asc.{TEST}",
+  info: { editorType: "word" },
+  executeMethod(name, args, callback) {
+    if (name === "AddToolbarMenuItem") toolbarDefinition = args[0];
+    if (name === "ShowError") messages.push(args[0]);
+    callback?.();
+  },
+  callCommand(command, _close, _recalculate, callback) {
+    const result = command();
+    callback?.(result);
+  },
+  attachToolbarMenuClickEvent(id, handler) {
+    toolbarHandlers.set(id, handler);
+  },
+};
+const asc = {
+  plugin,
+  scope: {},
+  editor: {
+    put_PrAlign(value) {
+      distributedValue = value;
+    },
+  },
+};
+const pluginWindow = {
+  Asc: asc,
+  parent: {
+    document: hostDocument,
+    DE: {
+      getController(name) {
+        if (name !== "DocumentHolder") return null;
+        return {
+          addComment() {
+            nativeComments += 1;
+          },
+        };
+      },
+    },
+  },
+};
+runInNewContext(pluginCode, {
+  window: pluginWindow,
+  Asc: asc,
+  AscCommon: { align_Distributed: 7 },
+  Api: {
+    GetDocument() {
+      return apiDocument;
+    },
+  },
+});
+plugin.init.call(plugin);
+
+const homeTab = toolbarDefinition.tabs.find((tab) => tab.id === "home");
+const customTab = toolbarDefinition.tabs.find((tab) => tab.id === "opendesk-tw-tab");
+const magiTab = toolbarDefinition.tabs.find((tab) => tab.id === "opendesk-magi-tab");
+assert.equal(homeTab.items[0].id, "opendesk-distributed");
+assert.ok(!customTab.items.some((item) => item.id === "opendesk-distributed"));
+assert.deepEqual(
+  Array.from(homeTab.items, (item) => item.id),
+  [
+    "opendesk-distributed",
+    "opendesk-complete-pairs",
+    "opendesk-renumber-headings",
+    "opendesk-home-magi-summary",
+  ],
+);
+assert.ok(!customTab.items.some((item) => item.id === "opendesk-complete-pairs"));
+assert.equal(
+  Array.from(magiTab.items, (item) => item.text).join("、"),
+  "文件摘要、校對檢查、結構分析、完整檢查",
+);
+assert.equal(typeof keydownHandler, "function");
+let prevented = false;
+keydownHandler({
+  key: "J",
+  code: "KeyJ",
+  ctrlKey: true,
+  metaKey: false,
+  shiftKey: true,
+  altKey: false,
+  defaultPrevented: false,
+  repeat: false,
+  isComposing: false,
+  preventDefault() {
+    prevented = true;
+  },
+  stopPropagation() {},
+});
+assert.equal(distributedValue, 7);
+assert.equal(prevented, true);
+distributedValue = undefined;
+keydownHandler({
+  key: "j",
+  code: "KeyJ",
+  ctrlKey: false,
+  metaKey: true,
+  shiftKey: true,
+  altKey: false,
+  repeat: false,
+  isComposing: false,
+  preventDefault() {},
+  stopPropagation() {},
+});
+assert.equal(distributedValue, 7);
+asc.editor = undefined;
+toolbarHandlers.get("opendesk-distributed")();
+assert.equal(internalDistributedValue, 7);
+
+function press(overrides) {
+  let prevented = false;
+  keydownHandler({
+    key: "",
+    code: "",
+    ctrlKey: false,
+    metaKey: false,
+    shiftKey: false,
+    altKey: false,
+    defaultPrevented: false,
+    repeat: false,
+    isComposing: false,
+    preventDefault() {
+      prevented = true;
+    },
+    stopPropagation() {},
+    ...overrides,
+  });
+  return prevented;
+}
+
+assert.equal(press({ key: "5", code: "Digit5", ctrlKey: true }), true);
+assert.deepEqual(lineSpacing, [360, "auto"]);
+assert.equal(press({ key: "2", code: "Digit2", metaKey: true }), true);
+assert.deepEqual(lineSpacing, [480, "auto"]);
+assert.equal(press({ key: "1", code: "Digit1", ctrlKey: true, altKey: true }), true);
+assert.equal(appliedStyle, "Heading 1");
+assert.equal(press({ key: "n", code: "KeyN", ctrlKey: true, shiftKey: true }), true);
+assert.equal(appliedStyle, "Normal");
+assert.equal(press({ key: "e", code: "KeyE", ctrlKey: true, shiftKey: true }), true);
+assert.equal(tracked, true);
+assert.equal(press({ key: "m", code: "KeyM", ctrlKey: true, altKey: true }), true);
+assert.equal(nativeComments, 1);
+assert.equal(press({ key: "c", code: "KeyC", ctrlKey: true, altKey: true }), true);
+assert.equal(copiedFormatting, true);
+assert.equal(press({ key: "v", code: "KeyV", ctrlKey: true, altKey: true }), true);
+assert.equal(pastedFormatting, true);
+
+toolbarHandlers.get("opendesk-renumber-headings")();
+assert.equal(headingParagraphs[0].GetText(), "壹、第一章");
+assert.equal(headingParagraphs[1].GetText(), "本文提到壹、一、（一）等格式，但這不是標題。");
+assert.equal(headingParagraphs[2].GetText(), "一、第一節");
+assert.equal(headingParagraphs[3].GetText(), "（一）第一款");
+assert.equal(headingParagraphs[4].GetText(), "1. 第一目");
+assert.equal(headingParagraphs[0].style, "Heading 1");
+assert.equal(headingParagraphs[2].style, "Heading 2");
+assert.ok(messages.some((message) => message.includes("安全重編 4 個標題")));
+
+console.log("ONLYOFFICE 繁中寫作工具：60/60 項通過");

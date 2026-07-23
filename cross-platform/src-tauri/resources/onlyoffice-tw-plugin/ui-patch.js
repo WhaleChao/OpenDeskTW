@@ -42,6 +42,24 @@
     "title",
   ];
   const taiwanTerminology = Object.freeze([
+    ["拼写与语法检查", "拼字與文法檢查"],
+    ["创建 AI 助手", "建立 AI 助理"],
+    ["聊天机器人", "聊天機器人"],
+    ["翻译", "翻譯"],
+    ["建议", "建議"],
+    ["设置", "設定"],
+    ["拼写", "拼字"],
+    ["语法", "文法"],
+    ["检查", "檢查"],
+    ["创建", "建立"],
+    ["助手", "助理"],
+    ["机器人", "機器人"],
+    ["模型列表", "模型清單"],
+    ["密钥", "金鑰"],
+    ["实时", "即時"],
+    ["图像", "影像"],
+    ["代码", "程式碼"],
+    ["配置", "設定"],
     ["演示文稿", "簡報"],
     ["幻燈片", "投影片"],
     ["工作簿", "活頁簿"],
@@ -169,6 +187,25 @@
     return changed;
   }
 
+  function preferLocalizedAiToolbar(hostWindow) {
+    const document = hostWindow?.document;
+    if (!document?.querySelector) return false;
+    const localized = document.querySelector(
+      'li.ribtab > a[data-title="其他 AI 模型"]',
+    );
+    if (!localized) return false;
+    let hidden = false;
+    for (const original of document.querySelectorAll('li.ribtab > a[data-title="AI"]')) {
+      const tab = original.closest("li.ribtab");
+      if (tab && tab.style.display !== "none") {
+        tab.style.display = "none";
+        tab.setAttribute("aria-hidden", "true");
+        hidden = true;
+      }
+    }
+    return hidden;
+  }
+
   function install(hostWindow) {
     if (!hostWindow?.document?.documentElement) return false;
     const stateKey = "__openDeskTwTraditionalUiPatchV2";
@@ -184,6 +221,7 @@
       for (const node of pending) translateNode(node);
       pending.clear();
       forceNumericFontSizes(hostWindow);
+      preferLocalizedAiToolbar(hostWindow);
     };
     const schedule = function (node) {
       if (node) pending.add(node);
@@ -210,6 +248,7 @@
     const refresh = function () {
       translateNode(hostWindow.document.documentElement);
       forceNumericFontSizes(hostWindow);
+      preferLocalizedAiToolbar(hostWindow);
       hostWindow.document.documentElement.lang = "zh-Hant-TW";
     };
     hostWindow[stateKey] = { observer, refresh };
@@ -223,6 +262,7 @@
     install,
     localizeTaiwanTerminology,
     numericFontSizes,
+    preferLocalizedAiToolbar,
     translateNode,
     translateText,
   };

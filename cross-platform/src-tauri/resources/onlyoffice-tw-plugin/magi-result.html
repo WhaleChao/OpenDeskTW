@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="zh-Hant-TW">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>MAGI 文件助理</title>
+    <script src="../v1/plugins.js"></script>
+    <link rel="stylesheet" href="magi-result.css" />
+    <script defer src="magi-result.js"></script>
+  </head>
+  <body>
+    <main>
+      <div class="heading">
+        <span class="mark" aria-hidden="true">M</span>
+        <div>
+          <h1 id="title">MAGI 文件助理</h1>
+          <p id="meta">等待分析目前文件</p>
+        </div>
+      </div>
+      <div id="loading" class="loading hidden" role="status">
+        <span class="spinner" aria-hidden="true"></span>
+        <span id="loading-text">正在交給本機 MAGI V2／V3…</span>
+      </div>
+      <pre id="result" class="result">結果會直接顯示在這裡，不會開啟網頁。</pre>
+      <div class="actions">
+        <button id="copy" type="button" disabled>複製結果</button>
+        <span id="copy-state" role="status"></span>
+      </div>
+    </main>
+  </body>
+</html>

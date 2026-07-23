@@ -69,6 +69,8 @@ button:focus-visible, input:focus-visible { outline: 3px solid rgba(8, 126, 131,
 .shortcut-group h3 { margin: 0; padding: 9px 11px; color: #174d9c; border-bottom: 1px solid #e5edf5; background: #f1f6fd; font-size: 12px; }
 .shortcut-row { display: grid; grid-template-columns: minmax(95px, 1fr) minmax(105px, auto) minmax(105px, auto); align-items: center; gap: 8px; padding: 8px 10px; border-bottom: 1px solid #edf2f7; font-size: 11px; }
 .shortcut-row:last-child { border-bottom: 0; }
+.shortcut-row > span { min-width: 0; }
+.shortcut-support { display: block; width: max-content; max-width: 100%; margin-top: 3px; padding: 1px 5px; overflow: hidden; color: #176445; border: 1px solid #b8ddcc; border-radius: 999px; background: #effaf5; font-size: 8px; font-weight: 750; line-height: 1.35; text-overflow: ellipsis; white-space: nowrap; }
 .shortcut-row kbd { justify-self: stretch; padding: 4px 6px; overflow: hidden; color: #3d4c62; border: 1px solid #d7e0ea; border-bottom-width: 2px; border-radius: 6px; background: #f8fafc; font: 600 10px/1.2 ui-monospace, SFMono-Regular, Menlo, monospace; text-align: center; text-overflow: ellipsis; white-space: nowrap; }
 .shortcut-boundary { margin: 0; padding: 11px 20px 15px; color: #596b82; border-top: 1px solid #dfe8f2; background: #f3f7fb; font-size: 10px; }
 .word-ribbon { position: relative; display: flex; gap: 2px; margin: 2px -4px 15px; padding: 0 4px; overflow-x: auto; border-bottom: 1px solid #ccdaf0; scrollbar-width: thin; }
@@ -282,6 +284,7 @@ footer { display: flex; align-items: center; justify-content: space-between; fle
   .shortcut-dialog { color: #e5eef1; border-color: #435768; background: #20292e; }
   .shortcut-dialog-head, .shortcut-group { border-color: #3b4a55; background: #252f35; }
   .shortcut-dialog-head p, .shortcut-platform-note { color: #aabac4; }
+  .shortcut-support { color: #a9e2c8; border-color: #426d5d; background: #243c34; }
   .legal-summary { background: #392f19; color: #f4d88f; }
   .legal-text { color: #dbe8ea; border-color: #435768; background: #182326; }
   .shortcut-search-label { color: #c4d0d7; }

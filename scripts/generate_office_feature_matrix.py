@@ -155,7 +155,7 @@ settings.column_dimensions["B"].width = 24
 
 hidden.append(["鍵", "值"])
 hidden.append(["產生器", "OpenDesk TW"])
-hidden.append(["版本", "1.4.0"])
+hidden.append(["版本", "1.5.0"])
 
 workbook.defined_names.add(DefinedName("TaxRate", attr_text="'設定'!$B$2"))
 workbook.defined_names.add(DefinedName("MonthlyProfit", attr_text="'儀表板'!$D$3:$D$8"))

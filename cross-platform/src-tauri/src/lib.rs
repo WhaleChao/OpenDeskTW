@@ -3,12 +3,12 @@
 
 use chrono::Local;
 use regex::Regex;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::BTreeSet;
 use std::fs::{self, File};
 use std::io::{BufRead, BufReader, Read, Write};
-use std::net::{SocketAddr, TcpStream};
+use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, Command, Output, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -42,6 +42,14 @@ struct MagiReply {
     model: Option<String>,
     route: Option<String>,
     degraded: bool,
+}
+
+#[derive(Deserialize)]
+struct MagiBridgeRequest {
+    text: String,
+    mode: String,
+    instruction: Option<String>,
+    document_title: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -151,6 +159,8 @@ enum AcroPdfServerError {
 
 static ACROPDF_SERVER: OnceLock<Mutex<Option<AcroPdfServer>>> = OnceLock::new();
 static ACROPDF_REQUEST_ID: AtomicU64 = AtomicU64::new(1);
+static MAGI_BRIDGE_TOKEN: OnceLock<String> = OnceLock::new();
+const MAGI_BRIDGE_PORT: u16 = 41_827;
 
 impl AcroPdfServer {
     fn request(&mut self, args: &[String], timeout: Duration) -> Result<Value, AcroPdfServerError> {
@@ -947,6 +957,8 @@ fn engine_status(name: &str) -> EngineStatus {
 }
 
 const ONLYOFFICE_TW_PLUGIN_FOLDER: &str = "{5CBF7C74-7021-4E8C-93F3-5A6C20260722}";
+const ONLYOFFICE_BUILTIN_AI_PLUGIN_FOLDER: &str = "{9DC93CDB-B576-4F0C-B55E-FCC9C48DD007}";
+const ONLYOFFICE_AI_TW_PLUGIN_FOLDER: &str = "{A81F4C5E-5DB6-4F64-B276-CCF30FCF2873}";
 
 fn is_traditional_onlyoffice_locale(value: &str) -> bool {
     let locale = value.trim().replace('_', "-").to_ascii_lowercase();
@@ -1019,34 +1031,71 @@ fn onlyoffice_current_language() -> String {
     }
 }
 
-fn onlyoffice_user_plugin_root() -> Result<PathBuf, String> {
+fn onlyoffice_user_plugins_base() -> Result<PathBuf, String> {
     #[cfg(target_os = "macos")]
     {
         dirs::data_dir()
-            .map(|root| {
-                root.join("asc.onlyoffice.ONLYOFFICE/data/sdkjs-plugins")
-                    .join(ONLYOFFICE_TW_PLUGIN_FOLDER)
-            })
+            .map(|root| root.join("asc.onlyoffice.ONLYOFFICE/data/sdkjs-plugins"))
             .ok_or_else(|| "找不到 ONLYOFFICE 使用者外掛資料夾".into())
     }
     #[cfg(target_os = "windows")]
     {
         dirs::data_dir()
-            .map(|root| {
-                root.join("ONLYOFFICE/DesktopEditors/sdkjs-plugins")
-                    .join(ONLYOFFICE_TW_PLUGIN_FOLDER)
-            })
+            .map(|root| root.join("ONLYOFFICE/DesktopEditors/sdkjs-plugins"))
             .ok_or_else(|| "找不到 ONLYOFFICE 使用者外掛資料夾".into())
     }
     #[cfg(not(any(target_os = "macos", target_os = "windows")))]
     {
         dirs::data_local_dir()
-            .map(|root| {
-                root.join("onlyoffice/desktopeditors/sdkjs-plugins")
-                    .join(ONLYOFFICE_TW_PLUGIN_FOLDER)
-            })
+            .map(|root| root.join("onlyoffice/desktopeditors/sdkjs-plugins"))
             .ok_or_else(|| "找不到 ONLYOFFICE 使用者外掛資料夾".into())
     }
+}
+
+fn onlyoffice_user_plugin_root() -> Result<PathBuf, String> {
+    Ok(onlyoffice_user_plugins_base()?.join(ONLYOFFICE_TW_PLUGIN_FOLDER))
+}
+
+fn onlyoffice_ai_tw_plugin_root() -> Result<PathBuf, String> {
+    Ok(onlyoffice_user_plugins_base()?.join(ONLYOFFICE_AI_TW_PLUGIN_FOLDER))
+}
+
+fn onlyoffice_builtin_ai_plugin_root() -> Result<PathBuf, String> {
+    let executable = engine_executable("ONLYOFFICE").ok_or("找不到 ONLYOFFICE")?;
+    let resolved = fs::canonicalize(&executable).unwrap_or(executable);
+    let mut candidates = Vec::new();
+    for ancestor in resolved.ancestors().take(7) {
+        candidates.push(
+            ancestor
+                .join("Resources/editors/sdkjs-plugins")
+                .join(ONLYOFFICE_BUILTIN_AI_PLUGIN_FOLDER),
+        );
+        candidates.push(
+            ancestor
+                .join("editors/sdkjs-plugins")
+                .join(ONLYOFFICE_BUILTIN_AI_PLUGIN_FOLDER),
+        );
+        candidates.push(
+            ancestor
+                .join("sdkjs-plugins")
+                .join(ONLYOFFICE_BUILTIN_AI_PLUGIN_FOLDER),
+        );
+    }
+    candidates
+        .into_iter()
+        .find(|path| path.join("config.json").is_file() && path.join("scripts/code.js").is_file())
+        .ok_or_else(|| "找不到 ONLYOFFICE 內建 AI 外掛，無法建立繁中相容副本".into())
+}
+
+fn onlyoffice_ai_tw_installed() -> bool {
+    onlyoffice_ai_tw_plugin_root()
+        .map(|path| {
+            path.join("config.json").is_file()
+                && path.join("translations/zh-TW.json").is_file()
+                && path.join("translations/helpers/zh-TW.json").is_file()
+                && path.join("traditional-chinese.js").is_file()
+        })
+        .unwrap_or(false)
 }
 
 fn onlyoffice_tw_status_value() -> OnlyOfficeTwStatus {
@@ -1066,8 +1115,11 @@ fn onlyoffice_tw_status_value() -> OnlyOfficeTwStatus {
                 && path.join("typography.js").is_file()
                 && path.join("ui-overrides.js").is_file()
                 && path.join("ui-patch.js").is_file()
+                && path.join("magi-result.html").is_file()
+                && path.join("magi-result.js").is_file()
         })
-        .unwrap_or(false);
+        .unwrap_or(false)
+        && onlyoffice_ai_tw_installed();
     let message = if !installed {
         "尚未安裝 ONLYOFFICE".into()
     } else if running && !traditional_chinese {
@@ -1105,6 +1157,99 @@ fn copy_directory(source: &Path, destination: &Path) -> Result<(), String> {
         }
     }
     Ok(())
+}
+
+fn install_onlyoffice_ai_tw(locale_source: &Path) -> Result<PathBuf, String> {
+    let source = onlyoffice_builtin_ai_plugin_root()?;
+    let destination = onlyoffice_ai_tw_plugin_root()?;
+    let translations = locale_source.join("translations");
+    if !translations.join("zh-TW.json").is_file()
+        || !translations.join("helpers/zh-TW.json").is_file()
+        || !locale_source.join("traditional-chinese.js").is_file()
+    {
+        return Err("安裝包缺少 ONLYOFFICE AI 台灣繁中語系".into());
+    }
+    copy_directory(&source, &destination)?;
+    copy_directory(&translations, &destination.join("translations"))?;
+    fs::copy(
+        locale_source.join("traditional-chinese.js"),
+        destination.join("traditional-chinese.js"),
+    )
+    .map_err(|error| error.to_string())?;
+
+    let config_path = destination.join("config.json");
+    let mut config: Value =
+        serde_json::from_str(&fs::read_to_string(&config_path).map_err(|error| error.to_string())?)
+            .map_err(|error| format!("ONLYOFFICE AI 外掛設定無法解析：{error}"))?;
+    let object = config
+        .as_object_mut()
+        .ok_or("ONLYOFFICE AI 外掛設定格式錯誤")?;
+    object.insert("name".into(), Value::String("Other AI Models".into()));
+    object.insert(
+        "guid".into(),
+        Value::String(format!("asc.{ONLYOFFICE_AI_TW_PLUGIN_FOLDER}")),
+    );
+    let locales = object
+        .entry("nameLocale")
+        .or_insert_with(|| json!({}))
+        .as_object_mut()
+        .ok_or("ONLYOFFICE AI 名稱語系格式錯誤")?;
+    locales.insert("zh".into(), Value::String("其他 AI 模型".into()));
+    locales.insert("zh-TW".into(), Value::String("其他 AI 模型".into()));
+    if let Some(description_locales) = object
+        .get_mut("variations")
+        .and_then(Value::as_array_mut)
+        .and_then(|items| items.first_mut())
+        .and_then(|variation| variation.get_mut("descriptionLocale"))
+        .and_then(Value::as_object_mut)
+    {
+        let description = "保留 ONLYOFFICE 通用 AI 模型功能，並補上台灣繁體中文介面；MAGI 文件助理位於獨立的 MAGI 頁籤。";
+        description_locales.insert("zh".into(), Value::String(description.into()));
+        description_locales.insert("zh-TW".into(), Value::String(description.into()));
+    }
+    let serialized = serde_json::to_string_pretty(&config).map_err(|error| error.to_string())?;
+    fs::write(&config_path, format!("{serialized}\n")).map_err(|error| error.to_string())?;
+
+    let register_path = destination.join("scripts/engine/register.js");
+    let register = fs::read_to_string(&register_path).map_err(|error| error.to_string())?;
+    let localized = register
+        .replace(
+            "buttonMain.text = \"AI\";",
+            "buttonMain.text = \"其他 AI 模型\";",
+        )
+        .replace(
+            "buttonMainToolbar.text = \"AI\";",
+            "buttonMainToolbar.text = \"其他 AI 模型\";",
+        );
+    if localized == register || !localized.contains("buttonMainToolbar.text = \"其他 AI 模型\";")
+    {
+        return Err("ONLYOFFICE AI 外掛版本已變更，無法安全套用繁中頁籤名稱".into());
+    }
+    fs::write(register_path, localized).map_err(|error| error.to_string())?;
+
+    let plugins_script = "<script type=\"text/javascript\" src=\"../v1/plugins.js\"></script>";
+    let injection = format!(
+        "{plugins_script}\n<script type=\"text/javascript\" src=\"traditional-chinese.js\"></script>"
+    );
+    let mut patched_pages = 0;
+    for entry in fs::read_dir(&destination).map_err(|error| error.to_string())? {
+        let entry = entry.map_err(|error| error.to_string())?;
+        let path = entry.path();
+        if path.extension().and_then(|value| value.to_str()) != Some("html") {
+            continue;
+        }
+        let html = fs::read_to_string(&path).map_err(|error| error.to_string())?;
+        if !html.contains(plugins_script) {
+            continue;
+        }
+        let patched = html.replacen(plugins_script, &injection, 1);
+        fs::write(path, patched).map_err(|error| error.to_string())?;
+        patched_pages += 1;
+    }
+    if patched_pages < 10 {
+        return Err("ONLYOFFICE AI 外掛頁面結構已變更，無法完整注入台灣繁中語系".into());
+    }
+    Ok(destination)
 }
 
 #[cfg(target_os = "macos")]
@@ -1291,17 +1436,22 @@ fn repair_onlyoffice_traditional_chinese<R: Runtime>(
     let locale_backup: Option<PathBuf> = None;
 
     let plugin_source = resource_path(&app, "resources/onlyoffice-tw-plugin")?;
+    let ai_locale_source = resource_path(&app, "resources/onlyoffice-ai-tw-locale")?;
     if !plugin_source.join("config.json").is_file()
         || !plugin_source.join("index.html").is_file()
         || !plugin_source.join("code.js").is_file()
         || !plugin_source.join("typography.js").is_file()
         || !plugin_source.join("ui-overrides.js").is_file()
         || !plugin_source.join("ui-patch.js").is_file()
+        || !plugin_source.join("magi-result.html").is_file()
+        || !plugin_source.join("magi-result.js").is_file()
     {
         return Err("安裝包缺少 ONLYOFFICE 繁中工具".into());
     }
     let plugin_destination = onlyoffice_user_plugin_root()?;
     copy_directory(&plugin_source, &plugin_destination)?;
+    let ai_destination = install_onlyoffice_ai_tw(&ai_locale_source)?;
+    refresh_magi_bridge_config()?;
     let status = onlyoffice_tw_status_value();
     if !status.traditional_chinese || !status.plugin_installed {
         return Err("繁體中文工具安裝後驗證失敗，請保留備份並回報".into());
@@ -1313,7 +1463,8 @@ fn repair_onlyoffice_traditional_chinese<R: Runtime>(
         path: plugin_destination.to_string_lossy().to_string(),
         file_name: "繁中寫作工具（全能文件）".into(),
         message: format!(
-            "已固定 ONLYOFFICE 為 zh-TW、補齊繁中介面並鎖定數字字級{backup_message}。重新開啟 ONLYOFFICE 後，可使用「全能文件」工具列的數字字級、分散對齊、智慧補齊、台灣標點與快捷鍵。"
+            "已固定 ONLYOFFICE 為 zh-TW、補齊繁中介面、安裝台灣繁中 AI 相容副本（{}）並鎖定數字字級{backup_message}。重新開啟 ONLYOFFICE 後，可在「常用」工具列使用分散對齊（Ctrl+Shift+J／⇧⌘J），在「全能文件」使用繁中工具，並以「MAGI」頁籤呼叫本機 MAGI。",
+            ai_destination.display()
         ),
     })
 }
@@ -1400,18 +1551,12 @@ fn paragraph_text(paragraph: &str) -> String {
 
 fn heading_prefix(text: &str) -> Option<HeadingPrefix> {
     let patterns = [
-        (
-            1,
-            r#"^\s*(?:〔|【|\[)?([壹貳參肆伍陸柒捌玖拾佰]+)、(?:〕|】|\])?"#,
-        ),
-        (
-            2,
-            r#"^\s*(?:〔|【|\[)?([一二三四五六七八九十百]+)、(?:〕|】|\])?"#,
-        ),
-        (
-            3,
-            r#"^\s*(?:（|\(|〔|【)([一二三四五六七八九十百]+)(?:）|\)|〕|】)"#,
-        ),
+        (1, r#"^\s*([壹貳參肆伍陸柒捌玖拾佰]+)、"#),
+        (1, r#"^\s*[〔【\[]([壹貳參肆伍陸柒捌玖拾佰]+)、[〕】\]]"#),
+        (2, r#"^\s*([一二三四五六七八九十百]+)、"#),
+        (2, r#"^\s*[〔【\[]([一二三四五六七八九十百]+)、[〕】\]]"#),
+        (3, r#"^\s*[（(]([一二三四五六七八九十百]+)[）)]"#),
+        (3, r#"^\s*[〔【]([一二三四五六七八九十百]+)[〕】]"#),
         (4, r#"^\s*([0-9]+)[、\.．]"#),
     ];
     for (level, pattern) in patterns {
@@ -1960,8 +2105,13 @@ fn magi_http_request(
     serde_json::from_str(json_text).map_err(|_| "MAGI 回傳了無法辨識的資料格式".into())
 }
 
-#[tauri::command]
-fn magi_analyze(path: String, mode: String, instruction: String) -> Result<MagiReply, String> {
+fn magi_analyze_text(
+    text: String,
+    truncated: bool,
+    file_name: &str,
+    mode: &str,
+    instruction: &str,
+) -> Result<MagiReply, String> {
     let status = magi_status();
     if !status.v2_v3_safe {
         return Err("偵測到 MAGI V2／V3 同時運作；為保護資料已停止分析".into());
@@ -1969,21 +2119,15 @@ fn magi_analyze(path: String, mode: String, instruction: String) -> Result<MagiR
     if !status.available {
         return Err(status.summary);
     }
-    let source = PathBuf::from(&path);
-    if !source.is_file() {
-        return Err("找不到文件".into());
+    if text.trim().is_empty() {
+        return Err("目前文件沒有可供 MAGI 分析的文字".into());
     }
-    let (text, truncated) = extract_document_text(&source)?;
-    let task = match mode.as_str() {
+    let task = match mode {
         "summary" => "整理文件摘要、重要數字、日期、待辦與決策。",
         "review" => "校對內容，找出語句、數字、日期、邏輯與前後矛盾的疑點。",
         "structure" => "檢查標題層級、段落結構、順序與可讀性，提出具體調整建議。",
         _ => "完整檢查內容、結構、風險、排版線索與可執行的改善建議。",
     };
-    let file_name = source
-        .file_name()
-        .and_then(|value| value.to_str())
-        .unwrap_or("文件");
     let extra = if instruction.trim().is_empty() {
         String::new()
     } else {
@@ -2000,6 +2144,263 @@ fn magi_analyze(path: String, mode: String, instruction: String) -> Result<MagiR
         .map_err(|error| error.to_string())?;
     let object = magi_http_request(api_key, tenant, body)?;
     adapt_magi_response(&object, &status.active_version)
+}
+
+#[tauri::command]
+fn magi_analyze(path: String, mode: String, instruction: String) -> Result<MagiReply, String> {
+    let source = PathBuf::from(&path);
+    if !source.is_file() {
+        return Err("找不到文件".into());
+    }
+    let (text, truncated) = extract_document_text(&source)?;
+    let file_name = source
+        .file_name()
+        .and_then(|value| value.to_str())
+        .unwrap_or("文件");
+    magi_analyze_text(text, truncated, file_name, &mode, &instruction)
+}
+
+fn write_magi_bridge_config(token: &str) -> Result<PathBuf, String> {
+    let plugin_root = onlyoffice_user_plugin_root()?;
+    fs::create_dir_all(&plugin_root).map_err(|error| error.to_string())?;
+    let config_path = plugin_root.join("magi-bridge-config.js");
+    let content = format!(
+        "window.OpenDeskMagiBridge = Object.freeze({{ url: \"http://127.0.0.1:{MAGI_BRIDGE_PORT}/v1/analyze\", token: \"{token}\" }});\n"
+    );
+    fs::write(&config_path, content).map_err(|error| error.to_string())?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = fs::set_permissions(&config_path, fs::Permissions::from_mode(0o600));
+    }
+    Ok(config_path)
+}
+
+fn refresh_magi_bridge_config() -> Result<Option<PathBuf>, String> {
+    MAGI_BRIDGE_TOKEN
+        .get()
+        .map(|token| write_magi_bridge_config(token).map(Some))
+        .unwrap_or(Ok(None))
+}
+
+fn find_http_header_end(bytes: &[u8]) -> Option<usize> {
+    bytes.windows(4).position(|window| window == b"\r\n\r\n")
+}
+
+fn read_http_request(
+    stream: &mut TcpStream,
+) -> Result<
+    (
+        String,
+        String,
+        std::collections::HashMap<String, String>,
+        Vec<u8>,
+    ),
+    String,
+> {
+    stream
+        .set_read_timeout(Some(Duration::from_secs(5)))
+        .map_err(|error| error.to_string())?;
+    let mut received = Vec::new();
+    let mut chunk = [0_u8; 8192];
+    let header_end = loop {
+        let read = stream.read(&mut chunk).map_err(|error| error.to_string())?;
+        if read == 0 {
+            return Err("MAGI 橋接請求不完整".into());
+        }
+        received.extend_from_slice(&chunk[..read]);
+        if received.len() > 300_000 {
+            return Err("MAGI 橋接請求過大".into());
+        }
+        if let Some(position) = find_http_header_end(&received) {
+            break position;
+        }
+    };
+    let header =
+        String::from_utf8(received[..header_end].to_vec()).map_err(|_| "MAGI 橋接標頭編碼錯誤")?;
+    let mut lines = header.split("\r\n");
+    let request_line = lines.next().ok_or("MAGI 橋接缺少請求列")?;
+    let mut request_parts = request_line.split_whitespace();
+    let method = request_parts.next().unwrap_or_default().to_string();
+    let path = request_parts.next().unwrap_or_default().to_string();
+    let mut headers = std::collections::HashMap::new();
+    for line in lines {
+        if let Some((key, value)) = line.split_once(':') {
+            headers.insert(key.trim().to_ascii_lowercase(), value.trim().to_string());
+        }
+    }
+    let content_length = headers
+        .get("content-length")
+        .map(|value| value.parse::<usize>())
+        .transpose()
+        .map_err(|_| "MAGI 橋接 Content-Length 無效")?
+        .unwrap_or(0);
+    if content_length > 256_000 {
+        return Err("MAGI 橋接文字超過安全上限".into());
+    }
+    let body_start = header_end + 4;
+    while received.len().saturating_sub(body_start) < content_length {
+        let read = stream.read(&mut chunk).map_err(|error| error.to_string())?;
+        if read == 0 {
+            return Err("MAGI 橋接本文不完整".into());
+        }
+        received.extend_from_slice(&chunk[..read]);
+        if received.len() > 300_000 {
+            return Err("MAGI 橋接請求過大".into());
+        }
+    }
+    let body = received[body_start..body_start + content_length].to_vec();
+    Ok((method, path, headers, body))
+}
+
+fn allowed_magi_bridge_origin(
+    headers: &std::collections::HashMap<String, String>,
+) -> Option<String> {
+    let origin = headers.get("origin")?;
+    if origin == "null"
+        || origin.starts_with("file://")
+        || origin.starts_with("onlyoffice://plugin")
+    {
+        Some(origin.clone())
+    } else {
+        None
+    }
+}
+
+fn write_http_json(
+    stream: &mut TcpStream,
+    status: u16,
+    origin: Option<&str>,
+    body: &Value,
+) -> Result<(), String> {
+    let payload = serde_json::to_vec(body).map_err(|error| error.to_string())?;
+    let reason = match status {
+        200 => "OK",
+        400 => "Bad Request",
+        401 => "Unauthorized",
+        403 => "Forbidden",
+        404 => "Not Found",
+        405 => "Method Not Allowed",
+        422 => "Unprocessable Entity",
+        _ => "Internal Server Error",
+    };
+    let cors = origin
+        .map(|value| format!("Access-Control-Allow-Origin: {value}\r\nVary: Origin\r\n"))
+        .unwrap_or_default();
+    let response = format!(
+        "HTTP/1.1 {status} {reason}\r\nContent-Type: application/json; charset=utf-8\r\nContent-Length: {}\r\n{cors}Access-Control-Allow-Headers: Authorization, Content-Type\r\nAccess-Control-Allow-Methods: POST, OPTIONS\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n",
+        payload.len()
+    );
+    stream
+        .write_all(response.as_bytes())
+        .and_then(|_| stream.write_all(&payload))
+        .and_then(|_| stream.flush())
+        .map_err(|error| error.to_string())
+}
+
+fn handle_magi_bridge_connection(mut stream: TcpStream, token: &str) -> Result<(), String> {
+    let (method, path, headers, body) = read_http_request(&mut stream)?;
+    let supplied_origin = headers.get("origin");
+    let allowed_origin = allowed_magi_bridge_origin(&headers);
+    if supplied_origin.is_some() && allowed_origin.is_none() {
+        return write_http_json(
+            &mut stream,
+            403,
+            None,
+            &json!({"ok": false, "error": "不允許的來源"}),
+        );
+    }
+    if method == "OPTIONS" {
+        return write_http_json(&mut stream, 200, allowed_origin.as_deref(), &json!({}));
+    }
+    if method != "POST" {
+        return write_http_json(
+            &mut stream,
+            405,
+            allowed_origin.as_deref(),
+            &json!({"ok": false, "error": "只接受 POST"}),
+        );
+    }
+    if path != "/v1/analyze" {
+        return write_http_json(
+            &mut stream,
+            404,
+            allowed_origin.as_deref(),
+            &json!({"ok": false, "error": "找不到此橋接功能"}),
+        );
+    }
+    let authorized = headers
+        .get("authorization")
+        .map(|value| value == &format!("Bearer {token}"))
+        .unwrap_or(false);
+    if !authorized {
+        return write_http_json(
+            &mut stream,
+            401,
+            allowed_origin.as_deref(),
+            &json!({"ok": false, "error": "MAGI 橋接驗證失敗"}),
+        );
+    }
+    let request: MagiBridgeRequest = match serde_json::from_slice(&body) {
+        Ok(request) => request,
+        Err(error) => {
+            return write_http_json(
+                &mut stream,
+                400,
+                allowed_origin.as_deref(),
+                &json!({"ok": false, "error": format!("請求格式錯誤：{error}")}),
+            )
+        }
+    };
+    let (text, truncated) = truncate_text(request.text, 60_000);
+    let mode = match request.mode.as_str() {
+        "summary" | "review" | "structure" | "risk" => request.mode,
+        _ => "risk".into(),
+    };
+    let title = request
+        .document_title
+        .as_deref()
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or("目前文件");
+    let instruction = request.instruction.unwrap_or_default();
+    match magi_analyze_text(text, truncated, title, &mode, &instruction) {
+        Ok(reply) => write_http_json(
+            &mut stream,
+            200,
+            allowed_origin.as_deref(),
+            &json!({"ok": true, "reply": reply}),
+        ),
+        Err(error) => write_http_json(
+            &mut stream,
+            422,
+            allowed_origin.as_deref(),
+            &json!({"ok": false, "error": error}),
+        ),
+    }
+}
+
+fn start_magi_bridge() -> Result<PathBuf, String> {
+    let listener = TcpListener::bind(("127.0.0.1", MAGI_BRIDGE_PORT))
+        .map_err(|error| format!("無法啟動 MAGI 文件橋接（連接埠 {MAGI_BRIDGE_PORT}）：{error}"))?;
+    let mut bytes = [0_u8; 32];
+    getrandom::fill(&mut bytes).map_err(|error| format!("無法建立 MAGI 橋接權杖：{error}"))?;
+    let token = bytes
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>();
+    MAGI_BRIDGE_TOKEN
+        .set(token.clone())
+        .map_err(|_| "MAGI 文件橋接已啟動")?;
+    let config = write_magi_bridge_config(&token)?;
+    thread::spawn(move || {
+        for stream in listener.incoming().flatten() {
+            let token = token.clone();
+            thread::spawn(move || {
+                let _ = handle_magi_bridge_connection(stream, &token);
+            });
+        }
+    });
+    Ok(config)
 }
 
 #[tauri::command]
@@ -2213,7 +2614,7 @@ fn renumber_headings(path: String) -> Result<ActionResult, String> {
     let document_xml = read_word_document_xml(&source)?;
     let (renumbered, count) = renumber_word_xml(&document_xml);
     if count == 0 {
-        return Err("沒有偵測到〔壹、〕、〔一、〕、（一）或 1. 等標題".into());
+        return Err("沒有在段落開頭偵測到「壹、」、「一、」、「（一）」或「1.」等標題".into());
     }
     let backup = create_backup(&source)?;
     let destination = unique_renumbered_path(&source)?;
@@ -2568,7 +2969,7 @@ fn run_self_test<R: Runtime>(app: tauri::AppHandle<R>) -> SelfTestReport {
         })
         .unwrap_or(false);
     let (_, word_renumber_count) = renumber_word_xml(
-        r#"<w:body><w:p><w:r><w:t>〔肆、〕章</w:t></w:r></w:p><w:p><w:r><w:t>〔九、〕節</w:t></w:r></w:p><w:p><w:r><w:t>（三）項</w:t></w:r></w:p></w:body>"#,
+        r#"<w:body><w:p><w:r><w:t>肆、章</w:t></w:r></w:p><w:p><w:r><w:t>九、節</w:t></w:r></w:p><w:p><w:r><w:t>（三）項</w:t></w:r></w:p></w:body>"#,
     );
     let word_renumber_passed = word_renumber_count == 3;
     let temporary_root = std::env::temp_dir().join(format!(
@@ -2723,6 +3124,10 @@ fn run_self_test<R: Runtime>(app: tauri::AppHandle<R>) -> SelfTestReport {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .setup(|_app| {
+            start_magi_bridge().map_err(std::io::Error::other)?;
+            Ok(())
+        })
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_process::init())
@@ -2772,6 +3177,21 @@ mod tests {
     }
 
     #[test]
+    fn magi_bridge_accepts_only_local_editor_origins() {
+        let mut headers = std::collections::HashMap::new();
+        headers.insert("origin".into(), "null".into());
+        assert_eq!(
+            allowed_magi_bridge_origin(&headers).as_deref(),
+            Some("null")
+        );
+        headers.insert("origin".into(), "onlyoffice://plugin".into());
+        assert!(allowed_magi_bridge_origin(&headers).is_some());
+        headers.insert("origin".into(), "https://example.com".into());
+        assert!(allowed_magi_bridge_origin(&headers).is_none());
+        assert_eq!(find_http_header_end(b"POST / HTTP/1.1\r\n\r\n{}"), Some(15));
+    }
+
+    #[test]
     fn bundled_onlyoffice_plugin_uses_native_distributed_alignment() {
         let config = include_str!("../resources/onlyoffice-tw-plugin/config.json");
         let value: Value = serde_json::from_str(config).expect("外掛設定必須是有效 JSON");
@@ -2797,7 +3217,15 @@ mod tests {
         let code = include_str!("../resources/onlyoffice-tw-plugin/code.js");
         assert!(code.contains("put_PrAlign"));
         assert!(code.contains("align_Distributed"));
+        assert!(code.contains("document.Document.Vt(distributed)"));
         assert!(code.contains("AddToolbarMenuItem"));
+        assert!(code.contains("id: \"home\""));
+        assert!(code.contains("installWordCompatibilityShortcuts"));
+        assert!(code.contains("event.code === \"KeyJ\""));
+        assert!(code.contains("applyLineSpacing"));
+        assert!(code.contains("toggleTrackRevisions"));
+        assert!(code.contains("opendesk-renumber-headings"));
+        assert!(code.contains("opendesk-home-magi-summary"));
         assert!(code.contains("opendesk-complete-pairs"));
         assert!(code.contains("opendesk-normalize-punctuation"));
         assert!(code.contains("opendesk-font-size"));
@@ -2806,12 +3234,20 @@ mod tests {
         let typography = include_str!("../resources/onlyoffice-tw-plugin/typography.js");
         let ui_patch = include_str!("../resources/onlyoffice-tw-plugin/ui-patch.js");
         let ui_overrides = include_str!("../resources/onlyoffice-tw-plugin/ui-overrides.js");
+        let ai_tw = include_str!("../resources/onlyoffice-ai-tw-locale/translations/zh-TW.json");
+        let ai_helpers_tw =
+            include_str!("../resources/onlyoffice-ai-tw-locale/translations/helpers/zh-TW.json");
+        let ai_tw_runtime =
+            include_str!("../resources/onlyoffice-ai-tw-locale/traditional-chinese.js");
+        let magi_result = include_str!("../resources/onlyoffice-tw-plugin/magi-result.html");
         for pair in [
             "（\"", "）\"", "「\"", "」\"", "【\"", "】\"", "〔\"", "〕\"",
         ] {
             assert!(typography.contains(pair), "缺少成對標點：{pair}");
         }
-        assert!(!code.contains("fetch("));
+        assert!(code.contains("window.fetch(bridge.url"));
+        assert!(code.contains("Authorization: `Bearer ${bridge.token}`"));
+        assert!(!code.contains("https://"));
         assert!(!code.contains("XMLHttpRequest"));
         assert!(!typography.contains("fetch("));
         assert!(ui_patch.contains("de-settings-western-font-size"));
@@ -2819,6 +3255,12 @@ mod tests {
         assert!(ui_patch.contains("五號: \"10.5\""));
         assert!(ui_overrides.contains("\"Multipage view\": \"多頁檢視\""));
         assert!(ui_overrides.contains("\"Got it\": \"知道了\""));
+        assert!(ai_tw.contains("\"Chatbot\": \"聊天機器人\""));
+        assert!(ai_tw.contains("\"Grammar & Spelling\": \"拼字與文法檢查\""));
+        assert!(ai_helpers_tw.contains("\"Run Macro\": \"執行巨集\""));
+        assert!(ai_tw_runtime.contains("Object.defineProperty(plugin, \"tr\""));
+        assert!(ai_tw_runtime.contains("\"Chatbot\": \"聊天機器人\""));
+        assert!(magi_result.contains("結果會直接顯示在這裡，不會開啟網頁"));
         assert!(!ui_patch.contains("fetch("));
     }
 
@@ -2932,31 +3374,34 @@ mod tests {
     fn detects_word_styles_and_traditional_chinese_headings() {
         let xml = r#"<w:body>
           <w:p><w:pPr><w:pStyle w:val="Heading1"/></w:pPr><w:r><w:t>正式標題</w:t></w:r></w:p>
-          <w:p><w:r><w:t>〔貳、〕中文編號標題</w:t></w:r></w:p>
+          <w:p><w:r><w:t>貳、中文編號標題</w:t></w:r></w:p>
           <w:p><w:r><w:t>一般內文</w:t></w:r></w:p>
+          <w:p><w:r><w:t>本文說明壹、一、（一）等格式，不能判斷成標題。</w:t></w:r></w:p>
         </w:body>"#;
         let headings = detect_word_headings(xml);
         assert_eq!(headings.len(), 2);
         assert_eq!(headings[0].level, 1);
-        assert_eq!(headings[1].text, "〔貳、〕中文編號標題");
+        assert_eq!(headings[1].text, "貳、中文編號標題");
     }
 
     #[test]
     fn renumbers_split_run_chinese_headings_and_applies_styles() {
         let xml = r#"<w:body>
-          <w:p><w:r><w:t>〔肆</w:t></w:r><w:r><w:t>、〕第一章</w:t></w:r></w:p>
-          <w:p><w:r><w:t>〔九、〕第一節</w:t></w:r></w:p>
-          <w:p><w:r><w:t>〔十、〕第二節</w:t></w:r></w:p>
+          <w:p><w:r><w:t>肆</w:t></w:r><w:r><w:t>、第一章</w:t></w:r></w:p>
+          <w:p><w:r><w:t>九、第一節</w:t></w:r></w:p>
+          <w:p><w:r><w:t>十、第二節</w:t></w:r></w:p>
           <w:p><w:r><w:t>（三）細目</w:t></w:r></w:p>
           <w:p><w:r><w:t>9. 項目</w:t></w:r></w:p>
+          <w:p><w:r><w:t>本段內文提到壹、一、（一）與 1.，不得重新編號。</w:t></w:r></w:p>
         </w:body>"#;
         let (output, count) = renumber_word_xml(xml);
         assert_eq!(count, 5);
-        assert!(paragraph_text(&output).contains("〔壹、〕第一章"));
-        assert!(paragraph_text(&output).contains("〔一、〕第一節"));
-        assert!(paragraph_text(&output).contains("〔二、〕第二節"));
+        assert!(paragraph_text(&output).contains("壹、第一章"));
+        assert!(paragraph_text(&output).contains("一、第一節"));
+        assert!(paragraph_text(&output).contains("二、第二節"));
         assert!(paragraph_text(&output).contains("（一）細目"));
         assert!(paragraph_text(&output).contains("1. 項目"));
+        assert!(paragraph_text(&output).contains("本段內文提到壹、一、（一）與 1.，不得重新編號。"));
         for level in 1..=4 {
             assert!(output.contains(&format!("w:val=\"Heading{level}\"")));
         }
@@ -3067,6 +3512,9 @@ mod tests {
             PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("resources/onlyoffice-tw-plugin");
         let destination = onlyoffice_user_plugin_root().expect("應找到使用者外掛資料夾");
         copy_directory(&source, &destination).expect("繁中寫作工具應能安裝");
+        let ai_locale_source =
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("resources/onlyoffice-ai-tw-locale");
+        install_onlyoffice_ai_tw(&ai_locale_source).expect("台灣繁中 AI 相容副本應能安裝");
         let status = onlyoffice_tw_status_value();
         assert!(status.traditional_chinese, "{}", status.message);
         assert!(status.plugin_installed, "{}", status.message);
