@@ -48,7 +48,7 @@ struct DocumentInspector {
                 issues.append(CompatibilityIssue(
                     level: .normal,
                     title: "辨識到 \(headings.count) 個中文標題列",
-                    detail: "支援〔壹、〕、〔一、〕、（一）與阿拉伯數字層級，可建立重新編號副本。"
+                    detail: "只辨識段落開頭的「壹、」、「一、」、「（一）」與阿拉伯數字層級，可建立重新編號副本；內文中出現不會誤判。"
                 ))
             }
         }

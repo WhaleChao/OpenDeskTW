@@ -1,0 +1,32 @@
+:root {
+  color-scheme: light dark;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans TC", sans-serif;
+  color: #172033;
+  background: #f5f8f9;
+}
+
+* { box-sizing: border-box; }
+body { margin: 0; background: #f5f8f9; }
+main { padding: 20px; }
+.heading { display: flex; align-items: center; gap: 12px; margin-bottom: 14px; }
+.mark { display: grid; place-items: center; width: 38px; height: 38px; border-radius: 11px; background: #0f777c; color: #fff; font-weight: 800; }
+h1 { margin: 0; font-size: 18px; }
+p { margin: 3px 0 0; color: #607078; font-size: 12px; }
+.loading { display: flex; align-items: center; gap: 9px; margin-bottom: 10px; padding: 10px 12px; border: 1px solid #b9dfe1; border-radius: 9px; background: #ecfafa; font-size: 13px; }
+.spinner { width: 15px; height: 15px; border: 2px solid #9bcfd2; border-top-color: #0f777c; border-radius: 50%; animation: spin .8s linear infinite; }
+.result { min-height: 330px; max-height: 365px; margin: 0; padding: 14px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; border: 1px solid #d7e0e3; border-radius: 10px; background: #fff; color: #253238; font: 13px/1.65 -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans TC", sans-serif; }
+.result.error { border-color: #e5b7b7; background: #fff7f7; color: #8b2424; }
+.actions { display: flex; align-items: center; gap: 10px; margin-top: 12px; }
+button { min-height: 34px; padding: 7px 13px; border: 1px solid #0f777c; border-radius: 8px; background: #0f777c; color: #fff; cursor: pointer; }
+button:disabled { opacity: .45; cursor: default; }
+#copy-state { color: #607078; font-size: 12px; }
+.hidden { display: none; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+@media (prefers-color-scheme: dark) {
+  :root, body { color: #e8f0f2; background: #152023; }
+  p, #copy-state { color: #aebdc1; }
+  .loading { background: #173033; border-color: #2f5d61; }
+  .result { background: #1d292c; border-color: #34464b; color: #e8f0f2; }
+  .result.error { background: #371f20; border-color: #764145; color: #ffd6d6; }
+}

@@ -6,7 +6,8 @@
 - PyMuPDF／MuPDF：本專案選擇 GNU AGPL 路線使用，並將對應原始碼、建置腳本與
   安裝資訊和執行檔一併提供。
 - ONLYOFFICE Desktop Editors：GNU Affero General Public License v3.0；由使用者在
-  本機獨立安裝與執行。
+  本機獨立安裝與執行。AI 台灣繁中相容語系以本機已安裝的 AI plugin 3.2.2 翻譯鍵
+  為基礎，保留 Ascensio System SIA 版權與上游 AGPL v3／介面文字 CC BY-SA 4.0 告知。
 - LibreOffice：Mozilla Public License 2.0，並含其他相容開源授權元件；由使用者在
   本機獨立安裝與執行。
 - Tesseract `tessdata_fast` 4.1.0 英文與繁體中文辨識模型：Apache License 2.0。

@@ -97,14 +97,14 @@ async function createDocumentMatrix() {
           {
             level: 0,
             format: LevelFormat.IDEOGRAPH_LEGAL_TRADITIONAL,
-            text: "〔%1、〕",
+            text: "%1、",
             alignment: AlignmentType.LEFT,
             style: { paragraph: { indent: { left: 0, hanging: 0 } } },
           },
           {
             level: 1,
             format: LevelFormat.CHINESE_COUNTING,
-            text: "〔%2、〕",
+            text: "%2、",
             alignment: AlignmentType.LEFT,
             style: { paragraph: { indent: { left: 420, hanging: 0 } } },
           },

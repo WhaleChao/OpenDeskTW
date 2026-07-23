@@ -1,6 +1,6 @@
 [package]
 name = "document-workbench-tw"
-version = "2.4.0"
+version = "2.6.0"
 description = "全繁體中文、跨平台、Office 格式優先的本機文件工作台"
 authors = ["全能文件工作台貢獻者"]
 edition = "2021"
@@ -24,4 +24,5 @@ serde_json = "1"
 chrono = { version = "0.4", features = ["serde"] }
 dirs = "6"
 regex = "1"
+getrandom = "0.3"
 zip = { version = "4", default-features = false, features = ["deflate"] }

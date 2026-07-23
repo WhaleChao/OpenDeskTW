@@ -100,7 +100,7 @@ async function createDOCX() {
             new TextRun({ text: "\t2026-07-21", font: "Noto Sans CJK TC", size: 20, color: "475569" }),
           ],
         }),
-        new Paragraph({ heading: HeadingLevel.HEADING_1, children: [new TextRun("〔參、〕版面與字型")] }),
+        new Paragraph({ heading: HeadingLevel.HEADING_1, children: [new TextRun("參、版面與字型")] }),
         new Paragraph({
           spacing: { after: 180, line: 360 },
           children: [
@@ -111,7 +111,7 @@ async function createDOCX() {
           spacing: { after: 220 },
           children: [new TextRun({ text: "此行改用 Noto Serif CJK TC，確認更改字型後仍可正確匯出 PDF。", font: "Noto Serif CJK TC", size: 24 })],
         }),
-        new Paragraph({ heading: HeadingLevel.HEADING_2, children: [new TextRun("〔四、〕功能驗證表格")] }),
+        new Paragraph({ heading: HeadingLevel.HEADING_2, children: [new TextRun("四、功能驗證表格")] }),
         new Table({
           width: { size: 9026, type: WidthType.DXA },
           columnWidths: [3008, 3008, 3010],
@@ -139,7 +139,7 @@ async function createDOCX() {
           ],
         }),
         new Paragraph({ children: [new PageBreak()] }),
-        new Paragraph({ heading: HeadingLevel.HEADING_1, children: [new TextRun("〔玖、〕第二頁與頁碼")] }),
+        new Paragraph({ heading: HeadingLevel.HEADING_1, children: [new TextRun("玖、第二頁與頁碼")] }),
         new Paragraph({
           spacing: { after: 240, line: 360 },
           children: [new TextRun("這是第二頁。頁尾應顯示目前頁碼及總頁數，頁首應延續顯示；轉換 PDF 後內容仍須可搜尋。")],

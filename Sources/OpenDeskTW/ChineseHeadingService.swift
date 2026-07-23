@@ -39,7 +39,7 @@ struct ChineseHeadingService {
         let xml = try String(contentsOf: documentURL, encoding: .utf8)
         let renumbered = try renumber(documentXML: xml)
         guard renumbered.headingCount > 0 else {
-            throw OpenDeskError.invalidFile("這份文件沒有偵測到〔壹、〕、〔一、〕、（一）或 1. 等標題編號。")
+            throw OpenDeskError.invalidFile("這份文件沒有在段落開頭偵測到「壹、」、「一、」、「（一）」或「1.」等標題編號。")
         }
         try renumbered.xml.write(to: documentURL, atomically: true, encoding: .utf8)
 
@@ -142,9 +142,12 @@ struct ChineseHeadingService {
 
     private func headingMatch(in text: String) -> HeadingMatch? {
         let patterns: [(Int, String)] = [
-            (1, #"^\s*(?:〔|【|\[)?([壹貳參肆伍陸柒捌玖拾佰]+)、(?:〕|】|\])?"#),
-            (2, #"^\s*(?:〔|【|\[)?([一二三四五六七八九十百]+)、(?:〕|】|\])?"#),
-            (3, #"^\s*(?:（|\(|〔|【)([一二三四五六七八九十百]+)(?:）|\)|〕|】)"#),
+            (1, #"^\s*([壹貳參肆伍陸柒捌玖拾佰]+)、"#),
+            (1, #"^\s*[〔【\[]([壹貳參肆伍陸柒捌玖拾佰]+)、[〕】\]]"#),
+            (2, #"^\s*([一二三四五六七八九十百]+)、"#),
+            (2, #"^\s*[〔【\[]([一二三四五六七八九十百]+)、[〕】\]]"#),
+            (3, #"^\s*[（(]([一二三四五六七八九十百]+)[）)]"#),
+            (3, #"^\s*[〔【]([一二三四五六七八九十百]+)[〕】]"#),
             (4, #"^\s*([0-9]+)[、\.．]"#),
         ]
         let fullRange = NSRange(text.startIndex..<text.endIndex, in: text)

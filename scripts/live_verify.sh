@@ -61,8 +61,8 @@ python3 "$VALIDATE_DOCX" "$FIXTURES/OpenDeskTW_LIVE_Writer.docx"
 "$CLI" --renumber-headings "$FIXTURES/OpenDeskTW_LIVE_Writer.docx"
 python3 "$VALIDATE_DOCX" "$FIXTURES/OpenDeskTW_LIVE_Writer-重新編號.docx"
 HEADING_OUTPUT="$("$CLI" --headings "$FIXTURES/OpenDeskTW_LIVE_Writer-重新編號.docx")"
-[[ "$HEADING_OUTPUT" == *"〔壹、〕"* ]]
-[[ "$HEADING_OUTPUT" == *"〔貳、〕"* ]]
+[[ "$HEADING_OUTPUT" == *"壹、"* ]]
+[[ "$HEADING_OUTPUT" == *"貳、"* ]]
 
 "$SOFFICE" "-env:UserInstallation=file:///tmp/OpenDeskTW-Live-$RUN_ID-PPTX" --headless --convert-to pptx --outdir "$ROUNDTRIP" "$FIXTURES/OpenDeskTW_LIVE_Slides.pptx"
 python3 "$VALIDATE_PPTX" "$ROUNDTRIP/OpenDeskTW_LIVE_Slides.pptx"

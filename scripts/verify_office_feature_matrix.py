@@ -39,7 +39,7 @@ def verify_docx(path: Path) -> list[dict[str, object]]:
         check("DOCX 基本結構", "word/document.xml" in names and "word/styles.xml" in names, "document.xml 與 styles.xml"),
         check("DOCX 四層標題", all(f'w:styleId="Heading{level}"' in styles for level in range(1, 5)), "Heading 1–4"),
         check("DOCX 自動目錄", "TOC" in document and "1-4" in document, "TOC 欄位涵蓋 Heading 1–4"),
-        check("DOCX 自動中文編號", "ideographLegalTraditional" in numbering and "〔%1、〕" in numbering, "繁體中文法律編號格式"),
+        check("DOCX 自動中文編號", "ideographLegalTraditional" in numbering and "%1、" in numbering, "無外括號的繁體中文法律編號格式"),
         check("DOCX 頁首頁尾與頁碼", any(name.startswith("word/header") for name in names) and any(name.startswith("word/footer") for name in names) and "PAGE" in "".join(package_text(path, name) for name in names if name.startswith("word/footer") and name.endswith(".xml")), "頁首、頁尾與 PAGE 欄位"),
         check("DOCX 註腳與尾註", "word/footnotes.xml" in names and "word/endnotes.xml" in names and "footnoteReference" in document and "endnoteReference" in document, "註腳／尾註零件與參照"),
         check("DOCX 註解", "word/comments.xml" in names and "commentRangeStart" in document and "commentReference" in document, "註解零件與範圍標記"),
