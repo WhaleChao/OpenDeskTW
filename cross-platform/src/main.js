@@ -464,12 +464,20 @@ async function loadOnlyOfficeTwStatus() {
     const status = await invoke("onlyoffice_tw_status");
     state.onlyofficeTw = status;
     const banner = $("#onlyoffice-tw-banner");
-    const ready = status.installed && status.traditional_chinese && status.plugin_installed;
+    const ready = status.installed && status.traditional_chinese && status.plugin_installed && status.plugin_current;
     banner.classList.toggle("ready", ready);
     banner.classList.toggle("warning", !ready);
-    $("#onlyoffice-tw-title").textContent = ready ? "● ONLYOFFICE 完整繁中與數字字級已就緒" : "○ ONLYOFFICE 繁中介面需要處理";
+    $("#onlyoffice-tw-title").textContent = ready
+      ? "● ONLYOFFICE 完整繁中與數字字級已就緒"
+      : status.plugin_installed && !status.plugin_current
+        ? "○ ONLYOFFICE 繁中寫作工具需要更新"
+        : "○ ONLYOFFICE 繁中介面需要處理";
     $("#onlyoffice-tw-detail").textContent = `${status.message}・目前語系：${status.current_language}${status.running ? "・ONLYOFFICE 正在運作" : ""}`;
-    $("#repair-onlyoffice-tw").textContent = ready ? "重新驗證／修復" : "一鍵補齊繁中＋數字字級";
+    $("#repair-onlyoffice-tw").textContent = ready
+      ? "重新驗證／修復"
+      : status.running && !status.plugin_current
+        ? "關閉 ONLYOFFICE 後更新"
+        : "一鍵補齊繁中＋數字字級";
   } catch (error) {
     $("#onlyoffice-tw-title").textContent = "無法檢查 ONLYOFFICE 繁中狀態";
     $("#onlyoffice-tw-detail").textContent = String(error);
@@ -493,7 +501,7 @@ async function repairOnlyOfficeTraditionalChinese() {
     toast(`ONLYOFFICE 繁中修復未完成：${error}`, 10000);
   } finally {
     button.disabled = false;
-    if (!state.onlyofficeTw?.traditional_chinese || !state.onlyofficeTw?.plugin_installed) button.textContent = original;
+    if (!state.onlyofficeTw?.traditional_chinese || !state.onlyofficeTw?.plugin_installed || !state.onlyofficeTw?.plugin_current) button.textContent = original;
   }
 }
 

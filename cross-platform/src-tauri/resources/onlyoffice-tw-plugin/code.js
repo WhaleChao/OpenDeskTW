@@ -57,6 +57,70 @@
     sendMagiWindowPayload();
   }
 
+  function reloadMagiBridgeConfig() {
+    return new Promise(function (resolve) {
+      if (!window.document?.head || !window.document.createElement) {
+        resolve(window.OpenDeskMagiBridge);
+        return;
+      }
+      const script = window.document.createElement("script");
+      let settled = false;
+      const finish = function () {
+        if (settled) return;
+        settled = true;
+        script.remove?.();
+        resolve(window.OpenDeskMagiBridge);
+      };
+      script.src = `magi-bridge-config.js?${Date.now()}`;
+      script.onload = finish;
+      script.onerror = finish;
+      window.document.head.appendChild(script);
+      window.setTimeout(finish, 1500);
+    });
+  }
+
+  function magiBridgeConnectionMessage(status) {
+    if (status === 401) {
+      return "MAGI 橋接權杖已過期。請保持「全能文件工作台」開啟，完全關閉 ONLYOFFICE 後再重新開啟。";
+    }
+    if (status === 403) {
+      return "目前 ONLYOFFICE 來源未獲 MAGI 橋接允許，請更新至最新版全能文件工作台後重試。";
+    }
+    return "無法連線到本機 MAGI 橋接。請先開啟或重新啟動「全能文件工作台」，保持工作台開啟，再按一次分析。";
+  }
+
+  async function verifyMagiBridge(bridge) {
+    const healthUrl =
+      bridge.healthUrl || String(bridge.url || "").replace(/\/v1\/analyze$/, "/v1/health");
+    if (!healthUrl) return { ok: false, message: magiBridgeConnectionMessage() };
+    const controller = new AbortController();
+    const timeout = window.setTimeout(function () {
+      controller.abort();
+    }, 4000);
+    try {
+      const response = await window.fetch(healthUrl, {
+        method: "GET",
+        headers: { Authorization: `Bearer ${bridge.token}` },
+        cache: "no-store",
+        signal: controller.signal,
+      });
+      const result = await response.json().catch(function () {
+        return {};
+      });
+      if (!response.ok || !result.ok) {
+        return {
+          ok: false,
+          message: result.error || magiBridgeConnectionMessage(response.status),
+        };
+      }
+      return { ok: true };
+    } catch (_) {
+      return { ok: false, message: magiBridgeConnectionMessage() };
+    } finally {
+      window.clearTimeout(timeout);
+    }
+  }
+
   function collectMagiText(callback) {
     plugin.executeMethod("GetSelectedText", [selectedTextOptions], function (selectedText) {
       if (selectedText && selectedText.trim()) {
@@ -93,12 +157,21 @@
         });
         return;
       }
-      const bridge = window.OpenDeskMagiBridge;
+      const bridge = await reloadMagiBridgeConfig();
       if (!bridge?.url || !bridge?.token) {
         updateMagiWindow({
           state: "error",
           title: label,
           text: "請先開啟「全能文件工作台」，再重新執行 MAGI 文件分析。",
+        });
+        return;
+      }
+      const bridgeStatus = await verifyMagiBridge(bridge);
+      if (!bridgeStatus.ok) {
+        updateMagiWindow({
+          state: "error",
+          title: label,
+          text: bridgeStatus.message,
         });
         return;
       }
@@ -147,7 +220,10 @@
           text:
             error?.name === "AbortError"
               ? "MAGI 分析逾時，請稍後再試。"
-              : `MAGI 分析失敗：${error?.message || error}`,
+              : error?.name === "TypeError" ||
+                  /failed to fetch|networkerror|load failed/i.test(String(error?.message || error))
+                ? magiBridgeConnectionMessage()
+                : `MAGI 分析失敗：${error?.message || error}`,
         });
       } finally {
         window.clearTimeout(timeout);
@@ -200,111 +276,73 @@
   function applyDistributedAlignment() {
     plugin.callCommand(
       function () {
-        const document = Api.GetDocument();
-        const selection = document.GetRangeBySelect();
-        let paragraphs = selection?.GetAllParagraphs?.() || [];
-        if (!paragraphs.length) {
-          const current = document.GetCurrentParagraph?.();
-          paragraphs = current ? [current] : [];
-        }
-        if (!paragraphs.length) return { applied: 0, skipped: 0, lines: 0 };
+        try {
+          const document = Api.GetDocument();
+          const selection = document.GetRangeBySelect();
+          let paragraphs = selection?.GetAllParagraphs?.() || [];
+          if (!paragraphs.length) {
+            const current = document.GetCurrentParagraph?.();
+            paragraphs = current ? [current] : [];
+          }
+          if (!paragraphs.length) return { applied: 0 };
 
-        paragraphs.forEach(function (paragraph) {
-          paragraph.SetJc("left");
-          paragraph.SetSpacing(0);
-        });
-        document.ForceRecalculate();
-
-        function apiOffsetForPosition(internal, contentPosition) {
-          if (!contentPosition) return null;
-          const targetRun = internal.GetClassByPos?.(contentPosition);
-          if (!targetRun || !internal.CheckRunContent) return null;
-          const depth = contentPosition.GetDepth?.();
-          const runPosition =
-            typeof depth === "number" ? contentPosition.Get(depth) : undefined;
-          if (!Number.isFinite(runPosition)) return null;
-          let offset = 0;
-          let first = true;
-          let result = null;
-          internal.CheckRunContent(function (run) {
-            if (result !== null) return;
-            if (!first) offset += 1;
-            first = false;
-            if (run === targetRun) {
-              result = offset + runPosition;
-              return;
-            }
-            offset += run.Content?.length || 0;
+          const nativeDistributed =
+            typeof AscCommon !== "undefined" &&
+            Number.isFinite(AscCommon.align_Distributed)
+              ? AscCommon.align_Distributed
+              : 4;
+          const nativeParagraphs = paragraphs.filter(function (paragraph) {
+            return paragraph.Paragraph && typeof paragraph.Paragraph.Vt === "function";
           });
-          return result;
-        }
-
-        const jobs = [];
-        let skipped = 0;
-        let lineCount = 0;
-        paragraphs.forEach(function (paragraph) {
-          const internal = paragraph.Paragraph;
-          const lines = internal?.Lines || [];
-          lineCount += lines.length;
-          lines.forEach(function (line, lineIndex) {
-            (line.Ranges || []).forEach(function (layoutRange, rangeIndex) {
-              const startPosition = internal.Get_StartRangePos2?.(lineIndex, rangeIndex);
-              const endPosition = internal.Get_EndRangePos2?.(lineIndex, rangeIndex, false);
-              const start = apiOffsetForPosition(internal, startPosition);
-              const end = apiOffsetForPosition(internal, endPosition);
-              const width = Number(layoutRange.XEnd) - Number(layoutRange.X);
-              const occupied = Number(layoutRange.W);
-              if (
-                !Number.isFinite(start) ||
-                !Number.isFinite(end) ||
-                end - start < 2 ||
-                !Number.isFinite(width) ||
-                !Number.isFinite(occupied) ||
-                width <= occupied
-              ) {
-                skipped += 1;
-                return;
-              }
-              const measuredRange = paragraph.GetRange(start, end);
-              const text = measuredRange?.GetText?.() || "";
-              const glyphCount = Array.from(text).filter(function (character) {
-                return character !== "\r" && character !== "\n";
-              }).length;
-              if (glyphCount < 2) {
-                skipped += 1;
-                return;
-              }
-              const spacingMm = (width - occupied) / (glyphCount - 1);
-              const spacingTwips = Math.max(0, Math.round((spacingMm * 1440) / 25.4));
-              if (!spacingTwips) {
-                skipped += 1;
-                return;
-              }
-              jobs.push({
-                paragraph: paragraph,
-                start: start,
-                end: end - 1,
-                spacing: spacingTwips,
-              });
+          if (nativeParagraphs.length === paragraphs.length) {
+            nativeParagraphs.forEach(function (paragraph) {
+              paragraph.Paragraph.Vt(nativeDistributed);
             });
-          });
-        });
-
-        jobs.forEach(function (job) {
-          job.paragraph.GetRange(job.start, job.end)?.SetSpacing(job.spacing);
-        });
-        if (jobs.length) document.ForceRecalculate();
-        return { applied: jobs.length, skipped: skipped, lines: lineCount };
+            return {
+              applied: paragraphs.length,
+              method: "paragraph.Vt",
+              value: nativeDistributed,
+            };
+          }
+          if (
+            typeof Asc !== "undefined" &&
+            Asc.editor &&
+            typeof Asc.editor.put_PrAlign === "function"
+          ) {
+            Asc.editor.put_PrAlign(nativeDistributed);
+            return {
+              applied: paragraphs.length,
+              method: "put_PrAlign",
+              value: nativeDistributed,
+            };
+          }
+          const logicDocument = document.Document;
+          if (logicDocument && typeof logicDocument.Vt === "function") {
+            logicDocument.Vt(nativeDistributed, { rej: true });
+            return {
+              applied: paragraphs.length,
+              method: "logicDocument",
+              value: nativeDistributed,
+            };
+          }
+          return {
+            applied: 0,
+            error: "這個編輯器版本沒有提供原生分散對齊介面。",
+          };
+        } catch (error) {
+          return {
+            applied: 0,
+            error: `${error?.name || "Error"}: ${error?.message || error}`,
+          };
+        }
       },
       false,
       true,
       function (result) {
-        if (!result?.applied) {
-          showMessage("目前段落沒有至少兩個可分散的文字，或段落版面尚未完成計算。");
-        } else if (result.skipped) {
-          showMessage(
-            `已完成 ${result.applied} 行相容分散對齊；另有 ${result.skipped} 個空白、定位點或特殊物件範圍維持原樣。`,
-          );
+        if (result?.error) {
+          showMessage(`分散對齊發生錯誤：${result.error}`);
+        } else if (!result?.applied) {
+          showMessage("目前沒有可分散對齊的段落。");
         }
         focusEditor();
       },

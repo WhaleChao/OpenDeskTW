@@ -61,8 +61,8 @@ assert.match(pluginCode, /id: "home"/);
 assert.match(pluginCode, /id: "opendesk-distributed"/);
 assert.match(pluginCode, /installWordCompatibilityShortcuts\(window\.parent\)/);
 assert.match(pluginCode, /event\.code === "KeyJ"/);
-assert.match(pluginCode, /Get_StartRangePos2/);
-assert.match(pluginCode, /SetSpacing\(job\.spacing\)/);
+assert.match(pluginCode, /AscCommon\.align_Distributed/);
+assert.match(pluginCode, /paragraph\.Paragraph\.Vt\(nativeDistributed\)/);
 assert.match(pluginCode, /id: "opendesk-font-family"/);
 assert.match(pluginCode, /PMingLiU/);
 assert.match(pluginCode, /MingLiU/);
@@ -79,6 +79,10 @@ assert.match(pluginCode, /id: "opendesk-renumber-headings"/);
 assert.match(pluginCode, /id: "opendesk-home-magi-summary"/);
 assert.match(pluginCode, /id: "opendesk-magi-tab"/);
 assert.match(pluginCode, /runMagiAnalysis\("summary"/);
+assert.match(pluginCode, /reloadMagiBridgeConfig/);
+assert.match(pluginCode, /verifyMagiBridge/);
+assert.match(pluginCode, /healthUrl/);
+assert.match(pluginCode, /無法連線到本機 MAGI 橋接/);
 assert.match(pluginCode, /Authorization: `Bearer \$\{bridge\.token\}`/);
 assert.ok(
   pluginCode.indexOf('id: "opendesk-distributed"') <
@@ -89,6 +93,7 @@ assert.ok(
 let keydownHandler;
 let toolbarDefinition;
 let distributedSpacing;
+let internalDistributedValue;
 let paragraphAlignment;
 let appliedFont;
 let currentSentence = "";
@@ -99,6 +104,9 @@ let tracked = false;
 let nativeComments = 0;
 let copiedFormatting = false;
 let pastedFormatting = false;
+let magiFetchMode = "success";
+const magiFetches = [];
+const magiPayloads = [];
 const messages = [];
 const toolbarHandlers = new Map();
 function makeParagraph(initialText) {
@@ -118,6 +126,9 @@ function makeParagraph(initialText) {
   const paragraph = {
     Paragraph: {
       Lines: [{ Ranges: [layoutRange] }],
+      Vt(value) {
+        paragraphAlignment = value;
+      },
       Get_ParaContentPos() {
         return contentPosition(Array.from(text).length);
       },
@@ -288,10 +299,71 @@ const asc = {
       appliedFont = value;
     },
   },
+  PluginWindow: class {
+    constructor() {
+      this.events = new Map();
+      this.id = "magi-test-window";
+    }
+    attachEvent(name, handler) {
+      this.events.set(name, handler);
+    }
+    show() {
+      this.events.get("onMagiResultReady")?.();
+    }
+    command(name, payload) {
+      if (name === "onMagiResult") magiPayloads.push(payload);
+    }
+    close() {}
+  },
 };
 const pluginWindow = {
   Asc: asc,
   OpenDeskTwTypography: tools,
+  OpenDeskMagiBridge: {
+    url: "http://127.0.0.1:41827/v1/analyze",
+    healthUrl: "http://127.0.0.1:41827/v1/health",
+    token: "test-token",
+  },
+  document: {
+    createElement() {
+      return { remove() {} };
+    },
+    head: {
+      appendChild(script) {
+        script.onload?.();
+      },
+    },
+  },
+  setTimeout,
+  clearTimeout,
+  async fetch(url, options) {
+    magiFetches.push({ url, options });
+    if (magiFetchMode === "failure") throw new TypeError("Failed to fetch");
+    if (String(url).endsWith("/v1/health")) {
+      return {
+        ok: true,
+        status: 200,
+        async json() {
+          return { ok: true };
+        },
+      };
+    }
+    return {
+      ok: true,
+      status: 200,
+      async json() {
+        return {
+          ok: true,
+          reply: {
+            text: "MAGI 測試完成",
+            compatibility_version: "v3",
+            model: "test-model",
+            degraded: false,
+          },
+        };
+      },
+    };
+  },
   parent: {
     document: hostDocument,
     DE: {
@@ -309,7 +381,8 @@ const pluginWindow = {
 runInNewContext(pluginCode, {
   window: pluginWindow,
   Asc: asc,
-  AscCommon: { align_Distributed: 7 },
+  AscCommon: { align_Distributed: 4 },
+  AbortController,
   Api: {
     GetDocument() {
       return apiDocument;
@@ -354,10 +427,9 @@ keydownHandler({
   },
   stopPropagation() {},
 });
-assert.equal(paragraphAlignment, "left");
-assert.equal(distributedSpacing, Math.round((((100 - 20) / 3) * 1440) / 25.4));
+assert.equal(paragraphAlignment, 4);
 assert.equal(prevented, true);
-distributedSpacing = undefined;
+paragraphAlignment = undefined;
 keydownHandler({
   key: "j",
   code: "KeyJ",
@@ -370,9 +442,9 @@ keydownHandler({
   preventDefault() {},
   stopPropagation() {},
 });
-assert.equal(distributedSpacing, Math.round((((100 - 20) / 3) * 1440) / 25.4));
+assert.equal(paragraphAlignment, 4);
 toolbarHandlers.get("opendesk-distributed")();
-assert.equal(distributedSpacing, Math.round((((100 - 20) / 3) * 1440) / 25.4));
+assert.equal(paragraphAlignment, 4);
 
 function press(overrides) {
   let prevented = false;
@@ -427,6 +499,25 @@ assert.equal(insertedText, "」");
 selectionParagraph.SetTextForTest("don");
 assert.equal(press({ key: "'", code: "Quote" }), true);
 assert.equal(insertedText, "'");
+
+toolbarHandlers.get("opendesk-magi-summary")();
+await new Promise((resolve) => setTimeout(resolve, 10));
+assert.equal(magiFetches[0].url, "http://127.0.0.1:41827/v1/health");
+assert.equal(magiFetches[0].options.headers.Authorization, "Bearer test-token");
+assert.equal(magiFetches[1].url, "http://127.0.0.1:41827/v1/analyze");
+assert.ok(magiPayloads.some((payload) => payload.state === "done"));
+assert.ok(magiPayloads.some((payload) => payload.text === "MAGI 測試完成"));
+
+magiFetchMode = "failure";
+toolbarHandlers.get("opendesk-magi-summary")();
+await new Promise((resolve) => setTimeout(resolve, 10));
+assert.ok(
+  magiPayloads.some(
+    (payload) =>
+      payload.state === "error" &&
+      payload.text.includes("請先開啟或重新啟動「全能文件工作台」"),
+  ),
+);
 
 toolbarHandlers.get("opendesk-renumber-headings")();
 assert.equal(headingParagraphs[0].GetText(), "壹、第一章");

@@ -121,6 +121,9 @@ struct OnlyOfficeTwStatus {
     current_language: String,
     traditional_chinese: bool,
     plugin_installed: bool,
+    plugin_current: bool,
+    plugin_version: String,
+    required_plugin_version: String,
     message: String,
 }
 
@@ -1098,6 +1101,50 @@ fn onlyoffice_ai_tw_installed() -> bool {
         .unwrap_or(false)
 }
 
+fn onlyoffice_tw_plugin_version(path: &Path) -> Option<String> {
+    let config = fs::read_to_string(path.join("config.json")).ok()?;
+    serde_json::from_str::<Value>(&config)
+        .ok()?
+        .get("version")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|version| !version.is_empty())
+        .map(str::to_string)
+}
+
+fn bundled_onlyoffice_tw_plugin_version() -> String {
+    serde_json::from_str::<Value>(include_str!(
+        "../resources/onlyoffice-tw-plugin/config.json"
+    ))
+    .ok()
+    .and_then(|config| {
+        config
+            .get("version")
+            .and_then(Value::as_str)
+            .map(str::to_string)
+    })
+    .unwrap_or_else(|| "未知".into())
+}
+
+fn plugin_version_is_current(installed: &str, required: &str) -> bool {
+    fn numeric_version(value: &str) -> Option<Vec<u64>> {
+        value
+            .split('.')
+            .map(|part| part.parse::<u64>().ok())
+            .collect::<Option<Vec<_>>>()
+    }
+
+    match (numeric_version(installed), numeric_version(required)) {
+        (Some(mut installed), Some(mut required)) => {
+            let width = installed.len().max(required.len());
+            installed.resize(width, 0);
+            required.resize(width, 0);
+            installed >= required
+        }
+        _ => installed == required,
+    }
+}
+
 fn onlyoffice_tw_status_value() -> OnlyOfficeTwStatus {
     let installed = engine_executable("ONLYOFFICE").is_some();
     let running = onlyoffice_is_running();
@@ -1107,7 +1154,14 @@ fn onlyoffice_tw_status_value() -> OnlyOfficeTwStatus {
     } else {
         true
     };
-    let plugin_installed = onlyoffice_user_plugin_root()
+    let plugin_root = onlyoffice_user_plugin_root().ok();
+    let plugin_version = plugin_root
+        .as_deref()
+        .and_then(onlyoffice_tw_plugin_version)
+        .unwrap_or_else(|| "未安裝".into());
+    let required_plugin_version = bundled_onlyoffice_tw_plugin_version();
+    let plugin_installed = plugin_root
+        .as_deref()
         .map(|path| {
             path.join("config.json").is_file()
                 && path.join("index.html").is_file()
@@ -1120,14 +1174,22 @@ fn onlyoffice_tw_status_value() -> OnlyOfficeTwStatus {
         })
         .unwrap_or(false)
         && onlyoffice_ai_tw_installed();
+    let plugin_current =
+        plugin_installed && plugin_version_is_current(&plugin_version, &required_plugin_version);
     let message = if !installed {
         "尚未安裝 ONLYOFFICE".into()
     } else if running && !traditional_chinese {
         "目前正在使用錯誤語系；請先關閉 ONLYOFFICE，再按一鍵修復".into()
-    } else if traditional_chinese && plugin_installed {
-        "完整繁中介面、數字字級與繁中寫作工具已就緒".into()
+    } else if running && plugin_installed && !plugin_current {
+        format!(
+            "目前載入的是繁中寫作工具 {plugin_version}；請先儲存文件並關閉 ONLYOFFICE，再更新至 {required_plugin_version}"
+        )
+    } else if traditional_chinese && plugin_current {
+        format!("完整繁中介面、數字字級與繁中寫作工具 {plugin_version} 已就緒")
     } else if !traditional_chinese {
         format!("目前語系為 {current_language}，需要修正為 zh-TW")
+    } else if plugin_installed {
+        format!("繁中寫作工具 {plugin_version} 版本過舊，需要更新至 {required_plugin_version}")
     } else {
         "繁體中文已啟用；尚待安裝繁中寫作工具".into()
     };
@@ -1137,6 +1199,9 @@ fn onlyoffice_tw_status_value() -> OnlyOfficeTwStatus {
         current_language,
         traditional_chinese,
         plugin_installed,
+        plugin_current,
+        plugin_version,
+        required_plugin_version,
         message,
     }
 }
@@ -1327,16 +1392,57 @@ fn probe_port(port: u16) -> bool {
     TcpStream::connect_timeout(&address, Duration::from_millis(350)).is_ok()
 }
 
+#[cfg(target_os = "macos")]
+fn magi_listener_working_directory(port: u16) -> Option<PathBuf> {
+    let listener = Command::new("/usr/sbin/lsof")
+        .args(["-nP", &format!("-iTCP:{port}"), "-sTCP:LISTEN", "-F", "p"])
+        .output()
+        .ok()?;
+    if !listener.status.success() {
+        return None;
+    }
+    let pid = String::from_utf8_lossy(&listener.stdout)
+        .lines()
+        .find_map(|line| line.strip_prefix('p'))
+        .filter(|value| value.chars().all(|character| character.is_ascii_digit()))?
+        .to_string();
+    let working_directory = Command::new("/usr/sbin/lsof")
+        .args(["-p", &pid, "-a", "-d", "cwd", "-F", "n"])
+        .output()
+        .ok()?;
+    if !working_directory.status.success() {
+        return None;
+    }
+    String::from_utf8_lossy(&working_directory.stdout)
+        .lines()
+        .find_map(|line| line.strip_prefix('n'))
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+}
+
+#[cfg(not(target_os = "macos"))]
+fn magi_listener_working_directory(_port: u16) -> Option<PathBuf> {
+    None
+}
+
 fn magi_status() -> MagiStatus {
     let main = probe_port(5002);
     let tools = probe_port(5003);
     let snapshot = process_snapshot().to_ascii_lowercase();
-    let v2 = magi_runtime_roots("MAGI_v2")
-        .iter()
-        .any(|root| snapshot.contains(&root.to_string_lossy().to_ascii_lowercase()));
-    let v3 = magi_runtime_roots("MAGI_v3")
-        .iter()
-        .any(|root| snapshot.contains(&root.to_string_lossy().to_ascii_lowercase()));
+    let listener_directories = [5002, 5003]
+        .into_iter()
+        .filter_map(magi_listener_working_directory)
+        .collect::<Vec<_>>();
+    let version_is_active = |name: &str| {
+        magi_runtime_roots(name).iter().any(|root| {
+            snapshot.contains(&root.to_string_lossy().to_ascii_lowercase())
+                || listener_directories
+                    .iter()
+                    .any(|directory| directory.starts_with(root))
+        })
+    };
+    let v2 = version_is_active("MAGI_v2");
+    let v3 = version_is_active("MAGI_v3");
     let (active_version, safe) = match (v2, v3) {
         (true, true) => ("conflict", false),
         (false, true) => ("v3", true),
@@ -1453,7 +1559,7 @@ fn repair_onlyoffice_traditional_chinese<R: Runtime>(
     let ai_destination = install_onlyoffice_ai_tw(&ai_locale_source)?;
     refresh_magi_bridge_config()?;
     let status = onlyoffice_tw_status_value();
-    if !status.traditional_chinese || !status.plugin_installed {
+    if !status.traditional_chinese || !status.plugin_installed || !status.plugin_current {
         return Err("繁體中文工具安裝後驗證失敗，請保留備份並回報".into());
     }
     let backup_message = locale_backup
@@ -2165,7 +2271,7 @@ fn write_magi_bridge_config(token: &str) -> Result<PathBuf, String> {
     fs::create_dir_all(&plugin_root).map_err(|error| error.to_string())?;
     let config_path = plugin_root.join("magi-bridge-config.js");
     let content = format!(
-        "window.OpenDeskMagiBridge = Object.freeze({{ url: \"http://127.0.0.1:{MAGI_BRIDGE_PORT}/v1/analyze\", token: \"{token}\" }});\n"
+        "window.OpenDeskMagiBridge = Object.freeze({{ url: \"http://127.0.0.1:{MAGI_BRIDGE_PORT}/v1/analyze\", healthUrl: \"http://127.0.0.1:{MAGI_BRIDGE_PORT}/v1/health\", token: \"{token}\" }});\n"
     );
     fs::write(&config_path, content).map_err(|error| error.to_string())?;
     #[cfg(unix)]
@@ -2260,6 +2366,13 @@ fn allowed_magi_bridge_origin(
     if origin == "null"
         || origin.starts_with("file://")
         || origin.starts_with("onlyoffice://plugin")
+        || origin.starts_with("ascdesktopeditor://")
+        || origin == "http://localhost"
+        || origin.starts_with("http://localhost:")
+        || origin == "http://127.0.0.1"
+        || origin.starts_with("http://127.0.0.1:")
+        || origin == "http://[::1]"
+        || origin.starts_with("http://[::1]:")
     {
         Some(origin.clone())
     } else {
@@ -2267,12 +2380,11 @@ fn allowed_magi_bridge_origin(
     }
 }
 
-fn write_http_json(
-    stream: &mut TcpStream,
+fn build_http_json_response(
     status: u16,
     origin: Option<&str>,
     body: &Value,
-) -> Result<(), String> {
+) -> Result<Vec<u8>, String> {
     let payload = serde_json::to_vec(body).map_err(|error| error.to_string())?;
     let reason = match status {
         200 => "OK",
@@ -2288,12 +2400,23 @@ fn write_http_json(
         .map(|value| format!("Access-Control-Allow-Origin: {value}\r\nVary: Origin\r\n"))
         .unwrap_or_default();
     let response = format!(
-        "HTTP/1.1 {status} {reason}\r\nContent-Type: application/json; charset=utf-8\r\nContent-Length: {}\r\n{cors}Access-Control-Allow-Headers: Authorization, Content-Type\r\nAccess-Control-Allow-Methods: POST, OPTIONS\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n",
+        "HTTP/1.1 {status} {reason}\r\nContent-Type: application/json; charset=utf-8\r\nContent-Length: {}\r\n{cors}Access-Control-Allow-Headers: Authorization, Content-Type\r\nAccess-Control-Allow-Methods: GET, POST, OPTIONS\r\nAccess-Control-Allow-Private-Network: true\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n",
         payload.len()
     );
+    let mut bytes = response.into_bytes();
+    bytes.extend_from_slice(&payload);
+    Ok(bytes)
+}
+
+fn write_http_json(
+    stream: &mut TcpStream,
+    status: u16,
+    origin: Option<&str>,
+    body: &Value,
+) -> Result<(), String> {
+    let response = build_http_json_response(status, origin, body)?;
     stream
-        .write_all(response.as_bytes())
-        .and_then(|_| stream.write_all(&payload))
+        .write_all(&response)
         .and_then(|_| stream.flush())
         .map_err(|error| error.to_string())
 }
@@ -2313,22 +2436,6 @@ fn handle_magi_bridge_connection(mut stream: TcpStream, token: &str) -> Result<(
     if method == "OPTIONS" {
         return write_http_json(&mut stream, 200, allowed_origin.as_deref(), &json!({}));
     }
-    if method != "POST" {
-        return write_http_json(
-            &mut stream,
-            405,
-            allowed_origin.as_deref(),
-            &json!({"ok": false, "error": "只接受 POST"}),
-        );
-    }
-    if path != "/v1/analyze" {
-        return write_http_json(
-            &mut stream,
-            404,
-            allowed_origin.as_deref(),
-            &json!({"ok": false, "error": "找不到此橋接功能"}),
-        );
-    }
     let authorized = headers
         .get("authorization")
         .map(|value| value == &format!("Bearer {token}"))
@@ -2339,6 +2446,34 @@ fn handle_magi_bridge_connection(mut stream: TcpStream, token: &str) -> Result<(
             401,
             allowed_origin.as_deref(),
             &json!({"ok": false, "error": "MAGI 橋接驗證失敗"}),
+        );
+    }
+    if method == "GET" && path == "/v1/health" {
+        return write_http_json(
+            &mut stream,
+            200,
+            allowed_origin.as_deref(),
+            &json!({
+                "ok": true,
+                "service": "OpenDesk TW MAGI bridge",
+                "version": env!("CARGO_PKG_VERSION")
+            }),
+        );
+    }
+    if method != "POST" {
+        return write_http_json(
+            &mut stream,
+            405,
+            allowed_origin.as_deref(),
+            &json!({"ok": false, "error": "只接受 GET 健康檢查或 POST 分析"}),
+        );
+    }
+    if path != "/v1/analyze" {
+        return write_http_json(
+            &mut stream,
+            404,
+            allowed_origin.as_deref(),
+            &json!({"ok": false, "error": "找不到此橋接功能"}),
         );
     }
     let request: MagiBridgeRequest = match serde_json::from_slice(&body) {
@@ -3076,7 +3211,7 @@ fn run_self_test<R: Runtime>(app: tauri::AppHandle<R>) -> SelfTestReport {
         TestGroup {
             name: "ONLYOFFICE 繁中寫作工具".into(),
             passed: usize::from(onlyoffice_tw.traditional_chinese)
-                + usize::from(onlyoffice_tw.plugin_installed),
+                + usize::from(onlyoffice_tw.plugin_current),
             total: 2,
         },
         TestGroup {
@@ -3177,6 +3312,15 @@ mod tests {
     }
 
     #[test]
+    fn rejects_stale_onlyoffice_plugin_versions() {
+        assert!(!plugin_version_is_current("1.5.0", "1.6.1"));
+        assert!(plugin_version_is_current("1.6.1", "1.6.1"));
+        assert!(plugin_version_is_current("1.7.0", "1.6.1"));
+        assert!(plugin_version_is_current("2.0", "1.6.1"));
+        assert!(!plugin_version_is_current("未知", "1.6.1"));
+    }
+
+    #[test]
     fn magi_bridge_accepts_only_local_editor_origins() {
         let mut headers = std::collections::HashMap::new();
         headers.insert("origin".into(), "null".into());
@@ -3186,9 +3330,31 @@ mod tests {
         );
         headers.insert("origin".into(), "onlyoffice://plugin".into());
         assert!(allowed_magi_bridge_origin(&headers).is_some());
+        headers.insert("origin".into(), "http://127.0.0.1:8080".into());
+        assert!(allowed_magi_bridge_origin(&headers).is_some());
+        headers.insert("origin".into(), "http://localhost:8080".into());
+        assert!(allowed_magi_bridge_origin(&headers).is_some());
+        headers.insert("origin".into(), "http://127.0.0.1.evil.example".into());
+        assert!(allowed_magi_bridge_origin(&headers).is_none());
         headers.insert("origin".into(), "https://example.com".into());
         assert!(allowed_magi_bridge_origin(&headers).is_none());
         assert_eq!(find_http_header_end(b"POST / HTTP/1.1\r\n\r\n{}"), Some(15));
+    }
+
+    #[test]
+    fn magi_bridge_supports_health_checks_and_private_network_preflight() {
+        let preflight = String::from_utf8(
+            build_http_json_response(200, Some("http://127.0.0.1:8080"), &json!({}))
+                .expect("應建立橋接預檢回應"),
+        )
+        .expect("橋接回應應為 UTF-8");
+        assert!(preflight.starts_with("HTTP/1.1 200 OK"));
+        assert!(preflight.contains("Access-Control-Allow-Origin: http://127.0.0.1:8080"));
+        assert!(preflight.contains("Access-Control-Allow-Private-Network: true"));
+        assert!(preflight.contains("Access-Control-Allow-Methods: GET, POST, OPTIONS"));
+        let source = include_str!("lib.rs");
+        assert!(source.contains("\"GET\" && path == \"/v1/health\""));
+        assert!(source.contains("OpenDesk TW MAGI bridge"));
     }
 
     #[test]
@@ -3215,10 +3381,9 @@ mod tests {
             .expect("外掛必須宣告支援的編輯器");
         assert_eq!(supported_editors.len(), 4);
         let code = include_str!("../resources/onlyoffice-tw-plugin/code.js");
-        assert!(!code.contains("align_Distributed"));
-        assert!(code.contains("Get_StartRangePos2"));
-        assert!(code.contains("SetSpacing(job.spacing)"));
-        assert!(code.contains("document.ForceRecalculate()"));
+        assert!(code.contains("AscCommon.align_Distributed"));
+        assert!(code.contains("paragraph.Paragraph.Vt(nativeDistributed)"));
+        assert!(!code.contains("document.ForceRecalculate()"));
         assert!(code.contains("AddToolbarMenuItem"));
         assert!(code.contains("id: \"home\""));
         assert!(code.contains("installWordCompatibilityShortcuts"));
@@ -3256,6 +3421,10 @@ mod tests {
         assert!(typography.contains("quoteStack"));
         assert!(typography.contains("calculateDistributedSpacing"));
         assert!(code.contains("window.fetch(bridge.url"));
+        assert!(code.contains("reloadMagiBridgeConfig"));
+        assert!(code.contains("verifyMagiBridge"));
+        assert!(code.contains("healthUrl"));
+        assert!(code.contains("無法連線到本機 MAGI 橋接"));
         assert!(code.contains("Authorization: `Bearer ${bridge.token}`"));
         assert!(!code.contains("https://"));
         assert!(!code.contains("XMLHttpRequest"));
@@ -3528,6 +3697,7 @@ mod tests {
         let status = onlyoffice_tw_status_value();
         assert!(status.traditional_chinese, "{}", status.message);
         assert!(status.plugin_installed, "{}", status.message);
+        assert!(status.plugin_current, "{}", status.message);
     }
 
     #[test]
@@ -3537,7 +3707,7 @@ mod tests {
         assert!(engine_status("LibreOffice").installed);
         let onlyoffice_tw = onlyoffice_tw_status_value();
         assert!(
-            onlyoffice_tw.traditional_chinese && onlyoffice_tw.plugin_installed,
+            onlyoffice_tw.traditional_chinese && onlyoffice_tw.plugin_current,
             "{}",
             onlyoffice_tw.message
         );
