@@ -68,24 +68,32 @@ assert.ok(
 
 let keydownHandler;
 let toolbarDefinition;
-let distributedValue;
-let internalDistributedValue;
+let distributedSpacing;
+let distributedJc;
 let lineSpacing;
 let appliedStyle;
 let tracked = false;
 let nativeComments = 0;
 let copiedFormatting = false;
 let pastedFormatting = false;
+let appliedFont;
 const messages = [];
 const toolbarHandlers = new Map();
 function makeParagraph(initialText) {
   let text = initialText;
   return {
+    Ha: { ha: 0, Ie: 53 },
     GetText() {
       return text;
     },
     GetRange(start, end) {
       return {
+        GetTextPr() {
+          return { GetFontSize: () => 22 };
+        },
+        SetSpacing(value) {
+          distributedSpacing = value;
+        },
         Delete() {
           text = text.slice(0, start) + text.slice(end);
           return true;
@@ -96,6 +104,9 @@ function makeParagraph(initialText) {
           return true;
         },
       };
+    },
+    SetJc(value) {
+      distributedJc = value;
     },
     SetStyle(style) {
       appliedStyle = style;
@@ -135,12 +146,12 @@ const selectionRange = {
     return { GetVertAlign: () => "baseline" };
   },
   SetVertAlign() {},
+  SetFontFamily(value) {
+    appliedFont = value;
+  },
 };
 const apiDocument = {
   Document: {
-    Vt(value) {
-      internalDistributedValue = value;
-    },
     Dne() {
       copiedFormatting = true;
     },
@@ -203,11 +214,7 @@ const plugin = {
 const asc = {
   plugin,
   scope: {},
-  editor: {
-    put_PrAlign(value) {
-      distributedValue = value;
-    },
-  },
+  editor: {},
 };
 const pluginWindow = {
   Asc: asc,
@@ -246,6 +253,7 @@ assert.deepEqual(
   Array.from(homeTab.items, (item) => item.id),
   [
     "opendesk-distributed",
+    "opendesk-taiwan-fonts",
     "opendesk-complete-pairs",
     "opendesk-renumber-headings",
     "opendesk-home-magi-summary",
@@ -273,9 +281,10 @@ keydownHandler({
   },
   stopPropagation() {},
 });
-assert.equal(distributedValue, 7);
+assert.ok(distributedSpacing > 0);
+assert.equal(distributedJc, "left");
 assert.equal(prevented, true);
-distributedValue = undefined;
+distributedSpacing = undefined;
 keydownHandler({
   key: "j",
   code: "KeyJ",
@@ -288,10 +297,11 @@ keydownHandler({
   preventDefault() {},
   stopPropagation() {},
 });
-assert.equal(distributedValue, 7);
+assert.ok(distributedSpacing > 0);
 asc.editor = undefined;
+distributedSpacing = undefined;
 toolbarHandlers.get("opendesk-distributed")();
-assert.equal(internalDistributedValue, 7);
+assert.ok(distributedSpacing > 0);
 
 function press(overrides) {
   let prevented = false;
@@ -330,6 +340,8 @@ assert.equal(press({ key: "c", code: "KeyC", ctrlKey: true, altKey: true }), tru
 assert.equal(copiedFormatting, true);
 assert.equal(press({ key: "v", code: "KeyV", ctrlKey: true, altKey: true }), true);
 assert.equal(pastedFormatting, true);
+toolbarHandlers.get("opendesk-font-pmingliu")();
+assert.equal(appliedFont, "PMingLiU");
 
 toolbarHandlers.get("opendesk-renumber-headings")();
 assert.equal(headingParagraphs[0].GetText(), "壹、第一章");

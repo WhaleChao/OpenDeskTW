@@ -17,6 +17,7 @@ use std::sync::{Mutex, OnceLock};
 use std::thread;
 use std::time::{Duration, Instant};
 use tauri::{Manager, Runtime};
+use tungstenite::{connect, Message};
 use zip::{ZipArchive, ZipWriter};
 
 #[derive(Serialize, Clone)]
@@ -959,6 +960,142 @@ fn engine_status(name: &str) -> EngineStatus {
 const ONLYOFFICE_TW_PLUGIN_FOLDER: &str = "{5CBF7C74-7021-4E8C-93F3-5A6C20260722}";
 const ONLYOFFICE_BUILTIN_AI_PLUGIN_FOLDER: &str = "{9DC93CDB-B576-4F0C-B55E-FCC9C48DD007}";
 const ONLYOFFICE_AI_TW_PLUGIN_FOLDER: &str = "{A81F4C5E-5DB6-4F64-B276-CCF30FCF2873}";
+const ONLYOFFICE_HOME_TW_PATCH: &str = include_str!("../resources/onlyoffice-home-tw.js");
+
+fn available_loopback_port() -> Result<u16, String> {
+    let listener = TcpListener::bind("127.0.0.1:0").map_err(|error| error.to_string())?;
+    listener
+        .local_addr()
+        .map(|address| address.port())
+        .map_err(|error| error.to_string())
+}
+
+fn onlyoffice_debug_targets(port: u16) -> Result<Vec<Value>, String> {
+    let address = SocketAddr::from(([127, 0, 0, 1], port));
+    let mut stream = TcpStream::connect_timeout(&address, Duration::from_millis(300))
+        .map_err(|error| error.to_string())?;
+    stream
+        .set_read_timeout(Some(Duration::from_millis(500)))
+        .map_err(|error| error.to_string())?;
+    stream
+        .write_all(
+            format!(
+                "GET /json/list HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\n\r\n"
+            )
+            .as_bytes(),
+        )
+        .map_err(|error| error.to_string())?;
+    let mut response = Vec::new();
+    let mut buffer = [0u8; 8192];
+    loop {
+        match stream.read(&mut buffer) {
+            Ok(0) => break,
+            Ok(read) => response.extend_from_slice(&buffer[..read]),
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                ) =>
+            {
+                break;
+            }
+            Err(error) => return Err(error.to_string()),
+        }
+    }
+    let body_start = response
+        .windows(4)
+        .position(|window| window == b"\r\n\r\n")
+        .map(|index| index + 4)
+        .ok_or("ONLYOFFICE 除錯介面回應格式不正確")?;
+    serde_json::from_slice::<Vec<Value>>(&response[body_start..]).map_err(|error| error.to_string())
+}
+
+fn patch_onlyoffice_home(port: u16) -> Result<usize, String> {
+    let targets = onlyoffice_debug_targets(port)?;
+    let mut patched = 0;
+    for target in targets {
+        let is_home = target
+            .get("url")
+            .and_then(Value::as_str)
+            .map(|url| url.contains("/login/index.html"))
+            .unwrap_or(false);
+        if !is_home {
+            continue;
+        }
+        let Some(websocket_url) = target.get("webSocketDebuggerUrl").and_then(Value::as_str) else {
+            continue;
+        };
+        let (mut socket, _) = connect(websocket_url).map_err(|error| error.to_string())?;
+        let command = json!({
+            "id": 1,
+            "method": "Runtime.evaluate",
+            "params": {
+                "expression": ONLYOFFICE_HOME_TW_PATCH,
+                "awaitPromise": true,
+                "returnByValue": true
+            }
+        });
+        socket
+            .send(Message::Text(command.to_string().into()))
+            .map_err(|error| error.to_string())?;
+        let _ = socket.close(None);
+        patched += 1;
+    }
+    Ok(patched)
+}
+
+fn install_onlyoffice_home_patch_async(port: u16) {
+    thread::spawn(move || {
+        for _ in 0..120 {
+            if patch_onlyoffice_home(port).unwrap_or(0) > 0 {
+                return;
+            }
+            thread::sleep(Duration::from_millis(250));
+        }
+    });
+}
+
+#[cfg(target_os = "macos")]
+fn expose_licensed_microsoft_office_fonts() -> Result<usize, String> {
+    use std::os::unix::fs::symlink;
+
+    let Some(home) = dirs::home_dir() else {
+        return Err("找不到使用者字型資料夾".into());
+    };
+    let destination_root = home.join("Library/Fonts");
+    fs::create_dir_all(&destination_root).map_err(|error| error.to_string())?;
+    let source_root = Path::new("/Applications/Microsoft Word.app/Contents/Resources/DFonts");
+    let fonts = [
+        ("mingliu.ttc", "OpenDeskTW-Microsoft-mingliu.ttc"),
+        ("mingliub.ttc", "OpenDeskTW-Microsoft-mingliub.ttc"),
+        ("Kaiti.ttf", "OpenDeskTW-Microsoft-Kaiti.ttf"),
+    ];
+    let mut available = 0;
+    for (source_name, destination_name) in fonts {
+        let source = source_root.join(source_name);
+        if !source.is_file() {
+            continue;
+        }
+        let destination = destination_root.join(destination_name);
+        match fs::symlink_metadata(&destination) {
+            Ok(metadata) if metadata.file_type().is_symlink() => {
+                if fs::read_link(&destination)
+                    .map(|linked| linked == source)
+                    .unwrap_or(false)
+                {
+                    available += 1;
+                }
+            }
+            Ok(_) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                symlink(&source, &destination).map_err(|error| error.to_string())?;
+                available += 1;
+            }
+            Err(error) => return Err(error.to_string()),
+        }
+    }
+    Ok(available)
+}
 
 fn is_traditional_onlyoffice_locale(value: &str) -> bool {
     let locale = value.trim().replace('_', "-").to_ascii_lowercase();
@@ -1434,6 +1571,10 @@ fn repair_onlyoffice_traditional_chinese<R: Runtime>(
     let locale_backup = repair_macos_onlyoffice_locale()?;
     #[cfg(not(target_os = "macos"))]
     let locale_backup: Option<PathBuf> = None;
+    #[cfg(target_os = "macos")]
+    let licensed_fonts = expose_licensed_microsoft_office_fonts()?;
+    #[cfg(not(target_os = "macos"))]
+    let licensed_fonts = 0usize;
 
     let plugin_source = resource_path(&app, "resources/onlyoffice-tw-plugin")?;
     let ai_locale_source = resource_path(&app, "resources/onlyoffice-ai-tw-locale")?;
@@ -1463,8 +1604,8 @@ fn repair_onlyoffice_traditional_chinese<R: Runtime>(
         path: plugin_destination.to_string_lossy().to_string(),
         file_name: "繁中寫作工具（全能文件）".into(),
         message: format!(
-            "已固定 ONLYOFFICE 為 zh-TW、補齊繁中介面、安裝台灣繁中 AI 相容副本（{}）並鎖定數字字級{backup_message}。重新開啟 ONLYOFFICE 後，可在「常用」工具列使用分散對齊（Ctrl+Shift+J／⇧⌘J），在「全能文件」使用繁中工具，並以「MAGI」頁籤呼叫本機 MAGI。",
-            ai_destination.display()
+            "已固定 ONLYOFFICE 為 zh-TW、補齊首頁與 AI 的臺灣繁中介面、安裝台灣繁中 AI 相容副本（{}）、連結 {licensed_fonts} 個本機 Office 授權字型並鎖定數字字級{backup_message}。重新開啟 ONLYOFFICE 後，可在「常用」工具列使用分散對齊（Ctrl+Shift+J／⇧⌘J）與臺灣字型，在「全能文件」使用繁中工具，並以「MAGI」頁籤呼叫本機 MAGI。",
+            ai_destination.display(),
         ),
     })
 }
@@ -2696,11 +2837,22 @@ fn create_backup(source: &Path) -> Result<PathBuf, String> {
 fn launch_document(path: &Path, engine: &str) -> Result<(), String> {
     let _executable =
         engine_executable(engine).ok_or_else(|| format!("找不到 {engine}，請先安裝桌面編輯器"))?;
+    let onlyoffice_was_running = engine == "ONLYOFFICE" && onlyoffice_is_running();
     if engine == "ONLYOFFICE" {
         prepare_onlyoffice_locale_for_launch()?;
     }
     #[cfg(target_os = "macos")]
     {
+        if engine == "ONLYOFFICE" && !onlyoffice_was_running {
+            let port = available_loopback_port()?;
+            Command::new(&_executable)
+                .arg(format!("--remote-debugging-port={port}"))
+                .arg(path)
+                .spawn()
+                .map_err(|error| error.to_string())?;
+            install_onlyoffice_home_patch_async(port);
+            return Ok(());
+        }
         let app = if engine == "ONLYOFFICE" {
             "/Applications/ONLYOFFICE.app"
         } else {
@@ -2717,6 +2869,16 @@ fn launch_document(path: &Path, engine: &str) -> Result<(), String> {
         let mut command = Command::new(_executable);
         if engine == "ONLYOFFICE" {
             command.arg("--keeplang:zh-TW");
+            if !onlyoffice_was_running {
+                let port = available_loopback_port()?;
+                command.arg(format!("--remote-debugging-port={port}"));
+                command
+                    .arg(path)
+                    .spawn()
+                    .map_err(|error| error.to_string())?;
+                install_onlyoffice_home_patch_async(port);
+                return Ok(());
+            }
         }
         command
             .arg(path)
@@ -3192,7 +3354,7 @@ mod tests {
     }
 
     #[test]
-    fn bundled_onlyoffice_plugin_uses_native_distributed_alignment() {
+    fn bundled_onlyoffice_plugin_persists_distributed_alignment_and_taiwan_fonts() {
         let config = include_str!("../resources/onlyoffice-tw-plugin/config.json");
         let value: Value = serde_json::from_str(config).expect("外掛設定必須是有效 JSON");
         assert_eq!(
@@ -3215,9 +3377,9 @@ mod tests {
             .expect("外掛必須宣告支援的編輯器");
         assert_eq!(supported_editors.len(), 4);
         let code = include_str!("../resources/onlyoffice-tw-plugin/code.js");
-        assert!(code.contains("put_PrAlign"));
-        assert!(code.contains("align_Distributed"));
-        assert!(code.contains("document.Document.Vt(distributed)"));
+        assert!(code.contains("entireRange.SetSpacing(spacingTwips)"));
+        assert!(code.contains("(widthMm * 1440) / 25.4"));
+        assert!(code.contains("paragraph.SetJc?.(\"both\")"));
         assert!(code.contains("AddToolbarMenuItem"));
         assert!(code.contains("id: \"home\""));
         assert!(code.contains("installWordCompatibilityShortcuts"));
@@ -3230,7 +3392,11 @@ mod tests {
         assert!(code.contains("opendesk-normalize-punctuation"));
         assert!(code.contains("opendesk-font-size"));
         assert!(code.contains("range.SetFontSize(Asc.scope.numericFontSize)"));
+        assert!(code.contains("opendesk-taiwan-fonts"));
+        assert!(code.contains("name: \"PMingLiU\""));
+        assert!(code.contains("range.SetFontFamily(Asc.scope.taiwanFontName)"));
         assert!(code.contains("OpenDeskTwUiPatch"));
+        let home_tw = include_str!("../resources/onlyoffice-home-tw.js");
         let typography = include_str!("../resources/onlyoffice-tw-plugin/typography.js");
         let ui_patch = include_str!("../resources/onlyoffice-tw-plugin/ui-patch.js");
         let ui_overrides = include_str!("../resources/onlyoffice-tw-plugin/ui-overrides.js");
@@ -3261,6 +3427,9 @@ mod tests {
         assert!(ai_tw_runtime.contains("Object.defineProperty(plugin, \"tr\""));
         assert!(ai_tw_runtime.contains("\"Chatbot\": \"聊天機器人\""));
         assert!(magi_result.contains("結果會直接顯示在這裡，不會開啟網頁"));
+        assert!(home_tw.contains("[\"樣板\", \"範本\"]"));
+        assert!(home_tw.contains("[\"AI 智能体\", \"AI 助理\"]"));
+        assert!(home_tw.contains("[\"File name\", \"檔案名稱\"]"));
         assert!(!ui_patch.contains("fetch("));
     }
 
@@ -3496,6 +3665,16 @@ mod tests {
         let value = magi_http_request(api_key, tenant, body).expect("MAGI LIVE 呼叫應成功");
         let reply = adapt_magi_response(&value, &status.active_version).expect("應能解析回應");
         assert!(!reply.text.trim().is_empty());
+    }
+
+    #[test]
+    #[ignore = "需要以 --remote-debugging-port 啟動本機 ONLYOFFICE"]
+    fn live_onlyoffice_home_traditional_chinese_patch() {
+        let port = std::env::var("OPENDESK_ONLYOFFICE_DEBUG_PORT")
+            .unwrap_or_else(|_| "9231".into())
+            .parse::<u16>()
+            .expect("除錯連接埠必須是數字");
+        assert!(patch_onlyoffice_home(port).expect("首頁繁中熱修應能注入") >= 1);
     }
 
     #[cfg(target_os = "macos")]
