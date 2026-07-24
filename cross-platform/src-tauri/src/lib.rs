@@ -5,7 +5,7 @@ use chrono::Local;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fs::{self, File};
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
@@ -107,6 +107,102 @@ struct WordReport {
     print_warnings: Vec<String>,
 }
 
+#[derive(Serialize, Deserialize, Clone, Debug)]
+struct RecoverySession {
+    id: String,
+    path: String,
+    file_name: String,
+    engine: String,
+    opened_at: String,
+    snapshot_path: String,
+    snapshot_at: String,
+    snapshots: usize,
+}
+
+#[derive(Serialize)]
+struct RecoveryOverview {
+    sessions: Vec<RecoverySession>,
+    directory: String,
+}
+
+#[derive(Serialize)]
+struct MailMergePreview {
+    headers: Vec<String>,
+    row_count: usize,
+    sample_rows: Vec<BTreeMap<String, String>>,
+}
+
+#[derive(Serialize)]
+struct MailMergeResult {
+    created: Vec<String>,
+    skipped: usize,
+    message: String,
+}
+
+#[derive(Serialize, Clone, Debug, PartialEq, Eq)]
+struct AccessibilityIssue {
+    id: String,
+    severity: String,
+    category: String,
+    message: String,
+    location: String,
+    repairable: bool,
+}
+
+#[derive(Serialize)]
+struct AccessibilityReport {
+    file_name: String,
+    score: usize,
+    issues: Vec<AccessibilityIssue>,
+    passed_checks: Vec<String>,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+struct CitationSource {
+    id: String,
+    source_type: String,
+    author: String,
+    title: String,
+    year: String,
+    publisher: String,
+    container_title: String,
+    volume: String,
+    issue: String,
+    pages: String,
+    doi: String,
+    url: String,
+    accessed: String,
+}
+
+#[derive(Serialize)]
+struct CitationText {
+    inline: String,
+    bibliography: Vec<String>,
+}
+
+#[derive(Serialize)]
+struct ReadingParagraph {
+    index: usize,
+    heading_level: Option<usize>,
+    text: String,
+}
+
+#[derive(Serialize)]
+struct ReviewComment {
+    id: String,
+    author: String,
+    date: String,
+    text: String,
+    mentions: Vec<String>,
+}
+
+#[derive(Serialize)]
+struct WordReadingContent {
+    file_name: String,
+    paragraphs: Vec<ReadingParagraph>,
+    comments: Vec<ReviewComment>,
+}
+
 #[derive(Serialize)]
 struct ActionResult {
     path: String,
@@ -163,6 +259,8 @@ enum AcroPdfServerError {
 static ACROPDF_SERVER: OnceLock<Mutex<Option<AcroPdfServer>>> = OnceLock::new();
 static ACROPDF_REQUEST_ID: AtomicU64 = AtomicU64::new(1);
 static MAGI_BRIDGE_TOKEN: OnceLock<String> = OnceLock::new();
+static RECOVERY_SESSIONS: OnceLock<Mutex<()>> = OnceLock::new();
+static CITATION_SOURCES: OnceLock<Mutex<()>> = OnceLock::new();
 const MAGI_BRIDGE_PORT: u16 = 41_827;
 
 impl AcroPdfServer {
@@ -1874,6 +1972,780 @@ fn build_word_report(path: &Path) -> Result<WordReport, String> {
     })
 }
 
+fn build_accessibility_report(path: &Path) -> Result<AccessibilityReport, String> {
+    let file = File::open(path).map_err(|error| error.to_string())?;
+    let mut archive = ZipArchive::new(file).map_err(|_| "無法讀取 Word 文件結構")?;
+    let names = archive.file_names().map(String::from).collect::<Vec<_>>();
+    let document = zip_text(&mut archive, "word/document.xml");
+    let styles = zip_text(&mut archive, "word/styles.xml");
+    let core = zip_text(&mut archive, "docProps/core.xml");
+    if document.is_empty() {
+        return Err("Word 文件缺少 document.xml".into());
+    }
+    let mut issues = Vec::new();
+    let drawing_expression = Regex::new(r#"<wp:docPr\b[^>]*>"#).unwrap();
+    for (index, drawing) in drawing_expression.find_iter(&document).enumerate() {
+        if !Regex::new(r#"(?:descr|title)=\"[^\"]+\""#)
+            .unwrap()
+            .is_match(drawing.as_str())
+        {
+            issues.push(AccessibilityIssue {
+                id: format!("image-alt-{}", index + 1),
+                severity: "error".into(),
+                category: "替代文字".into(),
+                message: "圖片或繪圖物件缺少可供螢幕閱讀器使用的替代文字".into(),
+                location: format!("第 {} 個圖片／繪圖物件", index + 1),
+                repairable: false,
+            });
+        }
+    }
+    let table_expression = Regex::new(r#"(?s)<w:tbl(?:\s[^>]*)?>.*?</w:tbl>"#).unwrap();
+    for (index, table) in table_expression.find_iter(&document).enumerate() {
+        if !table.as_str().contains("<w:tblHeader") {
+            issues.push(AccessibilityIssue {
+                id: format!("table-header-{}", index + 1),
+                severity: "error".into(),
+                category: "表格".into(),
+                message: "第一列尚未標示為標題列，跨頁及螢幕閱讀時無法辨識欄位".into(),
+                location: format!("第 {} 個表格", index + 1),
+                repairable: true,
+            });
+        }
+    }
+    if !document.contains("<w:lang") && !styles.contains("<w:lang") {
+        issues.push(AccessibilityIssue {
+            id: "document-language".into(),
+            severity: "error".into(),
+            category: "文件語言".into(),
+            message: "尚未設定繁體中文校訂語言".into(),
+            location: "整份文件".into(),
+            repairable: true,
+        });
+    }
+    let title_expression = Regex::new(r#"(?s)<dc:title(?:\s[^>]*)?>(.*?)</dc:title>"#).unwrap();
+    let title = title_expression
+        .captures(&core)
+        .and_then(|capture| capture.get(1))
+        .map(|value| decode_xml_text(value.as_str()))
+        .unwrap_or_default();
+    if title.trim().is_empty() {
+        issues.push(AccessibilityIssue {
+            id: "document-title".into(),
+            severity: "warning".into(),
+            category: "文件屬性".into(),
+            message: "文件標題屬性為空白，輔助工具難以辨識文件用途".into(),
+            location: "檔案 → 文件屬性".into(),
+            repairable: true,
+        });
+    }
+    let headings = detect_word_headings(&document);
+    for window in headings.windows(2) {
+        if window[1].level > window[0].level + 1 {
+            issues.push(AccessibilityIssue {
+                id: format!("heading-skip-{}", window[1].paragraph),
+                severity: "error".into(),
+                category: "標題結構".into(),
+                message: format!(
+                    "標題層級由 H{} 跳到 H{}，請補上中間層級或調整樣式",
+                    window[0].level, window[1].level
+                ),
+                location: format!("第 {} 段：{}", window[1].paragraph, window[1].text),
+                repairable: false,
+            });
+        }
+    }
+    let paragraph_expression = Regex::new(r#"(?s)<w:p(?:\s[^>]*)?>.*?</w:p>"#).unwrap();
+    let vague_links = ["這裡", "按此", "點這裡", "連結", "click here", "read more"];
+    for (index, paragraph) in paragraph_expression.find_iter(&document).enumerate() {
+        if !paragraph.as_str().contains("<w:hyperlink") {
+            continue;
+        }
+        let text = paragraph_text(paragraph.as_str()).trim().to_lowercase();
+        if vague_links.iter().any(|value| text == *value) {
+            issues.push(AccessibilityIssue {
+                id: format!("link-text-{}", index + 1),
+                severity: "warning".into(),
+                category: "連結文字".into(),
+                message: "連結文字沒有描述目的；請改為可獨立理解的名稱".into(),
+                location: format!("第 {} 段：{}", index + 1, text),
+                repairable: false,
+            });
+        }
+    }
+    if !names.iter().any(|name| name.starts_with("word/media/")) {
+        // A document without images does not need an alternate-text issue.
+    }
+    let deduction = issues
+        .iter()
+        .map(|issue| if issue.severity == "error" { 12 } else { 5 })
+        .sum::<usize>();
+    let mut passed_checks = Vec::new();
+    if !issues.iter().any(|issue| issue.category == "替代文字") {
+        passed_checks.push("所有圖片／繪圖物件都有替代文字".into());
+    }
+    if !issues.iter().any(|issue| issue.category == "表格") {
+        passed_checks.push("所有表格都已標示標題列".into());
+    }
+    if !issues.iter().any(|issue| issue.category == "文件語言") {
+        passed_checks.push("文件校訂語言已設定".into());
+    }
+    if !issues.iter().any(|issue| issue.category == "標題結構") {
+        passed_checks.push("標題層級沒有跳號".into());
+    }
+    if !issues.iter().any(|issue| issue.category == "連結文字") {
+        passed_checks.push("未發現含糊的連結文字".into());
+    }
+    Ok(AccessibilityReport {
+        file_name: path
+            .file_name()
+            .and_then(|value| value.to_str())
+            .unwrap_or("Word 文件")
+            .into(),
+        score: 100usize.saturating_sub(deduction),
+        issues,
+        passed_checks,
+    })
+}
+
+#[tauri::command]
+fn word_accessibility_report(path: String) -> Result<AccessibilityReport, String> {
+    let source = PathBuf::from(path);
+    if !source.is_file() {
+        return Err("找不到 Word 文件".into());
+    }
+    build_accessibility_report(&source)
+}
+
+fn mark_table_header_rows(document: &str) -> (String, usize) {
+    let table_expression = Regex::new(r#"(?s)<w:tbl(?:\s[^>]*)?>.*?</w:tbl>"#).unwrap();
+    let row_expression = Regex::new(r#"(?s)<w:tr(?:\s[^>]*)?>.*?</w:tr>"#).unwrap();
+    let row_properties = Regex::new(r#"<w:trPr(?:\s[^>]*)?>"#).unwrap();
+    let mut replacements = Vec::new();
+    for table in table_expression.find_iter(document) {
+        if table.as_str().contains("<w:tblHeader") {
+            continue;
+        }
+        let Some(row) = row_expression.find(table.as_str()) else {
+            continue;
+        };
+        let mut next = row.as_str().to_string();
+        if let Some(properties) = row_properties.find(&next) {
+            next.insert_str(properties.end(), "<w:tblHeader/>");
+        } else if let Some(opening) = next.find('>') {
+            next.insert_str(opening + 1, "<w:trPr><w:tblHeader/></w:trPr>");
+        }
+        replacements.push((
+            (table.start() + row.start())..(table.start() + row.end()),
+            next,
+        ));
+    }
+    let count = replacements.len();
+    let mut output = document.to_string();
+    for (range, replacement) in replacements.into_iter().rev() {
+        output.replace_range(range, &replacement);
+    }
+    (output, count)
+}
+
+fn ensure_traditional_chinese_language(styles: &str) -> (String, bool) {
+    if styles.contains("<w:lang") {
+        return (styles.to_string(), false);
+    }
+    let language = r#"<w:lang w:val="zh-TW" w:eastAsia="zh-TW" w:bidi="zh-TW"/>"#;
+    let empty_run_properties = Regex::new(r#"<w:rPr(?:\s[^>]*)?/>"#).unwrap();
+    if empty_run_properties.is_match(styles) {
+        return (
+            empty_run_properties
+                .replace(styles, format!("<w:rPr>{language}</w:rPr>"))
+                .into_owned(),
+            true,
+        );
+    }
+    let run_properties = Regex::new(r#"<w:rPr(?:\s[^>]*)?>"#).unwrap();
+    if let Some(value) = run_properties.find(styles) {
+        let mut output = styles.to_string();
+        output.insert_str(value.end(), language);
+        return (output, true);
+    }
+    (styles.to_string(), false)
+}
+
+fn ensure_core_title(core: &str, title: &str) -> (String, bool) {
+    let expression = Regex::new(r#"(?s)<dc:title(?:\s[^>]*)?>(.*?)</dc:title>"#).unwrap();
+    if let Some(capture) = expression.captures(core) {
+        if capture
+            .get(1)
+            .map(|value| !decode_xml_text(value.as_str()).trim().is_empty())
+            .unwrap_or(false)
+        {
+            return (core.to_string(), false);
+        }
+        return (
+            expression
+                .replace(
+                    core,
+                    format!("<dc:title>{}</dc:title>", encode_xml_text(title)),
+                )
+                .into_owned(),
+            true,
+        );
+    }
+    if let Some(position) = core.rfind("</cp:coreProperties>") {
+        let mut output = core.to_string();
+        output.insert_str(
+            position,
+            &format!("<dc:title>{}</dc:title>", encode_xml_text(title)),
+        );
+        return (output, true);
+    }
+    (core.to_string(), false)
+}
+
+#[tauri::command]
+fn repair_word_accessibility(path: String, destination: String) -> Result<ActionResult, String> {
+    let source = PathBuf::from(path);
+    if !source.is_file() {
+        return Err("找不到 Word 文件".into());
+    }
+    let target = PathBuf::from(destination);
+    let title = source
+        .file_stem()
+        .and_then(|value| value.to_str())
+        .unwrap_or("Word 文件")
+        .to_string();
+    let mut repairs = 0usize;
+    rewrite_word_package(&source, &target, |name, xml| match name {
+        "word/document.xml" => {
+            let (next, count) = mark_table_header_rows(xml);
+            repairs += count;
+            Some(next)
+        }
+        "word/styles.xml" => {
+            let (next, changed) = ensure_traditional_chinese_language(xml);
+            repairs += usize::from(changed);
+            Some(next)
+        }
+        "docProps/core.xml" => {
+            let (next, changed) = ensure_core_title(xml, &title);
+            repairs += usize::from(changed);
+            Some(next)
+        }
+        _ => None,
+    })?;
+    if repairs == 0 {
+        return Err(
+            "沒有可安全自動修復的項目；其餘問題需要人工補寫替代文字或調整標題／連結".into(),
+        );
+    }
+    Ok(ActionResult {
+        path: target.to_string_lossy().to_string(),
+        file_name: target
+            .file_name()
+            .and_then(|value| value.to_str())
+            .unwrap_or("無障礙修復.docx")
+            .into(),
+        message: format!(
+            "已在新副本安全修復 {repairs} 項：文件語言、標題屬性與表格標題列；圖片替代文字仍保留給人工描述"
+        ),
+    })
+}
+
+fn citation_store_path() -> Result<PathBuf, String> {
+    let root = data_root()?.join("Citations");
+    fs::create_dir_all(&root).map_err(|error| error.to_string())?;
+    Ok(root.join("sources.json"))
+}
+
+fn read_citation_sources_unlocked() -> Result<Vec<CitationSource>, String> {
+    let path = citation_store_path()?;
+    if !path.is_file() {
+        return Ok(Vec::new());
+    }
+    let content = fs::read_to_string(path).map_err(|error| error.to_string())?;
+    serde_json::from_str(&content).map_err(|error| format!("引文來源資料格式錯誤：{error}"))
+}
+
+fn write_citation_sources_unlocked(sources: &[CitationSource]) -> Result<(), String> {
+    let path = citation_store_path()?;
+    let temporary = path.with_extension("json.tmp");
+    fs::write(
+        &temporary,
+        serde_json::to_vec_pretty(sources).map_err(|error| error.to_string())?,
+    )
+    .map_err(|error| error.to_string())?;
+    fs::rename(temporary, path).map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn citation_sources() -> Result<Vec<CitationSource>, String> {
+    let _guard = CITATION_SOURCES
+        .get_or_init(|| Mutex::new(()))
+        .lock()
+        .map_err(|_| "引文來源目前無法鎖定")?;
+    read_citation_sources_unlocked()
+}
+
+#[tauri::command]
+fn save_citation_source(mut source: CitationSource) -> Result<CitationSource, String> {
+    if source.title.trim().is_empty() {
+        return Err("來源標題不能留白".into());
+    }
+    if source.author.trim().is_empty() {
+        return Err("作者／機關不能留白".into());
+    }
+    let _guard = CITATION_SOURCES
+        .get_or_init(|| Mutex::new(()))
+        .lock()
+        .map_err(|_| "引文來源目前無法鎖定")?;
+    if source.id.trim().is_empty() {
+        source.id = format!(
+            "src-{}-{}",
+            Local::now().format("%Y%m%d%H%M%S%3f"),
+            std::process::id()
+        );
+    }
+    if source.source_type.trim().is_empty() {
+        source.source_type = "book".into();
+    }
+    let mut sources = read_citation_sources_unlocked().unwrap_or_default();
+    if let Some(existing) = sources.iter_mut().find(|value| value.id == source.id) {
+        *existing = source.clone();
+    } else {
+        sources.push(source.clone());
+    }
+    sources.sort_by(|left, right| {
+        left.author
+            .to_lowercase()
+            .cmp(&right.author.to_lowercase())
+            .then(left.year.cmp(&right.year))
+    });
+    write_citation_sources_unlocked(&sources)?;
+    Ok(source)
+}
+
+#[tauri::command]
+fn delete_citation_source(id: String) -> Result<(), String> {
+    let _guard = CITATION_SOURCES
+        .get_or_init(|| Mutex::new(()))
+        .lock()
+        .map_err(|_| "引文來源目前無法鎖定")?;
+    let mut sources = read_citation_sources_unlocked()?;
+    sources.retain(|value| value.id != id);
+    write_citation_sources_unlocked(&sources)
+}
+
+fn short_author(author: &str) -> String {
+    author
+        .split([';', '；', '&'])
+        .next()
+        .unwrap_or(author)
+        .split(',')
+        .next()
+        .unwrap_or(author)
+        .trim()
+        .to_string()
+}
+
+fn citation_locator(source: &CitationSource) -> String {
+    if !source.doi.trim().is_empty() {
+        if source.doi.starts_with("http") {
+            source.doi.trim().to_string()
+        } else {
+            format!("https://doi.org/{}", source.doi.trim())
+        }
+    } else {
+        source.url.trim().to_string()
+    }
+}
+
+fn format_source(source: &CitationSource, style: &str) -> String {
+    let locator = citation_locator(source);
+    match style {
+        "mla9" => {
+            let mut parts = vec![format!(
+                "{}. “{}.”",
+                source.author.trim(),
+                source.title.trim()
+            )];
+            if !source.container_title.trim().is_empty() {
+                parts.push(format!("{},", source.container_title.trim()));
+            }
+            if !source.volume.trim().is_empty() {
+                parts.push(format!("vol. {},", source.volume.trim()));
+            }
+            if !source.issue.trim().is_empty() {
+                parts.push(format!("no. {},", source.issue.trim()));
+            }
+            if !source.publisher.trim().is_empty() {
+                parts.push(format!("{},", source.publisher.trim()));
+            }
+            if !source.year.trim().is_empty() {
+                parts.push(format!("{},", source.year.trim()));
+            }
+            if !source.pages.trim().is_empty() {
+                parts.push(format!("pp. {}.", source.pages.trim()));
+            }
+            if !locator.is_empty() {
+                parts.push(locator);
+            }
+            parts.join(" ")
+        }
+        "chicago" => {
+            let mut text = format!(
+                "{}. {}. {}.",
+                source.author.trim(),
+                source.year.trim(),
+                source.title.trim()
+            );
+            if !source.container_title.trim().is_empty() {
+                text.push_str(&format!(" {}.", source.container_title.trim()));
+            }
+            if !source.publisher.trim().is_empty() {
+                text.push_str(&format!(" {}.", source.publisher.trim()));
+            }
+            if !locator.is_empty() {
+                text.push_str(&format!(" {locator}"));
+            }
+            text
+        }
+        "taiwan" => {
+            let mut text = format!(
+                "{}（{}），〈{}〉",
+                source.author.trim(),
+                source.year.trim(),
+                source.title.trim()
+            );
+            if !source.container_title.trim().is_empty() {
+                text.push_str(&format!("，《{}》", source.container_title.trim()));
+            }
+            if !source.volume.trim().is_empty() {
+                text.push_str(&format!("，第{}卷", source.volume.trim()));
+            }
+            if !source.issue.trim().is_empty() {
+                text.push_str(&format!("第{}期", source.issue.trim()));
+            }
+            if !source.pages.trim().is_empty() {
+                text.push_str(&format!("，頁{}", source.pages.trim()));
+            }
+            if !locator.is_empty() {
+                text.push_str(&format!("，{locator}"));
+            }
+            text.push('。');
+            text
+        }
+        _ => {
+            let mut text = format!(
+                "{} ({}). {}.",
+                source.author.trim(),
+                source.year.trim(),
+                source.title.trim()
+            );
+            if !source.container_title.trim().is_empty() {
+                text.push_str(&format!(" {}.", source.container_title.trim()));
+            }
+            if !source.publisher.trim().is_empty() {
+                text.push_str(&format!(" {}.", source.publisher.trim()));
+            }
+            if !source.volume.trim().is_empty() {
+                text.push_str(&format!(" {}", source.volume.trim()));
+                if !source.issue.trim().is_empty() {
+                    text.push_str(&format!("({})", source.issue.trim()));
+                }
+                text.push('.');
+            }
+            if !source.pages.trim().is_empty() {
+                text.push_str(&format!(" {}.", source.pages.trim()));
+            }
+            if !locator.is_empty() {
+                text.push_str(&format!(" {locator}"));
+            }
+            text
+        }
+    }
+}
+
+fn format_citation_values(sources: &[CitationSource], style: &str) -> CitationText {
+    let inline = match style {
+        "mla9" => format!(
+            "({})",
+            sources
+                .iter()
+                .map(|source| {
+                    let author = short_author(&source.author);
+                    if source.pages.trim().is_empty() {
+                        author
+                    } else {
+                        format!("{author} {}", source.pages.trim())
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join("; ")
+        ),
+        "taiwan" => format!(
+            "（{}）",
+            sources
+                .iter()
+                .map(|source| format!("{}，{}", short_author(&source.author), source.year.trim()))
+                .collect::<Vec<_>>()
+                .join("；")
+        ),
+        _ => format!(
+            "({})",
+            sources
+                .iter()
+                .map(|source| format!("{}, {}", short_author(&source.author), source.year.trim()))
+                .collect::<Vec<_>>()
+                .join("; ")
+        ),
+    };
+    CitationText {
+        inline,
+        bibliography: sources
+            .iter()
+            .map(|source| format_source(source, style))
+            .collect(),
+    }
+}
+
+fn selected_citation_sources(ids: &[String]) -> Result<Vec<CitationSource>, String> {
+    let sources = read_citation_sources_unlocked()?;
+    let selected = ids
+        .iter()
+        .filter_map(|id| sources.iter().find(|source| source.id == *id).cloned())
+        .collect::<Vec<_>>();
+    if selected.is_empty() {
+        return Err("請至少選擇一筆引文來源".into());
+    }
+    Ok(selected)
+}
+
+#[tauri::command]
+fn format_citation(source_ids: Vec<String>, style: String) -> Result<CitationText, String> {
+    let _guard = CITATION_SOURCES
+        .get_or_init(|| Mutex::new(()))
+        .lock()
+        .map_err(|_| "引文來源目前無法鎖定")?;
+    let sources = selected_citation_sources(&source_ids)?;
+    Ok(format_citation_values(&sources, &style))
+}
+
+fn bibliography_paragraph(text: &str) -> String {
+    format!(
+        r#"<w:p><w:pPr><w:ind w:left="720" w:hanging="720"/></w:pPr><w:r><w:t xml:space="preserve">{}</w:t></w:r></w:p>"#,
+        encode_xml_text(text)
+    )
+}
+
+#[tauri::command]
+fn append_bibliography(
+    path: String,
+    destination: String,
+    source_ids: Vec<String>,
+    style: String,
+) -> Result<ActionResult, String> {
+    let source = PathBuf::from(path);
+    if !source.is_file() {
+        return Err("找不到 Word 文件".into());
+    }
+    let _guard = CITATION_SOURCES
+        .get_or_init(|| Mutex::new(()))
+        .lock()
+        .map_err(|_| "引文來源目前無法鎖定")?;
+    let sources = selected_citation_sources(&source_ids)?;
+    let citation = format_citation_values(&sources, &style);
+    let document = read_word_document_xml(&source)?;
+    let previous = Regex::new(
+        r#"(?s)<w:bookmarkStart\b[^>]*w:name=\"OpenDeskBibliography\"[^>]*/>.*?<w:bookmarkEnd\b[^>]*/>"#,
+    )
+    .unwrap()
+    .replace(&document, "")
+    .into_owned();
+    let heading = if style == "taiwan" {
+        "參考文獻"
+    } else {
+        "References"
+    };
+    let block = format!(
+        r#"<w:bookmarkStart w:id="9191" w:name="OpenDeskBibliography"/>{}{}<w:bookmarkEnd w:id="9191"/>"#,
+        word_paragraph(heading, Some("Heading1")),
+        citation
+            .bibliography
+            .iter()
+            .map(|value| bibliography_paragraph(value))
+            .collect::<String>()
+    );
+    let body_end = previous
+        .rfind("<w:sectPr")
+        .or_else(|| previous.rfind("</w:body>"));
+    let Some(position) = body_end else {
+        return Err("文件缺少可插入參考文獻的位置".into());
+    };
+    let mut next = previous;
+    next.insert_str(position, &block);
+    let target = PathBuf::from(destination);
+    write_word_document_xml(&source, &target, &next)?;
+    Ok(ActionResult {
+        path: target.to_string_lossy().to_string(),
+        file_name: target
+            .file_name()
+            .and_then(|value| value.to_str())
+            .unwrap_or("含參考文獻文件.docx")
+            .into(),
+        message: format!(
+            "已依 {} 產生 {} 筆參考文獻並加入新副本",
+            style.to_uppercase(),
+            sources.len()
+        ),
+    })
+}
+
+fn insert_before_section_properties(document: &str, content: &str) -> Result<String, String> {
+    let position = document
+        .rfind("<w:sectPr")
+        .or_else(|| document.rfind("</w:body>"))
+        .ok_or("文件缺少可插入內容的位置")?;
+    let mut output = document.to_string();
+    output.insert_str(position, content);
+    Ok(output)
+}
+
+fn insert_after_body_open(document: &str, content: &str) -> Result<String, String> {
+    let body = Regex::new(r#"<w:body(?:\s[^>]*)?>"#).unwrap();
+    let opening = body.find(document).ok_or("文件缺少本文區段")?;
+    let mut output = document.to_string();
+    output.insert_str(opening.end(), content);
+    Ok(output)
+}
+
+fn diagram_cell(text: &str, width: usize, fill: &str) -> String {
+    format!(
+        r#"<w:tc><w:tcPr><w:tcW w:w="{width}" w:type="dxa"/><w:shd w:fill="{fill}"/><w:vAlign w:val="center"/></w:tcPr><w:p><w:pPr><w:jc w:val="center"/></w:pPr><w:r><w:rPr><w:b/></w:rPr><w:t>{}</w:t></w:r></w:p></w:tc>"#,
+        encode_xml_text(text)
+    )
+}
+
+fn editable_diagram(kind: &str, title: &str, items: &[String]) -> Result<String, String> {
+    if items.is_empty() {
+        return Err("圖解至少需要一個項目".into());
+    }
+    if items.len() > 50 {
+        return Err("單一圖解最多 50 個項目".into());
+    }
+    let heading = (!title.trim().is_empty())
+        .then(|| word_paragraph(title, Some("Heading2")))
+        .unwrap_or_default();
+    match kind {
+        "process" => {
+            let width = (9_000 / items.len().max(1)).max(1_100);
+            let cells = items
+                .iter()
+                .enumerate()
+                .map(|(index, item)| {
+                    let cell = diagram_cell(
+                        item,
+                        width,
+                        if index.is_multiple_of(2) {
+                            "DCE6F1"
+                        } else {
+                            "E2F0D9"
+                        },
+                    );
+                    if index + 1 == items.len() {
+                        cell
+                    } else {
+                        format!("{cell}{}", diagram_cell("→", 360, "FFFFFF"))
+                    }
+                })
+                .collect::<String>();
+            Ok(format!(
+                r#"{heading}<w:tbl><w:tblPr><w:tblW w:w="0" w:type="auto"/><w:tblBorders><w:top w:val="nil"/><w:left w:val="nil"/><w:bottom w:val="nil"/><w:right w:val="nil"/><w:insideH w:val="nil"/><w:insideV w:val="nil"/></w:tblBorders></w:tblPr><w:tr>{cells}</w:tr></w:tbl>"#
+            ))
+        }
+        "matrix" => {
+            let mut values = items.to_vec();
+            values.resize(4, String::new());
+            Ok(format!(
+                r#"{heading}<w:tbl><w:tblPr><w:tblW w:w="0" w:type="auto"/><w:tblBorders><w:top w:val="single" w:sz="6"/><w:left w:val="single" w:sz="6"/><w:bottom w:val="single" w:sz="6"/><w:right w:val="single" w:sz="6"/><w:insideH w:val="single" w:sz="4"/><w:insideV w:val="single" w:sz="4"/></w:tblBorders></w:tblPr><w:tr>{}{}</w:tr><w:tr>{}{}</w:tr></w:tbl>"#,
+                diagram_cell(&values[0], 4500, "DCE6F1"),
+                diagram_cell(&values[1], 4500, "E2F0D9"),
+                diagram_cell(&values[2], 4500, "FFF2CC"),
+                diagram_cell(&values[3], 4500, "FCE4D6")
+            ))
+        }
+        "hierarchy" => {
+            let rows = items
+                .iter()
+                .enumerate()
+                .map(|(index, item)| {
+                    let indent = if index == 0 { 0 } else { 720 };
+                    format!(
+                        r#"<w:p><w:pPr><w:ind w:left="{indent}"/><w:shd w:fill="{}"/></w:pPr><w:r><w:rPr><w:b/></w:rPr><w:t>{}</w:t></w:r></w:p>"#,
+                        if index == 0 { "DCE6F1" } else { "E2F0D9" },
+                        encode_xml_text(item)
+                    )
+                })
+                .collect::<String>();
+            Ok(format!("{heading}{rows}"))
+        }
+        _ => Err("圖解類型必須是流程、階層或矩陣".into()),
+    }
+}
+
+#[tauri::command]
+fn insert_word_component(
+    path: String,
+    destination: String,
+    kind: String,
+    title: String,
+    subtitle: String,
+    items: Vec<String>,
+) -> Result<ActionResult, String> {
+    let source = PathBuf::from(path);
+    if !source.is_file() {
+        return Err("找不到 Word 文件".into());
+    }
+    let document = read_word_document_xml(&source)?;
+    let (document, message) = match kind.as_str() {
+        "cover" => {
+            let date = Local::now().format("%Y 年 %m 月 %d 日").to_string();
+            let content = format!(
+                r#"<w:p><w:pPr><w:jc w:val="center"/><w:spacing w:before="2400" w:after="480"/></w:pPr><w:r><w:rPr><w:b/><w:sz w:val="48"/></w:rPr><w:t>{}</w:t></w:r></w:p><w:p><w:pPr><w:jc w:val="center"/></w:pPr><w:r><w:rPr><w:sz w:val="28"/></w:rPr><w:t>{}</w:t></w:r></w:p>{}<w:p><w:pPr><w:jc w:val="center"/></w:pPr><w:r><w:t>{}</w:t></w:r></w:p><w:p><w:r><w:br w:type="page"/></w:r></w:p>"#,
+                encode_xml_text(&title),
+                encode_xml_text(&subtitle),
+                items
+                    .first()
+                    .map(|author| word_paragraph(author, None))
+                    .unwrap_or_default(),
+                encode_xml_text(&date)
+            );
+            (
+                insert_after_body_open(&document, &content)?,
+                "已插入可編輯封面頁".to_string(),
+            )
+        }
+        "autotext" => (
+            insert_before_section_properties(&document, &word_paragraph(&title, None))?,
+            "已將 AutoText 插入文件末端".to_string(),
+        ),
+        "process" | "hierarchy" | "matrix" => (
+            insert_before_section_properties(&document, &editable_diagram(&kind, &title, &items)?)?,
+            "已插入可在 Word 編輯器繼續修改的開放式圖解".to_string(),
+        ),
+        _ => return Err("未知的 Word 元件類型".into()),
+    };
+    let target = PathBuf::from(destination);
+    write_word_document_xml(&source, &target, &document)?;
+    Ok(ActionResult {
+        path: target.to_string_lossy().to_string(),
+        file_name: target
+            .file_name()
+            .and_then(|value| value.to_str())
+            .unwrap_or("Word 元件文件.docx")
+            .into(),
+        message,
+    })
+}
+
 fn parse_environment(content: &str) -> std::collections::HashMap<String, String> {
     let mut values = std::collections::HashMap::new();
     for raw in content.lines() {
@@ -2547,6 +3419,91 @@ fn word_report(path: String) -> Result<WordReport, String> {
     build_word_report(&source)
 }
 
+fn build_word_reading_content(path: &Path) -> Result<WordReadingContent, String> {
+    let file = File::open(path).map_err(|error| error.to_string())?;
+    let mut archive = ZipArchive::new(file).map_err(|_| "無法讀取 Word 文件結構")?;
+    let document = zip_text(&mut archive, "word/document.xml");
+    let comments_xml = zip_text(&mut archive, "word/comments.xml");
+    if document.is_empty() {
+        return Err("Word 文件缺少 document.xml".into());
+    }
+    let paragraph_expression = Regex::new(r#"(?s)<w:p(?:\s[^>]*)?>.*?</w:p>"#).unwrap();
+    let style_expression =
+        Regex::new(r#"<w:pStyle\b[^>]*w:val=\"(?:Heading|heading)([1-9])\"[^>]*/?>"#).unwrap();
+    let paragraphs = paragraph_expression
+        .find_iter(&document)
+        .enumerate()
+        .filter_map(|(index, paragraph)| {
+            let text = paragraph_text(paragraph.as_str()).trim().to_string();
+            if text.is_empty() {
+                return None;
+            }
+            let heading_level = style_expression
+                .captures(paragraph.as_str())
+                .and_then(|capture| capture.get(1))
+                .and_then(|value| value.as_str().parse::<usize>().ok())
+                .or_else(|| heading_prefix(&text).map(|value| value.level));
+            Some(ReadingParagraph {
+                index: index + 1,
+                heading_level,
+                text,
+            })
+        })
+        .collect::<Vec<_>>();
+    let comment_expression = Regex::new(r#"(?s)<w:comment\b([^>]*)>(.*?)</w:comment>"#).unwrap();
+    let attribute = |attributes: &str, name: &str| {
+        Regex::new(&format!(r#"\bw:{name}=\"([^\"]*)\""#))
+            .unwrap()
+            .captures(attributes)
+            .and_then(|capture| capture.get(1))
+            .map(|value| decode_xml_text(value.as_str()))
+            .unwrap_or_default()
+    };
+    let mention_expression = Regex::new(r"@([\p{L}\p{N}_\-.]+)").unwrap();
+    let comments = comment_expression
+        .captures_iter(&comments_xml)
+        .filter_map(|capture| {
+            let attributes = capture.get(1)?.as_str();
+            let body = capture.get(2)?.as_str();
+            let text = xml_text(body).trim().to_string();
+            if text.is_empty() {
+                return None;
+            }
+            let mentions = mention_expression
+                .captures_iter(&text)
+                .filter_map(|value| value.get(1).map(|item| item.as_str().to_string()))
+                .collect::<BTreeSet<_>>()
+                .into_iter()
+                .collect::<Vec<_>>();
+            Some(ReviewComment {
+                id: attribute(attributes, "id"),
+                author: attribute(attributes, "author"),
+                date: attribute(attributes, "date"),
+                text,
+                mentions,
+            })
+        })
+        .collect::<Vec<_>>();
+    Ok(WordReadingContent {
+        file_name: path
+            .file_name()
+            .and_then(|value| value.to_str())
+            .unwrap_or("Word 文件")
+            .into(),
+        paragraphs,
+        comments,
+    })
+}
+
+#[tauri::command]
+fn word_reading_content(path: String) -> Result<WordReadingContent, String> {
+    let source = PathBuf::from(path);
+    if !source.is_file() {
+        return Err("找不到 Word 文件".into());
+    }
+    build_word_reading_content(&source)
+}
+
 fn chinese_number(number: usize, financial: bool) -> String {
     let digits = if financial {
         ["零", "壹", "貳", "參", "肆", "伍", "陸", "柒", "捌", "玖"]
@@ -2732,6 +3689,455 @@ fn write_word_document_xml(
     Ok(())
 }
 
+fn delimiter_score(line: &str, delimiter: char) -> usize {
+    let mut quoted = false;
+    let mut count = 0;
+    let mut characters = line.chars().peekable();
+    while let Some(character) = characters.next() {
+        if character == '"' {
+            if quoted && characters.peek() == Some(&'"') {
+                let _ = characters.next();
+            } else {
+                quoted = !quoted;
+            }
+        } else if !quoted && character == delimiter {
+            count += 1;
+        }
+    }
+    count
+}
+
+fn parse_delimited_rows(content: &str) -> Result<Vec<Vec<String>>, String> {
+    let content = content.trim_start_matches('\u{feff}');
+    let first_line = content
+        .lines()
+        .find(|line| !line.trim().is_empty())
+        .unwrap_or("");
+    let delimiter = [',', '\t', ';']
+        .into_iter()
+        .max_by_key(|value| delimiter_score(first_line, *value))
+        .unwrap_or(',');
+    let mut rows = Vec::new();
+    let mut row = Vec::new();
+    let mut field = String::new();
+    let mut quoted = false;
+    let mut characters = content.chars().peekable();
+    while let Some(character) = characters.next() {
+        match character {
+            '"' if quoted && characters.peek() == Some(&'"') => {
+                field.push('"');
+                let _ = characters.next();
+            }
+            '"' => quoted = !quoted,
+            value if value == delimiter && !quoted => {
+                row.push(field.trim().to_string());
+                field.clear();
+            }
+            '\n' | '\r' if !quoted => {
+                if character == '\r' && characters.peek() == Some(&'\n') {
+                    let _ = characters.next();
+                }
+                row.push(field.trim().to_string());
+                field.clear();
+                if row.iter().any(|value| !value.is_empty()) {
+                    rows.push(std::mem::take(&mut row));
+                } else {
+                    row.clear();
+                }
+            }
+            value => field.push(value),
+        }
+    }
+    if quoted {
+        return Err("資料來源有未閉合的雙引號".into());
+    }
+    if !field.is_empty() || !row.is_empty() {
+        row.push(field.trim().to_string());
+        if row.iter().any(|value| !value.is_empty()) {
+            rows.push(row);
+        }
+    }
+    if rows.len() < 2 {
+        return Err("資料來源必須包含標題列及至少一筆資料".into());
+    }
+    Ok(rows)
+}
+
+fn read_mail_merge_data(
+    path: &Path,
+) -> Result<(Vec<String>, Vec<BTreeMap<String, String>>), String> {
+    let content = fs::read_to_string(path).map_err(|error| format!("無法讀取資料來源：{error}"))?;
+    let rows = parse_delimited_rows(&content)?;
+    let mut seen = HashMap::<String, usize>::new();
+    let headers = rows[0]
+        .iter()
+        .enumerate()
+        .map(|(index, value)| {
+            let base = if value.trim().is_empty() {
+                format!("欄位{}", index + 1)
+            } else {
+                value.trim().to_string()
+            };
+            let count = seen.entry(base.to_lowercase()).or_default();
+            *count += 1;
+            if *count == 1 {
+                base
+            } else {
+                format!("{base}_{}", *count)
+            }
+        })
+        .collect::<Vec<_>>();
+    let values = rows
+        .iter()
+        .skip(1)
+        .map(|row| {
+            headers
+                .iter()
+                .enumerate()
+                .map(|(index, header)| {
+                    (header.clone(), row.get(index).cloned().unwrap_or_default())
+                })
+                .collect::<BTreeMap<_, _>>()
+        })
+        .collect::<Vec<_>>();
+    Ok((headers, values))
+}
+
+#[tauri::command]
+fn mail_merge_preview(data_source: String) -> Result<MailMergePreview, String> {
+    let (headers, rows) = read_mail_merge_data(Path::new(&data_source))?;
+    Ok(MailMergePreview {
+        headers,
+        row_count: rows.len(),
+        sample_rows: rows.into_iter().take(5).collect(),
+    })
+}
+
+fn replace_case_insensitive(source: &str, pattern: &str, replacement: &str) -> String {
+    regex::RegexBuilder::new(&regex::escape(pattern))
+        .case_insensitive(true)
+        .build()
+        .map(|expression| expression.replace_all(source, replacement).into_owned())
+        .unwrap_or_else(|_| source.to_string())
+}
+
+fn merge_text_value(source: &str, row: &BTreeMap<String, String>) -> String {
+    let mut output = source.to_string();
+    for (field, value) in row {
+        for placeholder in [
+            format!("{{{{{field}}}}}"),
+            format!("«{field}»"),
+            format!("<<{field}>>"),
+        ] {
+            output = replace_case_insensitive(&output, &placeholder, value);
+        }
+    }
+    output
+}
+
+fn merge_paragraph_xml(paragraph: &str, row: &BTreeMap<String, String>) -> String {
+    let text_expression = Regex::new(r#"(?s)<w:t\b[^>]*>(.*?)</w:t>"#).unwrap();
+    let contents = text_expression
+        .captures_iter(paragraph)
+        .filter_map(|capture| capture.get(1))
+        .collect::<Vec<_>>();
+    if contents.is_empty() {
+        return paragraph.to_string();
+    }
+    let logical = contents
+        .iter()
+        .map(|value| decode_xml_text(value.as_str()))
+        .collect::<String>();
+    let merged = merge_text_value(&logical, row);
+    if merged == logical {
+        return paragraph.to_string();
+    }
+    let encoded_merged = encode_xml_text(&merged);
+    let mut output = paragraph.to_string();
+    for (index, content) in contents.into_iter().enumerate().rev() {
+        output.replace_range(
+            content.start()..content.end(),
+            if index == 0 {
+                encoded_merged.as_str()
+            } else {
+                ""
+            },
+        );
+    }
+    output
+}
+
+fn merge_word_xml(xml: &str, row: &BTreeMap<String, String>) -> String {
+    let paragraph_expression = Regex::new(r#"(?s)<w:p(?:\s[^>]*)?>.*?</w:p>"#).unwrap();
+    let mut replacements = paragraph_expression
+        .find_iter(xml)
+        .filter_map(|value| {
+            let replacement = merge_paragraph_xml(value.as_str(), row);
+            (replacement != value.as_str()).then_some((value.start()..value.end(), replacement))
+        })
+        .collect::<Vec<_>>();
+    let mut output = xml.to_string();
+    for (range, replacement) in replacements.drain(..).rev() {
+        output.replace_range(range, &replacement);
+    }
+    output
+}
+
+fn rewrite_word_package<F>(
+    source: &Path,
+    destination: &Path,
+    mut transform: F,
+) -> Result<(), String>
+where
+    F: FnMut(&str, &str) -> Option<String>,
+{
+    let input = File::open(source).map_err(|error| error.to_string())?;
+    let mut archive = ZipArchive::new(input).map_err(|_| "無法讀取 Word 文件結構")?;
+    let output = File::create(destination).map_err(|error| error.to_string())?;
+    let mut writer = ZipWriter::new(output);
+    for index in 0..archive.len() {
+        let mut entry = archive.by_index(index).map_err(|error| error.to_string())?;
+        let name = entry.name().to_string();
+        if name.ends_with(".xml") {
+            let mut content = String::new();
+            entry
+                .read_to_string(&mut content)
+                .map_err(|error| error.to_string())?;
+            if let Some(next) = transform(&name, &content) {
+                writer
+                    .start_file(name, entry.options())
+                    .map_err(|error| error.to_string())?;
+                writer
+                    .write_all(next.as_bytes())
+                    .map_err(|error| error.to_string())?;
+                continue;
+            }
+            writer
+                .start_file(name, entry.options())
+                .map_err(|error| error.to_string())?;
+            writer
+                .write_all(content.as_bytes())
+                .map_err(|error| error.to_string())?;
+        } else {
+            writer
+                .raw_copy_file(entry)
+                .map_err(|error| error.to_string())?;
+        }
+    }
+    writer.finish().map_err(|error| error.to_string())?;
+    Ok(())
+}
+
+fn safe_output_name(value: &str, fallback: &str) -> String {
+    let cleaned = value
+        .chars()
+        .map(|character| {
+            if character.is_alphanumeric() || matches!(character, '-' | '_' | ' ') {
+                character
+            } else {
+                '_'
+            }
+        })
+        .collect::<String>()
+        .trim()
+        .chars()
+        .take(80)
+        .collect::<String>();
+    if cleaned.is_empty() {
+        fallback.to_string()
+    } else {
+        cleaned
+    }
+}
+
+fn unique_output_path(root: &Path, stem: &str, extension: &str, index: usize) -> PathBuf {
+    let preferred = root.join(format!("{stem}.{extension}"));
+    if !preferred.exists() {
+        return preferred;
+    }
+    root.join(format!("{stem}-{:03}.{extension}", index + 1))
+}
+
+#[tauri::command]
+fn mail_merge_generate(
+    template: String,
+    data_source: String,
+    output_directory: String,
+    output_format: String,
+    naming_field: String,
+    filter_column: String,
+    filter_value: String,
+) -> Result<MailMergeResult, String> {
+    let template = PathBuf::from(template);
+    if !template.is_file() {
+        return Err("找不到合併列印主文件".into());
+    }
+    let extension = template
+        .extension()
+        .and_then(|value| value.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    if !matches!(extension.as_str(), "docx" | "docm") {
+        return Err("合併列印主文件必須是 DOCX／DOCM".into());
+    }
+    if !matches!(output_format.as_str(), "docx" | "pdf" | "both") {
+        return Err("輸出格式必須是 DOCX、PDF 或兩者".into());
+    }
+    let (_, rows) = read_mail_merge_data(Path::new(&data_source))?;
+    if rows.len() > 5_000 {
+        return Err("單次最多處理 5,000 筆資料，請先分批以免誤印".into());
+    }
+    let root = PathBuf::from(output_directory);
+    fs::create_dir_all(&root).map_err(|error| error.to_string())?;
+    let mut created = Vec::new();
+    let mut skipped = 0;
+    for (index, row) in rows.iter().enumerate() {
+        if !filter_column.trim().is_empty()
+            && row
+                .get(filter_column.trim())
+                .map(|value| {
+                    !filter_value.trim().is_empty()
+                        && !value
+                            .to_lowercase()
+                            .contains(&filter_value.trim().to_lowercase())
+                })
+                .unwrap_or(true)
+        {
+            skipped += 1;
+            continue;
+        }
+        let default_name = format!("合併文件-{:03}", index + 1);
+        let stem = row
+            .get(naming_field.trim())
+            .map(|value| safe_output_name(value, &default_name))
+            .unwrap_or(default_name);
+        let target = unique_output_path(&root, &stem, &extension, index);
+        rewrite_word_package(&template, &target, |name, xml| {
+            (name.starts_with("word/") && name.ends_with(".xml")).then(|| merge_word_xml(xml, row))
+        })?;
+        if matches!(output_format.as_str(), "docx" | "both") {
+            created.push(target.to_string_lossy().to_string());
+        }
+        if matches!(output_format.as_str(), "pdf" | "both") {
+            let pdf = convert_pdf_at(&target, &root)?;
+            created.push(pdf.to_string_lossy().to_string());
+        }
+    }
+    if created.is_empty() {
+        return Err("篩選後沒有可輸出的收件人".into());
+    }
+    Ok(MailMergeResult {
+        message: format!(
+            "已建立 {} 個檔案{}",
+            created.len(),
+            if skipped > 0 {
+                format!("，略過 {skipped} 筆")
+            } else {
+                String::new()
+            }
+        ),
+        created,
+        skipped,
+    })
+}
+
+fn replace_word_body(document: &str, body: &str) -> Result<String, String> {
+    let expression = Regex::new(r#"(?s)(<w:body(?:\s[^>]*)?>).*?(<w:sectPr(?:\s|>))"#).unwrap();
+    if !expression.is_match(document) {
+        return Err("Word 範本缺少可用的文件本文".into());
+    }
+    Ok(expression
+        .replace(document, |captures: &regex::Captures<'_>| {
+            format!("{}{}{}", &captures[1], body, &captures[2])
+        })
+        .into_owned())
+}
+
+fn word_paragraph(text: &str, style: Option<&str>) -> String {
+    let properties = style
+        .map(|value| format!(r#"<w:pPr><w:pStyle w:val="{value}"/></w:pPr>"#))
+        .unwrap_or_default();
+    format!(
+        r#"<w:p>{properties}<w:r><w:t xml:space="preserve">{}</w:t></w:r></w:p>"#,
+        encode_xml_text(text)
+    )
+}
+
+#[tauri::command]
+fn create_mail_merge_template<R: Runtime>(
+    app: tauri::AppHandle<R>,
+    kind: String,
+    destination: String,
+    fields: Vec<String>,
+) -> Result<ActionResult, String> {
+    let source = resource_path(&app, "resources/Templates/Blank-Document.docx")?;
+    let target = PathBuf::from(destination);
+    let usable_fields = if fields.is_empty() {
+        vec!["姓名".into(), "地址".into(), "郵遞區號".into()]
+    } else {
+        fields
+    };
+    let placeholder = |name: &str| format!("{{{{{name}}}}}");
+    let body = match kind.as_str() {
+        "letter" => usable_fields
+            .iter()
+            .map(|field| word_paragraph(&placeholder(field), None))
+            .chain([
+                word_paragraph("", None),
+                word_paragraph("您好：", None),
+                word_paragraph("請在此輸入信件內容。", None),
+            ])
+            .collect::<String>(),
+        "envelope" => format!(
+            "{}{}{}{}",
+            word_paragraph("寄件人：________________", None),
+            word_paragraph("", None),
+            word_paragraph(
+                &format!(
+                    "{}　{}",
+                    placeholder(
+                        usable_fields
+                            .get(2)
+                            .map(String::as_str)
+                            .unwrap_or("郵遞區號")
+                    ),
+                    placeholder(usable_fields.get(1).map(String::as_str).unwrap_or("地址"))
+                ),
+                None
+            ),
+            word_paragraph(
+                &format!(
+                    "{}　收",
+                    placeholder(usable_fields.first().map(String::as_str).unwrap_or("姓名"))
+                ),
+                None
+            )
+        ),
+        "labels" => {
+            let cell = usable_fields
+                .iter()
+                .map(|field| word_paragraph(&placeholder(field), None))
+                .collect::<String>();
+            format!(
+                r#"<w:tbl><w:tblPr><w:tblW w:w="0" w:type="auto"/></w:tblPr><w:tr><w:tc><w:tcPr><w:tcW w:w="3000" w:type="dxa"/></w:tcPr>{cell}</w:tc><w:tc><w:tcPr><w:tcW w:w="3000" w:type="dxa"/></w:tcPr>{cell}</w:tc><w:tc><w:tcPr><w:tcW w:w="3000" w:type="dxa"/></w:tcPr>{cell}</w:tc></w:tr></w:tbl>"#
+            )
+        }
+        _ => return Err("範本類型必須是信件、信封或標籤".into()),
+    };
+    let document = read_word_document_xml(&source)?;
+    let document = replace_word_body(&document, &body)?;
+    write_word_document_xml(&source, &target, &document)?;
+    Ok(ActionResult {
+        path: target.to_string_lossy().to_string(),
+        file_name: target
+            .file_name()
+            .and_then(|value| value.to_str())
+            .unwrap_or("合併列印範本.docx")
+            .into(),
+        message: "已建立可直接使用 {{欄位名稱}} 的合併列印範本".into(),
+    })
+}
+
 #[tauri::command]
 fn renumber_headings(path: String) -> Result<ActionResult, String> {
     let source = PathBuf::from(&path);
@@ -2818,6 +4224,184 @@ fn data_root() -> Result<PathBuf, String> {
     Ok(current)
 }
 
+fn recovery_root() -> Result<PathBuf, String> {
+    let root = data_root()?.join("Recovery");
+    fs::create_dir_all(root.join("Snapshots")).map_err(|error| error.to_string())?;
+    Ok(root)
+}
+
+fn recovery_registry_path() -> Result<PathBuf, String> {
+    Ok(recovery_root()?.join("sessions.json"))
+}
+
+fn read_recovery_sessions_unlocked() -> Result<Vec<RecoverySession>, String> {
+    let path = recovery_registry_path()?;
+    if !path.is_file() {
+        return Ok(Vec::new());
+    }
+    let content = fs::read_to_string(path).map_err(|error| error.to_string())?;
+    serde_json::from_str(&content).map_err(|error| format!("復原清單格式錯誤：{error}"))
+}
+
+fn write_recovery_sessions_unlocked(sessions: &[RecoverySession]) -> Result<(), String> {
+    let path = recovery_registry_path()?;
+    let temporary = path.with_extension("json.tmp");
+    let content = serde_json::to_vec_pretty(sessions).map_err(|error| error.to_string())?;
+    fs::write(&temporary, content).map_err(|error| error.to_string())?;
+    fs::rename(&temporary, &path).map_err(|error| error.to_string())
+}
+
+fn register_recovery_session(source: &Path, engine: &str) -> Result<RecoverySession, String> {
+    let _guard = RECOVERY_SESSIONS
+        .get_or_init(|| Mutex::new(()))
+        .lock()
+        .map_err(|_| "復原清單目前無法鎖定")?;
+    let now = Local::now();
+    let id = format!("{}-{}", now.format("%Y%m%d%H%M%S%3f"), std::process::id());
+    let extension = source
+        .extension()
+        .and_then(|value| value.to_str())
+        .unwrap_or("docx");
+    let snapshot = recovery_root()?
+        .join("Snapshots")
+        .join(format!("{id}.{extension}"));
+    fs::copy(source, &snapshot).map_err(|error| format!("無法建立工作階段快照：{error}"))?;
+    let session = RecoverySession {
+        id: id.clone(),
+        path: source.to_string_lossy().to_string(),
+        file_name: source
+            .file_name()
+            .and_then(|value| value.to_str())
+            .unwrap_or("文件")
+            .to_string(),
+        engine: engine.to_string(),
+        opened_at: now.to_rfc3339(),
+        snapshot_path: snapshot.to_string_lossy().to_string(),
+        snapshot_at: now.to_rfc3339(),
+        snapshots: 1,
+    };
+    let mut sessions = read_recovery_sessions_unlocked().unwrap_or_default();
+    sessions.retain(|value| value.path != session.path);
+    sessions.insert(0, session.clone());
+    sessions.truncate(30);
+    write_recovery_sessions_unlocked(&sessions)?;
+    Ok(session)
+}
+
+fn start_recovery_monitor(session: RecoverySession) {
+    thread::spawn(move || {
+        let source = PathBuf::from(&session.path);
+        let snapshot = PathBuf::from(&session.snapshot_path);
+        let mut last_modified = source.metadata().and_then(|value| value.modified()).ok();
+        loop {
+            thread::sleep(Duration::from_secs(45));
+            if !source.is_file() {
+                break;
+            }
+            let modified = source.metadata().and_then(|value| value.modified()).ok();
+            if modified.is_none() || modified == last_modified {
+                continue;
+            }
+            let temporary = snapshot.with_extension("recovery.tmp");
+            if fs::copy(&source, &temporary).is_err() || fs::copy(&temporary, &snapshot).is_err() {
+                let _ = fs::remove_file(&temporary);
+                continue;
+            }
+            let _ = fs::remove_file(&temporary);
+            last_modified = modified;
+            let Ok(_guard) = RECOVERY_SESSIONS.get_or_init(|| Mutex::new(())).lock() else {
+                continue;
+            };
+            let Ok(mut sessions) = read_recovery_sessions_unlocked() else {
+                continue;
+            };
+            if let Some(value) = sessions.iter_mut().find(|value| value.id == session.id) {
+                value.snapshot_at = Local::now().to_rfc3339();
+                value.snapshots += 1;
+                let _ = write_recovery_sessions_unlocked(&sessions);
+            } else {
+                break;
+            }
+        }
+    });
+}
+
+#[tauri::command]
+fn recovery_sessions() -> Result<RecoveryOverview, String> {
+    let _guard = RECOVERY_SESSIONS
+        .get_or_init(|| Mutex::new(()))
+        .lock()
+        .map_err(|_| "復原清單目前無法鎖定")?;
+    let mut sessions = read_recovery_sessions_unlocked()?;
+    sessions.retain(|value| Path::new(&value.snapshot_path).is_file());
+    write_recovery_sessions_unlocked(&sessions)?;
+    Ok(RecoveryOverview {
+        sessions,
+        directory: recovery_root()?.to_string_lossy().to_string(),
+    })
+}
+
+#[tauri::command]
+fn restore_recovery_session(id: String, destination: String) -> Result<ActionResult, String> {
+    let _guard = RECOVERY_SESSIONS
+        .get_or_init(|| Mutex::new(()))
+        .lock()
+        .map_err(|_| "復原清單目前無法鎖定")?;
+    let mut sessions = read_recovery_sessions_unlocked()?;
+    let session = sessions
+        .iter()
+        .find(|value| value.id == id)
+        .cloned()
+        .ok_or("找不到這個工作階段")?;
+    let snapshot = PathBuf::from(&session.snapshot_path);
+    if !snapshot.is_file() {
+        return Err("工作階段快照已不存在".into());
+    }
+    let mut target = PathBuf::from(destination);
+    if target.extension().is_none() {
+        if let Some(extension) = snapshot.extension() {
+            target.set_extension(extension);
+        }
+    }
+    if let Some(parent) = target.parent() {
+        fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+    }
+    fs::copy(&snapshot, &target).map_err(|error| format!("無法還原工作階段：{error}"))?;
+    sessions.retain(|value| value.id != id);
+    write_recovery_sessions_unlocked(&sessions)?;
+    Ok(ActionResult {
+        path: target.to_string_lossy().to_string(),
+        file_name: target
+            .file_name()
+            .and_then(|value| value.to_str())
+            .unwrap_or("復原文件")
+            .to_string(),
+        message: format!(
+            "已從 {} 的自動快照復原；原始文件沒有被覆寫",
+            session.snapshot_at
+        ),
+    })
+}
+
+#[tauri::command]
+fn dismiss_recovery_session(id: String) -> Result<(), String> {
+    let _guard = RECOVERY_SESSIONS
+        .get_or_init(|| Mutex::new(()))
+        .lock()
+        .map_err(|_| "復原清單目前無法鎖定")?;
+    let mut sessions = read_recovery_sessions_unlocked()?;
+    let snapshot = sessions
+        .iter()
+        .find(|value| value.id == id)
+        .map(|value| PathBuf::from(&value.snapshot_path));
+    sessions.retain(|value| value.id != id);
+    write_recovery_sessions_unlocked(&sessions)?;
+    if let Some(path) = snapshot {
+        let _ = fs::remove_file(path);
+    }
+    Ok(())
+}
+
 fn create_backup(source: &Path) -> Result<PathBuf, String> {
     let root = data_root()?
         .join("Backups")
@@ -2869,6 +4453,8 @@ fn backup_and_open(path: String, engine: String) -> Result<ActionResult, String>
     }
     let backup = create_backup(&source)?;
     launch_document(&source, &engine)?;
+    let recovery = register_recovery_session(&source, &engine)?;
+    start_recovery_monitor(recovery);
     Ok(ActionResult {
         path,
         file_name: source
@@ -2909,6 +4495,8 @@ fn create_document<R: Runtime>(
     }
     fs::copy(&source, &target).map_err(|error| format!("無法建立文件：{error}"))?;
     launch_document(&target, "ONLYOFFICE")?;
+    let recovery = register_recovery_session(&target, "ONLYOFFICE")?;
+    start_recovery_monitor(recovery);
     Ok(ActionResult {
         path: target.to_string_lossy().to_string(),
         file_name: target
@@ -3107,6 +4695,47 @@ fn run_self_test<R: Runtime>(app: tauri::AppHandle<R>) -> SelfTestReport {
         r#"<w:body><w:p><w:r><w:t>肆、章</w:t></w:r></w:p><w:p><w:r><w:t>九、節</w:t></w:r></w:p><w:p><w:r><w:t>（三）項</w:t></w:r></w:p></w:body>"#,
     );
     let word_renumber_passed = word_renumber_count == 3;
+    let merge_passed = {
+        let mut row = BTreeMap::new();
+        row.insert("姓名".into(), "王小明".into());
+        paragraph_text(&merge_word_xml(
+            r#"<w:p><w:r><w:t>{{姓</w:t></w:r><w:r><w:t>名}}</w:t></w:r></w:p>"#,
+            &row,
+        )) == "王小明"
+    };
+    let accessibility_passed = {
+        let (document, count) = mark_table_header_rows(
+            r#"<w:document><w:body><w:tbl><w:tr><w:tc><w:p/></w:tc></w:tr></w:tbl></w:body></w:document>"#,
+        );
+        count == 1 && document.contains("<w:tblHeader/>")
+    };
+    let reading_passed = word_fixture
+        .as_ref()
+        .and_then(|path| build_word_reading_content(path).ok())
+        .map(|content| !content.paragraphs.is_empty() && !content.comments.is_empty())
+        .unwrap_or(false);
+    let citation_passed = format_source(
+        &CitationSource {
+            id: "self-test".into(),
+            source_type: "book".into(),
+            author: "王小明".into(),
+            title: "測試來源".into(),
+            year: "2026".into(),
+            publisher: "測試出版社".into(),
+            container_title: String::new(),
+            volume: String::new(),
+            issue: String::new(),
+            pages: String::new(),
+            doi: String::new(),
+            url: String::new(),
+            accessed: String::new(),
+        },
+        "taiwan",
+    )
+    .contains("〈測試來源〉");
+    let component_passed = editable_diagram("process", "流程", &["開始".into(), "完成".into()])
+        .map(|value| value.contains("<w:tbl>") && value.contains("完成"))
+        .unwrap_or(false);
     let temporary_root = std::env::temp_dir().join(format!(
         "OpenDeskTW-SelfTest-{}-{}",
         std::process::id(),
@@ -3209,6 +4838,15 @@ fn run_self_test<R: Runtime>(app: tauri::AppHandle<R>) -> SelfTestReport {
             total: 2,
         },
         TestGroup {
+            name: "Word 進階工具".into(),
+            passed: usize::from(merge_passed)
+                + usize::from(accessibility_passed)
+                + usize::from(reading_passed)
+                + usize::from(citation_passed)
+                + usize::from(component_passed),
+            total: 5,
+        },
+        TestGroup {
             name: "ONLYOFFICE 繁中寫作工具".into(),
             passed: usize::from(onlyoffice_tw.traditional_chinese)
                 + usize::from(onlyoffice_tw.plugin_current),
@@ -3273,7 +4911,22 @@ pub fn run() {
             repair_onlyoffice_traditional_chinese,
             scan_document,
             word_report,
+            word_reading_content,
+            word_accessibility_report,
+            repair_word_accessibility,
             renumber_headings,
+            recovery_sessions,
+            restore_recovery_session,
+            dismiss_recovery_session,
+            mail_merge_preview,
+            mail_merge_generate,
+            create_mail_merge_template,
+            citation_sources,
+            save_citation_source,
+            delete_citation_source,
+            format_citation,
+            append_bibliography,
+            insert_word_component,
             acropdf_status,
             pdf_report,
             pdf_live_validate,
@@ -3637,6 +5290,133 @@ mod tests {
     }
 
     #[test]
+    fn parses_quoted_csv_and_split_run_merge_fields() {
+        let rows = parse_delimited_rows(
+            "\u{feff}姓名,地址,備註\r\n\"王,小明\",\"臺北市,中正區\",\"第一行\n第二行\"\r\n",
+        )
+        .expect("應能解析含逗號與換行的 CSV");
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[1][0], "王,小明");
+        assert_eq!(rows[1][2], "第一行\n第二行");
+        let mut values = BTreeMap::new();
+        values.insert("姓名".into(), "王小明".into());
+        values.insert("地址".into(), "臺北市中正區".into());
+        let xml = r#"<w:p><w:r><w:t>{{姓</w:t></w:r><w:r><w:t>名}}</w:t></w:r><w:r><w:t>　«地址»</w:t></w:r></w:p>"#;
+        let merged = merge_word_xml(xml, &values);
+        assert_eq!(paragraph_text(&merged), "王小明　臺北市中正區");
+        assert!(!merged.contains("{{"));
+        assert!(!merged.contains("«"));
+    }
+
+    #[test]
+    fn mail_merge_docx_roundtrip_preserves_package() {
+        let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("resources/Templates/Blank-Document.docx");
+        let temporary_root = std::env::temp_dir().join(format!(
+            "OpenDeskTW-Merge-Test-{}-{}",
+            std::process::id(),
+            Local::now().timestamp_millis()
+        ));
+        fs::create_dir_all(&temporary_root).unwrap();
+        let _cleanup = TemporaryFolder(temporary_root.clone());
+        let template = temporary_root.join("合併範本.docx");
+        let output = temporary_root.join("王小明.docx");
+        let document = read_word_document_xml(&fixture).unwrap();
+        let body = word_paragraph("收件人：{{姓名}}　地址：«地址»", None);
+        let document = replace_word_body(&document, &body).unwrap();
+        write_word_document_xml(&fixture, &template, &document).unwrap();
+        let mut values = BTreeMap::new();
+        values.insert("姓名".into(), "王小明".into());
+        values.insert("地址".into(), "臺北市中正區".into());
+        rewrite_word_package(&template, &output, |name, xml| {
+            (name.starts_with("word/") && name.ends_with(".xml"))
+                .then(|| merge_word_xml(xml, &values))
+        })
+        .unwrap();
+        let merged = read_word_document_xml(&output).unwrap();
+        assert!(paragraph_text(&merged).contains("王小明"));
+        assert!(paragraph_text(&merged).contains("臺北市中正區"));
+        assert!(inspect_package(&output).0 > 5);
+    }
+
+    #[test]
+    fn accessibility_safe_repairs_are_structural_and_repeatable() {
+        let document = r#"<w:document><w:body><w:tbl><w:tr><w:tc><w:p><w:r><w:t>欄名</w:t></w:r></w:p></w:tc></w:tr></w:tbl></w:body></w:document>"#;
+        let (repaired, count) = mark_table_header_rows(document);
+        assert_eq!(count, 1);
+        assert!(repaired.contains("<w:tblHeader/>"));
+        let (again, count) = mark_table_header_rows(&repaired);
+        assert_eq!(count, 0);
+        assert_eq!(again, repaired);
+        let styles = r#"<w:styles><w:docDefaults><w:rPrDefault><w:rPr/></w:rPrDefault></w:docDefaults></w:styles>"#;
+        let (styles, changed) = ensure_traditional_chinese_language(styles);
+        assert!(changed);
+        assert!(styles.contains(r#"w:val="zh-TW""#));
+        let core = r#"<cp:coreProperties><dc:title></dc:title></cp:coreProperties>"#;
+        let (core, changed) = ensure_core_title(core, "無障礙文件");
+        assert!(changed);
+        assert!(core.contains("<dc:title>無障礙文件</dc:title>"));
+    }
+
+    #[test]
+    fn formats_citations_in_common_and_taiwan_styles() {
+        let source = CitationSource {
+            id: "sample".into(),
+            source_type: "article".into(),
+            author: "王小明".into(),
+            title: "開放文件格式研究".into(),
+            year: "2026".into(),
+            publisher: String::new(),
+            container_title: "資訊法學評論".into(),
+            volume: "12".into(),
+            issue: "2".into(),
+            pages: "10–28".into(),
+            doi: "10.1234/example".into(),
+            url: String::new(),
+            accessed: String::new(),
+        };
+        let apa = format_citation_values(std::slice::from_ref(&source), "apa7");
+        assert_eq!(apa.inline, "(王小明, 2026)");
+        assert!(apa.bibliography[0].contains("https://doi.org/10.1234/example"));
+        let taiwan = format_citation_values(&[source], "taiwan");
+        assert_eq!(taiwan.inline, "（王小明，2026）");
+        assert!(taiwan.bibliography[0].contains("《資訊法學評論》"));
+    }
+
+    #[test]
+    fn reading_view_extracts_headings_comments_and_mentions() {
+        let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("resources/Verification/OpenDeskTW_完整文字功能.docx");
+        let content = build_word_reading_content(&fixture).expect("應建立閱讀與註解檢視");
+        assert!(content.paragraphs.len() > 10);
+        assert!(content
+            .paragraphs
+            .iter()
+            .any(|paragraph| paragraph.heading_level.is_some()));
+        assert!(!content.comments.is_empty());
+    }
+
+    #[test]
+    fn open_diagrams_and_quick_parts_are_editable_ooxml() {
+        let process = editable_diagram(
+            "process",
+            "案件流程",
+            &["收件".into(), "審查".into(), "核定".into(), "發文".into()],
+        )
+        .expect("應建立流程圖解");
+        assert!(process.contains("<w:tbl>"));
+        assert!(process.contains("案件流程"));
+        assert!(process.contains("收件"));
+        assert!(process.contains("→"));
+        let hierarchy =
+            editable_diagram("hierarchy", "組織", &["主任".into(), "承辦人".into()]).unwrap();
+        assert!(hierarchy.contains(r#"w:left="720""#));
+        let document = r#"<w:document><w:body><w:p/><w:sectPr/></w:body></w:document>"#;
+        let inserted = insert_before_section_properties(document, &process).unwrap();
+        assert!(inserted.find("案件流程").unwrap() < inserted.find("<w:sectPr").unwrap());
+    }
+
+    #[test]
     fn persistent_pdf_core_reuses_process() {
         let (status, _) =
             acropdf_call("--integration-status", None).expect("內建 PDF 核心應能以常駐模式啟動");
@@ -3756,7 +5536,44 @@ mod tests {
         let renumbered_report =
             build_word_report(&word_output).expect("重編後 Word LIVE 報告應建立成功");
         assert!(renumbered_report.headings.len() >= original_report.headings.len());
-        let pdf = convert_pdf_at(&word_output, &temporary_root.join("pdf")).unwrap();
+        let component_output = temporary_root.join("Word-LIVE-進階元件.docx");
+        insert_word_component(
+            word_output.to_string_lossy().to_string(),
+            component_output.to_string_lossy().to_string(),
+            "process".into(),
+            "案件處理流程".into(),
+            String::new(),
+            vec!["收件".into(), "審查".into(), "核定".into(), "發文".into()],
+        )
+        .expect("應插入可編輯圖解");
+        assert!(read_word_document_xml(&component_output)
+            .unwrap()
+            .contains("案件處理流程"));
+        let accessibility =
+            build_accessibility_report(&component_output).expect("應建立進階文件無障礙報告");
+        assert!(accessibility.score <= 100);
+        let reading =
+            build_word_reading_content(&component_output).expect("應建立大綱／草稿閱讀資料");
+        assert!(!reading.paragraphs.is_empty());
+        let merge_template = temporary_root.join("Word-LIVE-合併範本.docx");
+        let merge_output = temporary_root.join("Word-LIVE-王小明.docx");
+        let blank = resources.join("Templates/Blank-Document.docx");
+        let merge_document = replace_word_body(
+            &read_word_document_xml(&blank).unwrap(),
+            &word_paragraph("收件人：{{姓名}}　地址：«地址»", None),
+        )
+        .unwrap();
+        write_word_document_xml(&blank, &merge_template, &merge_document).unwrap();
+        let mut merge_row = BTreeMap::new();
+        merge_row.insert("姓名".into(), "王小明".into());
+        merge_row.insert("地址".into(), "臺北市中正區".into());
+        rewrite_word_package(&merge_template, &merge_output, |name, xml| {
+            (name.starts_with("word/") && name.ends_with(".xml"))
+                .then(|| merge_word_xml(xml, &merge_row))
+        })
+        .unwrap();
+        assert!(paragraph_text(&read_word_document_xml(&merge_output).unwrap()).contains("王小明"));
+        let pdf = convert_pdf_at(&component_output, &temporary_root.join("pdf")).unwrap();
         let pdf_bytes = fs::read(&pdf).unwrap();
         assert!(pdf_bytes.starts_with(b"%PDF-") && pdf_bytes.len() > 1_000);
         let (acro_status, _) = acropdf_call("--integration-status", None).unwrap();
