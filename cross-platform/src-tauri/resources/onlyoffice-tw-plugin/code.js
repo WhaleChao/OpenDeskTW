@@ -6,6 +6,14 @@
   let magiResultWindow = null;
   let magiResultPayload = null;
   const numericFontSizes = [9, 10, 10.5, 11, 12, 14, 16, 18, 20, 22, 24, 28, 36, 48, 72];
+  const taiwanFonts = [
+    { id: "pmingliu", name: "PMingLiU", label: "新細明體" },
+    { id: "mingliu", name: "MingLiU", label: "細明體" },
+    { id: "biaukai", name: "BiauKaiTC", label: "標楷體" },
+    { id: "noto-serif-tc", name: "Noto Serif CJK TC", label: "思源宋體 TC" },
+    { id: "noto-sans-tc", name: "Noto Sans CJK TC", label: "思源黑體 TC" },
+    { id: "pingfang-tc", name: "PingFang TC", label: "蘋方－繁" },
+  ];
   const selectedTextOptions = {
     Numbering: false,
     Math: false,
@@ -196,32 +204,68 @@
   function applyDistributedAlignment() {
     plugin.callCommand(
       function () {
-        if (typeof AscCommon === "undefined") return false;
-        const distributed =
-          typeof AscCommon.align_Distributed !== "undefined"
-            ? AscCommon.align_Distributed
-            : AscCommon.Imb;
-        if (typeof distributed === "undefined") return false;
-        if (
-          typeof Asc !== "undefined" &&
-          Asc.editor &&
-          typeof Asc.editor.put_PrAlign === "function"
-        ) {
-          Asc.editor.put_PrAlign(distributed);
-          return true;
-        }
         const document = Api.GetDocument();
-        if (document?.Document && typeof document.Document.Vt === "function") {
-          document.Document.Vt(distributed);
-          return true;
+        const selection = document.GetRangeBySelect?.();
+        let paragraphs = selection?.GetAllParagraphs?.() || [];
+        if (!paragraphs.length) {
+          const current = document.GetCurrentParagraph?.();
+          paragraphs = current ? [current] : [];
         }
-        return false;
+        let distributedCount = 0;
+        let justifiedCount = 0;
+        paragraphs.forEach(function (paragraph) {
+          const rawText = String(paragraph.GetText?.() || "");
+          const text = rawText.replace(/[\r\n]/g, "");
+          const characters = Array.from(text);
+          if (characters.length < 2) return;
+
+          const paragraphLogic = paragraph.Ha;
+          const widthMm = Number(paragraphLogic?.Ie) - Number(paragraphLogic?.ha);
+          const entireRange = paragraph.GetRange?.(0, text.length);
+          const textPr = entireRange?.GetTextPr?.();
+          const fontHalfPoints = Number(textPr?.GetFontSize?.() || 22);
+          const glyphUnits = characters.reduce(function (total, character) {
+            if (/[\u2E80-\u9FFF\uF900-\uFAFF\uFF01-\uFF60]/u.test(character)) {
+              return total + 1;
+            }
+            if (/\s/u.test(character)) return total + 0.45;
+            return total + 0.56;
+          }, 0);
+          const availableTwips =
+            Number.isFinite(widthMm) && widthMm > 0 ? (widthMm * 1440) / 25.4 : 0;
+          const estimatedTextTwips = glyphUnits * fontHalfPoints * 10;
+          const spacingTwips = Math.max(
+            0,
+            Math.min(
+              800,
+              Math.floor((availableTwips * 0.95 - estimatedTextTwips) / characters.length),
+            ),
+          );
+
+          if (entireRange?.SetSpacing && spacingTwips >= 5) {
+            paragraph.SetJc?.("left");
+            entireRange.SetSpacing(spacingTwips);
+            distributedCount += 1;
+            return;
+          }
+
+          paragraph.SetJc?.("both");
+          justifiedCount += 1;
+        });
+        if (distributedCount || justifiedCount) {
+          return {
+            applied: distributedCount + justifiedCount,
+            distributed: distributedCount,
+            justified: justifiedCount,
+          };
+        }
+        return { applied: 0, distributed: 0, justified: 0 };
       },
       false,
       true,
-      function (applied) {
-        if (!applied) {
-          showMessage("此版本的 ONLYOFFICE 尚未開放分散對齊命令，請更新全能文件工作台。");
+      function (result) {
+        if (!result?.applied) {
+          showMessage("請先選取至少兩個字，或把游標放在要分散對齊的段落內。");
         }
         focusEditor();
       },
@@ -590,6 +634,29 @@
     );
   }
 
+  function applyTaiwanFont(font) {
+    window.Asc.scope.taiwanFontName = font.name;
+    plugin.callCommand(
+      function () {
+        const document = Api.GetDocument();
+        let range = document.GetRangeBySelect();
+        if (!range || range.GetText() === "") {
+          document.SelectCurrentWord();
+          range = document.GetRangeBySelect();
+        }
+        if (!range) return false;
+        range.SetFontFamily(Asc.scope.taiwanFontName);
+        return true;
+      },
+      false,
+      true,
+      function (applied) {
+        if (!applied) showMessage("請先選取文字，或把游標放在要變更字型的文字內。");
+        focusEditor();
+      },
+    );
+  }
+
   function completePairedPunctuation() {
     transformSelectionOrSentence(
       window.OpenDeskTwTypography.completePairs,
@@ -640,6 +707,22 @@
                 hint: "分散對齊（Ctrl+Shift+J／⇧⌘J）",
                 lockInViewMode: true,
                 icons: "resources/distributed.svg",
+              },
+              {
+                id: "opendesk-taiwan-fonts",
+                type: "button",
+                text: "臺灣字型",
+                hint: "快速套用新細明體、標楷體、思源字型與蘋方繁體",
+                lockInViewMode: true,
+                split: false,
+                icons: "resources/font-size.svg",
+                items: taiwanFonts.map(function (font) {
+                  return {
+                    id: `opendesk-font-${font.id}`,
+                    text: font.label,
+                    data: font.name,
+                  };
+                }),
               },
               {
                 id: "opendesk-complete-pairs",
@@ -783,6 +866,11 @@
             applyNumericFontSize(size);
           },
         );
+      }
+      for (const font of taiwanFonts) {
+        this.attachToolbarMenuClickEvent(`opendesk-font-${font.id}`, function () {
+          applyTaiwanFont(font);
+        });
       }
       toolbarEventsBound = true;
     }
