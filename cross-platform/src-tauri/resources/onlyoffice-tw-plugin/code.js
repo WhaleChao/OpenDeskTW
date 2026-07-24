@@ -6,6 +6,10 @@
   let magiResultWindow = null;
   let magiResultPayload = null;
   const numericFontSizes = [9, 10, 10.5, 11, 12, 14, 16, 18, 20, 22, 24, 28, 36, 48, 72];
+  const traditionalFonts = [
+    { id: "pmingliu", name: "PMingLiU", text: "新細明體（PMingLiU）" },
+    { id: "mingliu", name: "MingLiU", text: "細明體（MingLiU）" },
+  ];
   const selectedTextOptions = {
     Numbering: false,
     Math: false,
@@ -196,32 +200,151 @@
   function applyDistributedAlignment() {
     plugin.callCommand(
       function () {
-        if (typeof AscCommon === "undefined") return false;
-        const distributed =
-          typeof AscCommon.align_Distributed !== "undefined"
-            ? AscCommon.align_Distributed
-            : AscCommon.Imb;
-        if (typeof distributed === "undefined") return false;
+        const document = Api.GetDocument();
+        const selection = document.GetRangeBySelect();
+        let paragraphs = selection?.GetAllParagraphs?.() || [];
+        if (!paragraphs.length) {
+          const current = document.GetCurrentParagraph?.();
+          paragraphs = current ? [current] : [];
+        }
+        if (!paragraphs.length) return { applied: 0, skipped: 0, lines: 0 };
+
+        paragraphs.forEach(function (paragraph) {
+          paragraph.SetJc("left");
+          paragraph.SetSpacing(0);
+        });
+        document.ForceRecalculate();
+
+        function apiOffsetForPosition(internal, contentPosition) {
+          if (!contentPosition) return null;
+          const targetRun = internal.GetClassByPos?.(contentPosition);
+          if (!targetRun || !internal.CheckRunContent) return null;
+          const depth = contentPosition.GetDepth?.();
+          const runPosition =
+            typeof depth === "number" ? contentPosition.Get(depth) : undefined;
+          if (!Number.isFinite(runPosition)) return null;
+          let offset = 0;
+          let first = true;
+          let result = null;
+          internal.CheckRunContent(function (run) {
+            if (result !== null) return;
+            if (!first) offset += 1;
+            first = false;
+            if (run === targetRun) {
+              result = offset + runPosition;
+              return;
+            }
+            offset += run.Content?.length || 0;
+          });
+          return result;
+        }
+
+        const jobs = [];
+        let skipped = 0;
+        let lineCount = 0;
+        paragraphs.forEach(function (paragraph) {
+          const internal = paragraph.Paragraph;
+          const lines = internal?.Lines || [];
+          lineCount += lines.length;
+          lines.forEach(function (line, lineIndex) {
+            (line.Ranges || []).forEach(function (layoutRange, rangeIndex) {
+              const startPosition = internal.Get_StartRangePos2?.(lineIndex, rangeIndex);
+              const endPosition = internal.Get_EndRangePos2?.(lineIndex, rangeIndex, false);
+              const start = apiOffsetForPosition(internal, startPosition);
+              const end = apiOffsetForPosition(internal, endPosition);
+              const width = Number(layoutRange.XEnd) - Number(layoutRange.X);
+              const occupied = Number(layoutRange.W);
+              if (
+                !Number.isFinite(start) ||
+                !Number.isFinite(end) ||
+                end - start < 2 ||
+                !Number.isFinite(width) ||
+                !Number.isFinite(occupied) ||
+                width <= occupied
+              ) {
+                skipped += 1;
+                return;
+              }
+              const measuredRange = paragraph.GetRange(start, end);
+              const text = measuredRange?.GetText?.() || "";
+              const glyphCount = Array.from(text).filter(function (character) {
+                return character !== "\r" && character !== "\n";
+              }).length;
+              if (glyphCount < 2) {
+                skipped += 1;
+                return;
+              }
+              const spacingMm = (width - occupied) / (glyphCount - 1);
+              const spacingTwips = Math.max(0, Math.round((spacingMm * 1440) / 25.4));
+              if (!spacingTwips) {
+                skipped += 1;
+                return;
+              }
+              jobs.push({
+                paragraph: paragraph,
+                start: start,
+                end: end - 1,
+                spacing: spacingTwips,
+              });
+            });
+          });
+        });
+
+        jobs.forEach(function (job) {
+          job.paragraph.GetRange(job.start, job.end)?.SetSpacing(job.spacing);
+        });
+        if (jobs.length) document.ForceRecalculate();
+        return { applied: jobs.length, skipped: skipped, lines: lineCount };
+      },
+      false,
+      true,
+      function (result) {
+        if (!result?.applied) {
+          showMessage("目前段落沒有至少兩個可分散的文字，或段落版面尚未完成計算。");
+        } else if (result.skipped) {
+          showMessage(
+            `已完成 ${result.applied} 行相容分散對齊；另有 ${result.skipped} 個空白、定位點或特殊物件範圍維持原樣。`,
+          );
+        }
+        focusEditor();
+      },
+    );
+  }
+
+  function applyTraditionalFont(fontName) {
+    window.Asc.scope.traditionalFontName = String(fontName);
+    plugin.callCommand(
+      function () {
+        const name = Asc.scope.traditionalFontName;
+        if (!name) return false;
+        const document = Api.GetDocument();
+        let range = document.GetRangeBySelect();
+        if (range?.GetText?.()) {
+          range.SetFontFamily(name);
+          return name;
+        }
         if (
           typeof Asc !== "undefined" &&
           Asc.editor &&
-          typeof Asc.editor.put_PrAlign === "function"
+          typeof Asc.editor.put_TextPrFontName === "function"
         ) {
-          Asc.editor.put_PrAlign(distributed);
-          return true;
+          Asc.editor.put_TextPrFontName(name);
+          return name;
         }
-        const document = Api.GetDocument();
-        if (document?.Document && typeof document.Document.Vt === "function") {
-          document.Document.Vt(distributed);
-          return true;
+        range = document.GetRangeBySelect();
+        if (!range || !range.GetText()) {
+          document.SelectCurrentWord();
+          range = document.GetRangeBySelect();
         }
-        return false;
+        if (!range) return false;
+        range.SetFontFamily(name);
+        return name;
       },
       false,
       true,
       function (applied) {
         if (!applied) {
-          showMessage("此版本的 ONLYOFFICE 尚未開放分散對齊命令，請更新全能文件工作台。");
+          showMessage("目前游標位置無法套用字型。");
         }
         focusEditor();
       },
@@ -483,6 +606,61 @@
     );
   }
 
+  function insertContextualQuote(input) {
+    plugin.callCommand(
+      function () {
+        const document = Api.GetDocument();
+        const paragraph = document.GetCurrentParagraph?.();
+        const internal = paragraph?.Paragraph;
+        const caretPosition = internal?.Get_ParaContentPos?.(false, false);
+        if (!paragraph || !internal || !caretPosition) return "";
+
+        const targetRun = internal.GetClassByPos?.(caretPosition);
+        const depth = caretPosition.GetDepth?.();
+        const runPosition =
+          typeof depth === "number" ? caretPosition.Get(depth) : undefined;
+        if (!targetRun || !internal.CheckRunContent || !Number.isFinite(runPosition)) {
+          return "";
+        }
+
+        let offset = 0;
+        let first = true;
+        let caretOffset = null;
+        internal.CheckRunContent(function (run) {
+          if (caretOffset !== null) return;
+          if (!first) offset += 1;
+          first = false;
+          if (run === targetRun) {
+            caretOffset = offset + runPosition;
+            return;
+          }
+          offset += run.Content?.length || 0;
+        });
+        if (!Number.isFinite(caretOffset) || caretOffset <= 0) return "";
+        return paragraph.GetRange(0, caretOffset)?.GetText?.() || "";
+      },
+      false,
+      false,
+      function (paragraphTextBefore) {
+        if (paragraphTextBefore) {
+          insertContextualQuoteFromText(paragraphTextBefore, input);
+          return;
+        }
+        plugin.executeMethod("GetCurrentSentence", ["before"], function (sentenceTextBefore) {
+          insertContextualQuoteFromText(sentenceTextBefore, input);
+        });
+      },
+    );
+  }
+
+  function insertContextualQuoteFromText(textBefore, input) {
+    const replacement = window.OpenDeskTwTypography.smartQuoteForContext(
+      textBefore || "",
+      input,
+    );
+    plugin.executeMethod("InputText", [replacement || input], focusEditor);
+  }
+
   function installWordCompatibilityShortcuts(hostWindow) {
     try {
       if (!hostWindow?.document) return false;
@@ -498,10 +676,20 @@
           target &&
           (/^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName || "") || target.isContentEditable)
         ) return;
-        const key = String(event.key || "").toLowerCase();
+        const rawKey = String(event.key || "");
+        const key = rawKey.toLowerCase();
         const command = event.ctrlKey || event.metaKey;
         let action = null;
-        if (command && event.shiftKey && !event.altKey && (key === "j" || event.code === "KeyJ")) {
+        if (
+          !event.ctrlKey &&
+          !event.metaKey &&
+          !event.altKey &&
+          ['"', "'", "”", "’", "」", "』"].includes(rawKey)
+        ) {
+          action = function () {
+            insertContextualQuote(rawKey);
+          };
+        } else if (command && event.shiftKey && !event.altKey && (key === "j" || event.code === "KeyJ")) {
           action = applyDistributedAlignment;
         } else if (command && event.shiftKey && event.altKey && (key === "r" || event.code === "KeyR")) {
           action = renumberHeadingsInDocument;
@@ -563,7 +751,13 @@
         action();
       };
       hostWindow.document.addEventListener("keydown", handler, true);
-      hostWindow[stateKey] = { guid: plugin.guid, handler };
+      hostWindow[stateKey] = {
+        guid: plugin.guid,
+        handler: handler,
+        applyDistributedAlignment: applyDistributedAlignment,
+        applyTraditionalFont: applyTraditionalFont,
+        insertContextualQuote: insertContextualQuote,
+      };
       return true;
     } catch (_) {
       return false;
@@ -615,6 +809,8 @@
         "粗體／斜體／底線：Ctrl／⌘+B、I、U",
         "靠左／置中／左右對齊：Ctrl／⌘+L、E、J",
         "分散對齊：Windows／Linux Ctrl+Shift+J；macOS ⇧⌘J",
+        "智慧下引號：輸入引號時，會依目前尚未閉合的「／『自動選擇」或』",
+        "台灣字型：全能文件 → 台灣字型，可直接選新細明體或細明體",
         "行距：Ctrl／⌘+1 單行、+2 雙行、+5 1.5 倍",
         "標題樣式：Ctrl+Alt+1／2／3；macOS ⌘⌥1／2／3",
         "一般樣式：Ctrl／⌘+Shift+N；追蹤修訂：Ctrl／⌘+Shift+E",
@@ -692,6 +888,22 @@
                     id: `opendesk-font-size-${String(size).replace(".", "-")}`,
                     text: String(size),
                     data: String(size),
+                  };
+                }),
+              },
+              {
+                id: "opendesk-font-family",
+                type: "button",
+                text: "台灣字型",
+                hint: "直接套用新細明體（PMingLiU）或細明體（MingLiU）",
+                lockInViewMode: true,
+                split: false,
+                icons: "resources/font-size.svg",
+                items: traditionalFonts.map(function (font) {
+                  return {
+                    id: `opendesk-font-family-${font.id}`,
+                    text: font.text,
+                    data: font.name,
                   };
                 }),
               },
@@ -783,6 +995,11 @@
             applyNumericFontSize(size);
           },
         );
+      }
+      for (const font of traditionalFonts) {
+        this.attachToolbarMenuClickEvent(`opendesk-font-family-${font.id}`, function () {
+          applyTraditionalFont(font.name);
+        });
       }
       toolbarEventsBound = true;
     }

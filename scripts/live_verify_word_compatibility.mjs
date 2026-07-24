@@ -127,6 +127,7 @@ async function main() {
     const visibleActions = {
       distributed: editorStatus.text.includes("分散對齊"),
       pairs: editorStatus.text.includes("智慧補齊"),
+      fonts: editorStatus.text.includes("台灣字型"),
       renumber: editorStatus.text.includes("標題重編"),
       magi: /MAGI\s*摘要/.test(editorStatus.text) || homeMagiInDom,
       simplifiedAi:
@@ -135,6 +136,7 @@ async function main() {
     assert.deepEqual(visibleActions, {
       distributed: true,
       pairs: true,
+      fonts: true,
       renumber: true,
       magi: true,
       simplifiedAi: false,
@@ -202,6 +204,100 @@ async function main() {
     const afterLineSpacing = await readCurrentParagraph();
     assert.equal(afterLineSpacing.line, 360);
     assert.equal(afterLineSpacing.lineRule, "auto");
+
+    const distributedBefore = await evaluate(`new Promise((resolve) => {
+      Asc.plugin.callCommand(function () {
+        const document = Api.GetDocument();
+        const paragraph = Api.CreateParagraph();
+        paragraph.AddText("分散對齊實際寬度LIVE");
+        document.Push(paragraph);
+        const range = paragraph.GetRange(0, paragraph.GetText().length);
+        range.Select();
+        paragraph.SetSpacing(0);
+        paragraph.SetJc("left");
+        document.ForceRecalculate();
+        const layout = paragraph.Paragraph.Lines[0].Ranges[0];
+        return {
+          text: paragraph.GetText(),
+          width: layout.XEnd - layout.X,
+          occupied: layout.W
+        };
+      }, false, true, resolve);
+    })`, pluginContextId);
+    assert.ok(
+      distributedBefore.width - distributedBefore.occupied > 1,
+      "分散對齊測試文字原本就已填滿行寬，無法驗證",
+    );
+    await press({ key: "j", code: "KeyJ", virtualKeyCode: 74, modifiers: 12 });
+    const distributedAfter = await evaluate(`new Promise((resolve) => {
+      Asc.plugin.callCommand(function () {
+        const paragraph = Api.GetDocument().GetAllParagraphs().find(function (item) {
+          return item.GetText().includes("分散對齊實際寬度LIVE");
+        });
+        const layout = paragraph.Paragraph.Lines[0].Ranges[0];
+        const firstCharacter = paragraph.GetRange(0, 1);
+        return {
+          width: layout.XEnd - layout.X,
+          occupied: layout.W,
+          spacing: firstCharacter.GetTextPr().GetSpacing(),
+          alignment: paragraph.GetParaPr().GetJc()
+        };
+      }, false, false, resolve);
+    })`, pluginContextId);
+    assert.ok(distributedAfter.spacing > 0, "分散對齊沒有寫入逐字平均字距");
+    assert.ok(
+      Math.abs(distributedAfter.width - distributedAfter.occupied) < 0.8,
+      `分散後文字未填滿行寬：${JSON.stringify(distributedAfter)}`,
+    );
+    assert.equal(distributedAfter.alignment, "left");
+
+    const fontFixture = await evaluate(`new Promise((resolve) => {
+      Asc.plugin.callCommand(function () {
+        const document = Api.GetDocument();
+        const paragraph = Api.CreateParagraph();
+        paragraph.AddText("新細明體LIVE");
+        document.Push(paragraph);
+        paragraph.GetRange(0, paragraph.GetText().length).Select();
+        return true;
+      }, false, true, resolve);
+    })`, pluginContextId);
+    assert.equal(fontFixture, true);
+    await evaluate(
+      `window.__OpenDeskTwWordShortcuts.applyTraditionalFont("PMingLiU")`,
+      editorContextId,
+    );
+    await delay(500);
+    const pmingliu = await evaluate(`new Promise((resolve) => {
+      Asc.plugin.callCommand(function () {
+        const paragraph = Api.GetDocument().GetAllParagraphs().find(function (item) {
+          return item.GetText().includes("新細明體LIVE");
+        });
+        const textPr = paragraph.GetRange(0, paragraph.GetText().length).GetTextPr();
+        return {
+          ascii: textPr.GetFontFamily("ascii"),
+          eastAsia: textPr.GetFontFamily("eastAsia")
+        };
+      }, false, false, resolve);
+    })`, pluginContextId);
+    assert.equal(pmingliu.ascii, "PMingLiU");
+    assert.equal(pmingliu.eastAsia, "PMingLiU");
+
+    await evaluate(`new Promise((resolve) => {
+      Asc.plugin.callCommand(function () {
+        const document = Api.GetDocument();
+        const paragraph = Api.CreateParagraph();
+        paragraph.AddText("他說「外層『內層。");
+        document.Push(paragraph);
+        document.MoveCursorToEnd();
+        return true;
+      }, false, true, resolve);
+    })`, pluginContextId);
+    await press({ key: '"', code: "Quote", virtualKeyCode: 222, modifiers: 8 });
+    let smartQuoteText = (await readParagraphs()).at(-1);
+    assert.equal(smartQuoteText, "他說「外層『內層。』");
+    await press({ key: '"', code: "Quote", virtualKeyCode: 222, modifiers: 8 });
+    smartQuoteText = (await readParagraphs()).at(-1);
+    assert.equal(smartQuoteText, "他說「外層『內層。』」");
 
     await press({ key: "1", code: "Digit1", virtualKeyCode: 49, modifiers: 5 });
     const afterHeading = await readCurrentParagraph();
@@ -303,6 +399,9 @@ async function main() {
           language: "zh-TW",
           toolbar: visibleActions,
           lineSpacing: { before, after: afterLineSpacing },
+          distributedAlignment: { before: distributedBefore, after: distributedAfter },
+          traditionalFont: pmingliu,
+          smartQuotes: smartQuoteText,
           headingStyle: afterHeading.style,
           formatCopyPaste,
           renumberedParagraphs: changed,

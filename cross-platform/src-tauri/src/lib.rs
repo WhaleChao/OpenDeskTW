@@ -1463,7 +1463,7 @@ fn repair_onlyoffice_traditional_chinese<R: Runtime>(
         path: plugin_destination.to_string_lossy().to_string(),
         file_name: "繁中寫作工具（全能文件）".into(),
         message: format!(
-            "已固定 ONLYOFFICE 為 zh-TW、補齊繁中介面、安裝台灣繁中 AI 相容副本（{}）並鎖定數字字級{backup_message}。重新開啟 ONLYOFFICE 後，可在「常用」工具列使用分散對齊（Ctrl+Shift+J／⇧⌘J），在「全能文件」使用繁中工具，並以「MAGI」頁籤呼叫本機 MAGI。",
+            "已固定 ONLYOFFICE 為 zh-TW、補齊繁中介面、安裝台灣繁中 AI 相容副本（{}）並鎖定數字字級{backup_message}。重新開啟 ONLYOFFICE 後，可在「常用」使用逐行填滿的分散對齊（Ctrl+Shift+J／⇧⌘J），在「全能文件」選新細明體／細明體並使用即時智慧引號，另可從「MAGI」頁籤呼叫本機 MAGI。",
             ai_destination.display()
         ),
     })
@@ -3192,7 +3192,7 @@ mod tests {
     }
 
     #[test]
-    fn bundled_onlyoffice_plugin_uses_native_distributed_alignment() {
+    fn bundled_onlyoffice_plugin_uses_rendered_distributed_alignment_and_tw_fonts() {
         let config = include_str!("../resources/onlyoffice-tw-plugin/config.json");
         let value: Value = serde_json::from_str(config).expect("外掛設定必須是有效 JSON");
         assert_eq!(
@@ -3215,9 +3215,10 @@ mod tests {
             .expect("外掛必須宣告支援的編輯器");
         assert_eq!(supported_editors.len(), 4);
         let code = include_str!("../resources/onlyoffice-tw-plugin/code.js");
-        assert!(code.contains("put_PrAlign"));
-        assert!(code.contains("align_Distributed"));
-        assert!(code.contains("document.Document.Vt(distributed)"));
+        assert!(!code.contains("align_Distributed"));
+        assert!(code.contains("Get_StartRangePos2"));
+        assert!(code.contains("SetSpacing(job.spacing)"));
+        assert!(code.contains("document.ForceRecalculate()"));
         assert!(code.contains("AddToolbarMenuItem"));
         assert!(code.contains("id: \"home\""));
         assert!(code.contains("installWordCompatibilityShortcuts"));
@@ -3230,6 +3231,12 @@ mod tests {
         assert!(code.contains("opendesk-normalize-punctuation"));
         assert!(code.contains("opendesk-font-size"));
         assert!(code.contains("range.SetFontSize(Asc.scope.numericFontSize)"));
+        assert!(code.contains("opendesk-font-family"));
+        assert!(code.contains("PMingLiU"));
+        assert!(code.contains("MingLiU"));
+        assert!(code.contains("put_TextPrFontName"));
+        assert!(code.contains("GetCurrentSentence\", [\"before\"]"));
+        assert!(code.contains("executeMethod(\"InputText\""));
         assert!(code.contains("OpenDeskTwUiPatch"));
         let typography = include_str!("../resources/onlyoffice-tw-plugin/typography.js");
         let ui_patch = include_str!("../resources/onlyoffice-tw-plugin/ui-patch.js");
@@ -3245,6 +3252,9 @@ mod tests {
         ] {
             assert!(typography.contains(pair), "缺少成對標點：{pair}");
         }
+        assert!(typography.contains("smartQuoteForContext"));
+        assert!(typography.contains("quoteStack"));
+        assert!(typography.contains("calculateDistributedSpacing"));
         assert!(code.contains("window.fetch(bridge.url"));
         assert!(code.contains("Authorization: `Bearer ${bridge.token}`"));
         assert!(!code.contains("https://"));

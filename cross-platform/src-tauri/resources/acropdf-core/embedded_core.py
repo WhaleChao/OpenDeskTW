@@ -638,6 +638,7 @@ def verify_signatures_pdf(path: str | Path, options: dict[str, Any]) -> dict[str
     try:
         from pyhanko.pdf_utils.reader import PdfFileReader
         from pyhanko.sign.validation import validate_pdf_signature
+        from pyhanko_certvalidator import ValidationContext
     except ImportError:
         return {
             "protocol_version": PROTOCOL_VERSION,
@@ -649,11 +650,24 @@ def verify_signatures_pdf(path: str | Path, options: dict[str, Any]) -> dict[str
     for logger_name in ("pyhanko_certvalidator", "pyhanko.sign.validation", "pyhanko.sign.validation.generic_cms"):
         logging.getLogger(logger_name).setLevel(logging.CRITICAL)
     results: list[dict[str, Any]] = []
+    trust_store_available = True
+    trust_store_error = ""
     with source.open("rb") as stream:
         reader = PdfFileReader(stream)
         for embedded in reader.embedded_signatures:
             try:
-                validation = validate_pdf_signature(embedded)
+                try:
+                    validation = validate_pdf_signature(embedded)
+                except OSError as error:
+                    # macOS may deny access to the system trust store in a sandbox.
+                    # Retry without trust anchors so cryptographic integrity and
+                    # document modifications can still be reported accurately.
+                    trust_store_available = False
+                    trust_store_error = str(error)
+                    validation = validate_pdf_signature(
+                        embedded,
+                        signer_validation_context=ValidationContext(trust_roots=[]),
+                    )
                 results.append({
                     "field": embedded.field_name,
                     "valid": bool(validation.valid),
@@ -669,6 +683,8 @@ def verify_signatures_pdf(path: str | Path, options: dict[str, Any]) -> dict[str
         "available": True,
         "signatures": results,
         "count": len(results),
+        "trust_store_available": trust_store_available,
+        "trust_store_error": trust_store_error,
     }
 
 

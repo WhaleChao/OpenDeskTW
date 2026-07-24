@@ -22,6 +22,17 @@ assert.equal(tools.normalizeTaiwanPunctuation("他說：“可以!”"), "他說
 assert.equal(tools.normalizeTaiwanPunctuation("是否正確?"), "是否正確？");
 assert.equal(tools.normalizeTaiwanPunctuation("版本2.2.1"), "版本2.2.1");
 assert.equal(tools.normalizeTaiwanPunctuation("don't change"), "don't change");
+assert.equal(
+  tools.normalizeTaiwanPunctuation('他說："外層\'內層\'"'),
+  "他說：「外層『內層』」",
+);
+assert.deepEqual(tools.quoteStack("他說「外層『內層"), ["」", "』"]);
+assert.equal(tools.smartQuoteForContext("他說「外層『內層", '"'), "』");
+assert.equal(tools.smartQuoteForContext("他說「外層『內層』", '"'), "」");
+assert.equal(tools.smartQuoteForContext("他說：「你好。", '"'), "」");
+assert.equal(tools.smartQuoteForContext("don", "'"), "'");
+assert.equal(tools.distributionGlyphCount("甲乙丙丁"), 4);
+assert.equal(tools.calculateDistributedSpacing(100, 20, 5), 20);
 assert.equal(uiPatch.translateText("Multipage view"), "多頁檢視");
 assert.equal(
   uiPatch.translateText("Work with multiple pages at once for easier navigation."),
@@ -50,6 +61,15 @@ assert.match(pluginCode, /id: "home"/);
 assert.match(pluginCode, /id: "opendesk-distributed"/);
 assert.match(pluginCode, /installWordCompatibilityShortcuts\(window\.parent\)/);
 assert.match(pluginCode, /event\.code === "KeyJ"/);
+assert.match(pluginCode, /Get_StartRangePos2/);
+assert.match(pluginCode, /SetSpacing\(job\.spacing\)/);
+assert.match(pluginCode, /id: "opendesk-font-family"/);
+assert.match(pluginCode, /PMingLiU/);
+assert.match(pluginCode, /MingLiU/);
+assert.match(pluginCode, /put_TextPrFontName/);
+assert.match(pluginCode, /Get_ParaContentPos/);
+assert.match(pluginCode, /GetCurrentSentence", \["before"\]/);
+assert.match(pluginCode, /executeMethod\("InputText"/);
 assert.match(pluginCode, /applyLineSpacing\(key === "5" \? 1\.5 : Number\(key\)\)/);
 assert.match(pluginCode, /applyParagraphStyle\(`Heading \$\{key\}`\)/);
 assert.match(pluginCode, /logicDocument\.Dne\(\)/);
@@ -68,8 +88,11 @@ assert.ok(
 
 let keydownHandler;
 let toolbarDefinition;
-let distributedValue;
-let internalDistributedValue;
+let distributedSpacing;
+let paragraphAlignment;
+let appliedFont;
+let currentSentence = "";
+let insertedText = "";
 let lineSpacing;
 let appliedStyle;
 let tracked = false;
@@ -80,12 +103,49 @@ const messages = [];
 const toolbarHandlers = new Map();
 function makeParagraph(initialText) {
   let text = initialText;
-  return {
+  const run = { Content: Array.from(initialText) };
+  const layoutRange = { X: 0, XEnd: 100, W: 20 };
+  function contentPosition(position) {
+    return {
+      GetDepth() {
+        return 1;
+      },
+      Get(depth) {
+        return depth === 0 ? 0 : position;
+      },
+    };
+  }
+  const paragraph = {
+    Paragraph: {
+      Lines: [{ Ranges: [layoutRange] }],
+      Get_ParaContentPos() {
+        return contentPosition(Array.from(text).length);
+      },
+      Get_StartRangePos2() {
+        return contentPosition(0);
+      },
+      Get_EndRangePos2() {
+        return contentPosition(Array.from(text).length);
+      },
+      GetClassByPos() {
+        return run;
+      },
+      CheckRunContent(callback) {
+        callback(run);
+      },
+    },
     GetText() {
       return text;
     },
+    SetTextForTest(value) {
+      text = String(value);
+      run.Content = Array.from(text);
+    },
     GetRange(start, end) {
       return {
+        GetText() {
+          return Array.from(text).slice(start, end).join("");
+        },
         Delete() {
           text = text.slice(0, start) + text.slice(end);
           return true;
@@ -95,7 +155,18 @@ function makeParagraph(initialText) {
           else text = text.slice(0, end) + value + text.slice(end);
           return true;
         },
+        SetSpacing(value) {
+          distributedSpacing = value;
+          layoutRange.W = layoutRange.XEnd - layoutRange.X;
+          return true;
+        },
       };
+    },
+    SetJc(value) {
+      paragraphAlignment = value;
+    },
+    SetSpacing(value) {
+      if (value === 0) layoutRange.W = 20;
     },
     SetStyle(style) {
       appliedStyle = style;
@@ -115,6 +186,7 @@ function makeParagraph(initialText) {
     SetIndLeft() {},
     SetIndFirstLine() {},
   };
+  return paragraph;
 }
 const headingParagraphs = [
   makeParagraph("玖、第一章"),
@@ -135,6 +207,9 @@ const selectionRange = {
     return { GetVertAlign: () => "baseline" };
   },
   SetVertAlign() {},
+  SetFontFamily(value) {
+    appliedFont = value;
+  },
 };
 const apiDocument = {
   Document: {
@@ -177,6 +252,7 @@ const apiDocument = {
     tracked = value;
   },
   SelectCurrentWord() {},
+  ForceRecalculate() {},
 };
 const hostDocument = {
   addEventListener(type, handler, capture) {
@@ -190,7 +266,11 @@ const plugin = {
   executeMethod(name, args, callback) {
     if (name === "AddToolbarMenuItem") toolbarDefinition = args[0];
     if (name === "ShowError") messages.push(args[0]);
-    callback?.();
+    if (name === "GetCurrentSentence") callback?.(currentSentence);
+    else if (name === "InputText") {
+      insertedText = args[0];
+      callback?.();
+    } else callback?.();
   },
   callCommand(command, _close, _recalculate, callback) {
     const result = command();
@@ -204,13 +284,14 @@ const asc = {
   plugin,
   scope: {},
   editor: {
-    put_PrAlign(value) {
-      distributedValue = value;
+    put_TextPrFontName(value) {
+      appliedFont = value;
     },
   },
 };
 const pluginWindow = {
   Asc: asc,
+  OpenDeskTwTypography: tools,
   parent: {
     document: hostDocument,
     DE: {
@@ -273,9 +354,10 @@ keydownHandler({
   },
   stopPropagation() {},
 });
-assert.equal(distributedValue, 7);
+assert.equal(paragraphAlignment, "left");
+assert.equal(distributedSpacing, Math.round((((100 - 20) / 3) * 1440) / 25.4));
 assert.equal(prevented, true);
-distributedValue = undefined;
+distributedSpacing = undefined;
 keydownHandler({
   key: "j",
   code: "KeyJ",
@@ -288,10 +370,9 @@ keydownHandler({
   preventDefault() {},
   stopPropagation() {},
 });
-assert.equal(distributedValue, 7);
-asc.editor = undefined;
+assert.equal(distributedSpacing, Math.round((((100 - 20) / 3) * 1440) / 25.4));
 toolbarHandlers.get("opendesk-distributed")();
-assert.equal(internalDistributedValue, 7);
+assert.equal(distributedSpacing, Math.round((((100 - 20) / 3) * 1440) / 25.4));
 
 function press(overrides) {
   let prevented = false;
@@ -331,6 +412,22 @@ assert.equal(copiedFormatting, true);
 assert.equal(press({ key: "v", code: "KeyV", ctrlKey: true, altKey: true }), true);
 assert.equal(pastedFormatting, true);
 
+toolbarHandlers.get("opendesk-font-family-pmingliu")();
+assert.equal(appliedFont, "PMingLiU");
+toolbarHandlers.get("opendesk-font-family-mingliu")();
+assert.equal(appliedFont, "MingLiU");
+
+selectionParagraph.SetTextForTest("他說「外層『內層。");
+insertedText = "";
+assert.equal(press({ key: '"', code: "Quote", shiftKey: true }), true);
+assert.equal(insertedText, "』");
+selectionParagraph.SetTextForTest("他說「外層『內層。』");
+assert.equal(press({ key: '"', code: "Quote", shiftKey: true }), true);
+assert.equal(insertedText, "」");
+selectionParagraph.SetTextForTest("don");
+assert.equal(press({ key: "'", code: "Quote" }), true);
+assert.equal(insertedText, "'");
+
 toolbarHandlers.get("opendesk-renumber-headings")();
 assert.equal(headingParagraphs[0].GetText(), "壹、第一章");
 assert.equal(headingParagraphs[1].GetText(), "本文提到壹、一、（一）等格式，但這不是標題。");
@@ -341,4 +438,4 @@ assert.equal(headingParagraphs[0].style, "Heading 1");
 assert.equal(headingParagraphs[2].style, "Heading 2");
 assert.ok(messages.some((message) => message.includes("安全重編 4 個標題")));
 
-console.log("ONLYOFFICE 繁中寫作工具：60/60 項通過");
+console.log("ONLYOFFICE 繁中寫作工具：所有項目通過");

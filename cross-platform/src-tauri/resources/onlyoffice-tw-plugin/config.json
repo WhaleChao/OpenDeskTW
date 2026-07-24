@@ -4,13 +4,13 @@
     "zh": "繁中寫作工具（全能文件）"
   },
   "guid": "asc.{5CBF7C74-7021-4E8C-93F3-5A6C20260722}",
-  "version": "1.5.0",
+  "version": "1.6.0",
   "minVersion": "9.0.0",
   "variations": [
     {
-      "description": "補齊繁體中文介面、固定數字字級，並提供 Word 相容快捷鍵、標題重編、智慧標點與本機 MAGI 文件助理。",
+      "description": "補齊繁體中文介面、固定數字字級，並提供逐行分散對齊、台灣字型、即時智慧引號、Word 相容快捷鍵與本機 MAGI 文件助理。",
       "descriptionLocale": {
-        "zh": "補齊繁體中文介面、固定數字字級，並提供 Word 相容快捷鍵、標題重編、智慧標點與本機 MAGI 文件助理。"
+        "zh": "補齊繁體中文介面、固定數字字級，並提供逐行分散對齊、台灣字型、即時智慧引號、Word 相容快捷鍵與本機 MAGI 文件助理。"
       },
       "url": "index.html",
       "icons": ["resources/opendesk.svg"],
