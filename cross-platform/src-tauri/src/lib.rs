@@ -6,7 +6,7 @@ use regex::Regex;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
-use std::fs::{self, File};
+use std::fs::{self, File, OpenOptions};
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
@@ -367,8 +367,16 @@ fn python_candidates() -> Vec<PathBuf> {
     candidates
 }
 
+fn allow_python_pdf_core_fallback(
+    native_sidecar_available: bool,
+    explicitly_allowed: bool,
+) -> bool {
+    !native_sidecar_available || explicitly_allowed
+}
+
 fn acropdf_runtime_candidates() -> Vec<AcroPdfRuntime> {
     let mut candidates = Vec::new();
+    let mut native_sidecar_available = false;
     if let Ok(executable) = std::env::var("DOCUMENT_WORKBENCH_PDF_CORE") {
         candidates.push(AcroPdfRuntime {
             display_path: executable.clone(),
@@ -396,6 +404,7 @@ fn acropdf_runtime_candidates() -> Vec<AcroPdfRuntime> {
             .join("binaries")
             .join(name);
         if sidecar.is_file() {
+            native_sidecar_available = true;
             candidates.push(AcroPdfRuntime {
                 executable: sidecar.clone(),
                 prefix_args: Vec::new(),
@@ -412,6 +421,7 @@ fn acropdf_runtime_candidates() -> Vec<AcroPdfRuntime> {
                 binary_root.join("document-pdf-core")
             };
             if sidecar.is_file() {
+                native_sidecar_available = true;
                 candidates.push(AcroPdfRuntime {
                     executable: sidecar.clone(),
                     prefix_args: Vec::new(),
@@ -419,6 +429,18 @@ fn acropdf_runtime_candidates() -> Vec<AcroPdfRuntime> {
                 });
             }
         }
+    }
+
+    // 正式 App 與已完成 sidecar 建置的開發環境不得默默回退到使用者的
+    // 系統 Python。後者可能載入其他產品（例如 MAGI）的 user-site PyObjC，
+    // 在無視窗背景程序中誤啟動 AppKit。只有尚未建置 sidecar 的原始碼測試，
+    // 或開發者明確允許時，才使用 embedded_core.py 備援。
+    let explicitly_allowed = std::env::var("DOCUMENT_WORKBENCH_ALLOW_PYTHON_PDF_CORE")
+        .ok()
+        .as_deref()
+        == Some("1");
+    if !allow_python_pdf_core_fallback(native_sidecar_available, explicitly_allowed) {
+        return candidates;
     }
 
     let mut source_candidates =
@@ -3989,6 +4011,37 @@ fn distributed_paragraph_ids(custom_xml: &str) -> Result<BTreeSet<String>, Strin
         .collect())
 }
 
+fn distributed_dynamic_spacings(
+    custom_xml: &str,
+) -> Result<HashMap<String, BTreeSet<i64>>, String> {
+    let mut spacings = HashMap::new();
+    for marker in distributed_marker_values(custom_xml)? {
+        let Some(id) = marker
+            .get("id")
+            .and_then(normalize_distributed_paragraph_id)
+        else {
+            continue;
+        };
+        let Some(values) = marker.get("dynamicSpacings").and_then(Value::as_array) else {
+            continue;
+        };
+        let values = values
+            .iter()
+            .filter_map(|value| {
+                value
+                    .as_i64()
+                    .or_else(|| value.as_str()?.trim().parse::<i64>().ok())
+            })
+            .filter(|value| *value > 0 && *value <= 1_000_000)
+            .take(64)
+            .collect::<BTreeSet<_>>();
+        if !values.is_empty() {
+            spacings.insert(id, values);
+        }
+    }
+    Ok(spacings)
+}
+
 fn merge_distributed_marker_values(
     custom_xml: &str,
     requested_ids: &BTreeSet<String>,
@@ -4065,10 +4118,47 @@ fn document_paragraph_ids(document_xml: &str) -> BTreeSet<String> {
         .collect()
 }
 
-fn distributed_paragraph_xml(paragraph: &str) -> String {
+fn remove_transient_distributed_spacings(
+    paragraph: &str,
+    transient_spacings: Option<&BTreeSet<i64>>,
+) -> String {
+    let Some(transient_spacings) = transient_spacings else {
+        return paragraph.to_string();
+    };
+    if transient_spacings.is_empty() {
+        return paragraph.to_string();
+    }
+    let spacing = Regex::new(r#"(?s)<w:spacing\b[^>]*(?:/\s*>|>.*?</w:spacing\s*>)"#).unwrap();
+    let value = Regex::new(r#"\bw:val\s*=\s*["'](-?\d+)["']"#).unwrap();
+    let mut removals = spacing
+        .find_iter(paragraph)
+        .filter_map(|element| {
+            let spacing_value = value
+                .captures(element.as_str())?
+                .get(1)?
+                .as_str()
+                .parse::<i64>()
+                .ok()?;
+            transient_spacings
+                .contains(&spacing_value)
+                .then_some(element.range())
+        })
+        .collect::<Vec<_>>();
+    let mut output = paragraph.to_string();
+    for range in removals.drain(..).rev() {
+        output.replace_range(range, "");
+    }
+    output
+}
+
+fn distributed_paragraph_xml(
+    paragraph: &str,
+    transient_spacings: Option<&BTreeSet<i64>>,
+) -> String {
+    let paragraph = remove_transient_distributed_spacings(paragraph, transient_spacings);
     let distributed = r#"<w:jc w:val="distribute"/>"#;
     let ppr = Regex::new(r#"(?s)<w:pPr(?:\s[^>]*)?>.*?</w:pPr\s*>"#).unwrap();
-    if let Some(properties) = ppr.find(paragraph) {
+    if let Some(properties) = ppr.find(&paragraph) {
         let mut replacement = properties.as_str().to_string();
         let self_closing_jc = Regex::new(r#"<w:jc\b[^>]*/\s*>"#).unwrap();
         let paired_jc = Regex::new(r#"(?s)<w:jc\b[^>]*>.*?</w:jc\s*>"#).unwrap();
@@ -4080,14 +4170,14 @@ fn distributed_paragraph_xml(paragraph: &str) -> String {
         } else if let Some(closing) = replacement.rfind("</w:pPr") {
             replacement.insert_str(closing, distributed);
         }
-        let mut output = paragraph.to_string();
+        let mut output = paragraph.clone();
         output.replace_range(properties.start()..properties.end(), &replacement);
         return output;
     }
 
     let self_closing_ppr = Regex::new(r#"<w:pPr(?:\s[^>]*)?/\s*>"#).unwrap();
-    if let Some(properties) = self_closing_ppr.find(paragraph) {
-        let mut output = paragraph.to_string();
+    if let Some(properties) = self_closing_ppr.find(&paragraph) {
+        let mut output = paragraph.clone();
         output.replace_range(
             properties.start()..properties.end(),
             &format!("<w:pPr>{distributed}</w:pPr>"),
@@ -4096,17 +4186,18 @@ fn distributed_paragraph_xml(paragraph: &str) -> String {
     }
 
     let opening = Regex::new(r#"^<w:p(?:\s[^>]*)?>"#).unwrap();
-    if let Some(opening) = opening.find(paragraph) {
-        let mut output = paragraph.to_string();
+    if let Some(opening) = opening.find(&paragraph) {
+        let mut output = paragraph.clone();
         output.insert_str(opening.end(), &format!("<w:pPr>{distributed}</w:pPr>"));
         return output;
     }
-    paragraph.to_string()
+    paragraph
 }
 
 fn rewrite_distributed_document_xml(
     document_xml: &str,
     paragraph_ids: &BTreeSet<String>,
+    dynamic_spacings: &HashMap<String, BTreeSet<i64>>,
 ) -> (String, usize) {
     if paragraph_ids.is_empty() {
         return (document_xml.to_string(), 0);
@@ -4125,7 +4216,7 @@ fn rewrite_distributed_document_xml(
         if !paragraph_ids.contains(&id) {
             continue;
         }
-        let replacement = distributed_paragraph_xml(paragraph.as_str());
+        let replacement = distributed_paragraph_xml(paragraph.as_str(), dynamic_spacings.get(&id));
         if replacement != paragraph.as_str() {
             replacements.push((paragraph.start()..paragraph.end(), replacement));
         }
@@ -4206,11 +4297,13 @@ fn persist_distributed_alignment(
         return Err("文件仍在完成儲存，稍後會自動重試".into());
     }
     let mut paragraph_ids = distributed_paragraph_ids(&custom_xml)?;
+    let dynamic_spacings = distributed_dynamic_spacings(&custom_xml)?;
     paragraph_ids.extend(requested_ids.iter().cloned());
     if paragraph_ids.is_empty() {
         return Ok(0);
     }
-    let (rewritten, changed) = rewrite_distributed_document_xml(&document_xml, &paragraph_ids);
+    let (rewritten, changed) =
+        rewrite_distributed_document_xml(&document_xml, &paragraph_ids, &dynamic_spacings);
     let rewritten_custom = merge_distributed_marker_values(&custom_xml, &paragraph_ids)?;
     if changed == 0 && rewritten_custom == custom_xml {
         return Ok(0);
@@ -4236,7 +4329,9 @@ fn persist_distributed_alignment(
             .map_err(|error| error.to_string())?
             .permissions();
         fs::set_permissions(&temporary, permissions).map_err(|error| error.to_string())?;
-        File::open(&temporary)
+        OpenOptions::new()
+            .write(true)
+            .open(&temporary)
             .and_then(|file| file.sync_all())
             .map_err(|error| error.to_string())?;
         let verification_document = read_word_document_xml(&temporary)?;
@@ -5672,7 +5767,14 @@ mod tests {
 <w:p w14:paraId="11111111"><w:pPr><w:jc w:val="center"/></w:pPr><w:r><w:t>不可更動</w:t></w:r></w:p>
 </w:body></w:document>"#;
         let ids = BTreeSet::from(["18E20464".to_string(), "76E0EE1B".to_string()]);
-        let (rewritten, changed) = rewrite_distributed_document_xml(document_xml, &ids);
+        let dynamic_spacings =
+            HashMap::from([("18E20464".to_string(), BTreeSet::from([1512_i64]))]);
+        let document_xml = document_xml.replace(
+            "<w:r><w:t>甲乙丙丁</w:t></w:r>",
+            r#"<w:r><w:rPr><w:spacing w:val="1512"/></w:rPr><w:t>甲乙丙丁</w:t></w:r>"#,
+        );
+        let (rewritten, changed) =
+            rewrite_distributed_document_xml(&document_xml, &ids, &dynamic_spacings);
         assert_eq!(changed, 2);
         assert_eq!(
             rewritten.matches(r#"<w:jc w:val="distribute"/>"#).count(),
@@ -5680,7 +5782,12 @@ mod tests {
         );
         assert!(rewritten
             .contains(r#"<w:p w14:paraId="11111111"><w:pPr><w:jc w:val="center"/></w:pPr>"#));
-        let (stable, changed_again) = rewrite_distributed_document_xml(&rewritten, &ids);
+        assert!(
+            !rewritten.contains(r#"<w:spacing w:val="1512"/>"#),
+            "ONLYOFFICE 畫面用的動態字距不可寫死進 Word 文件"
+        );
+        let (stable, changed_again) =
+            rewrite_distributed_document_xml(&rewritten, &ids, &dynamic_spacings);
         assert_eq!(changed_again, 0);
         assert_eq!(stable, rewritten);
     }
@@ -5701,14 +5808,14 @@ mod tests {
         writer.start_file("word/document.xml", options).unwrap();
         writer
             .write_all(
-                r#"<w:document xmlns:w="w" xmlns:w14="w14"><w:body><w:p w14:paraId="18E20464"><w:pPr><w:jc w:val="left"/></w:pPr><w:r><w:t>甲乙丙丁</w:t></w:r></w:p><w:p w14:paraId="76E0EE1B"><w:pPr><w:jc w:val="left"/></w:pPr><w:r><w:t>第二段</w:t></w:r></w:p></w:body></w:document>"#
+                r#"<w:document xmlns:w="w" xmlns:w14="w14"><w:body><w:p w14:paraId="18E20464"><w:pPr><w:jc w:val="left"/></w:pPr><w:r><w:rPr><w:spacing w:val="1512"/></w:rPr><w:t>甲乙丙丁</w:t></w:r></w:p><w:p w14:paraId="76E0EE1B"><w:pPr><w:jc w:val="left"/></w:pPr><w:r><w:rPr><w:spacing w:val="240"/></w:rPr><w:t>第二段</w:t></w:r></w:p></w:body></w:document>"#
                     .as_bytes(),
             )
             .unwrap();
         writer.start_file("docProps/custom.xml", options).unwrap();
         writer
             .write_all(
-                br#"<Properties xmlns:vt="vt"><property name="OpenDeskTW.DistributedParagraphs"><vt:lpwstr>[{&quot;id&quot;:417465444}]</vt:lpwstr></property></Properties>"#,
+                br#"<Properties xmlns:vt="vt"><property name="OpenDeskTW.DistributedParagraphs"><vt:lpwstr>[{&quot;id&quot;:417465444,&quot;layout&quot;:&quot;word-paragraph-width&quot;,&quot;dynamicSpacings&quot;:[1512]}]</vt:lpwstr></property></Properties>"#,
             )
             .unwrap();
         writer
@@ -5722,12 +5829,17 @@ mod tests {
             persist_distributed_alignment(&source, &requested).unwrap(),
             2
         );
+        let persisted_document = read_word_document_xml(&source).unwrap();
         assert_eq!(
-            read_word_document_xml(&source)
-                .unwrap()
+            persisted_document
                 .matches(r#"<w:jc w:val="distribute"/>"#)
                 .count(),
             2
+        );
+        assert!(!persisted_document.contains(r#"<w:spacing w:val="1512"/>"#));
+        assert!(
+            persisted_document.contains(r#"<w:spacing w:val="240"/>"#),
+            "不是動態備援值的既有字距必須保留"
         );
         assert_eq!(
             persist_distributed_alignment(&source, &requested).unwrap(),
@@ -5777,10 +5889,15 @@ mod tests {
         assert!(code.contains("AscCommon.align_Distributed"));
         assert!(code.contains("OpenDeskTW.DistributedParagraphs"));
         assert!(code.contains("restoreDistributedAlignment()"));
-        assert!(code.contains("native-paragraph-with-persistent-marker"));
+        assert!(code.contains("word-paragraph-width"));
+        assert!(code.contains("Get_StartRangePos2"));
+        assert!(code.contains("availableWidth - occupiedWidth"));
+        assert!(code.contains("SetSpacing(job.spacing)"));
+        assert!(code.contains("marker.dynamicSpacings"));
+        assert!(code.contains("installDistributedLayoutRefresh"));
         assert!(code.contains("AscCommon?.Ne?.Ug?.(internalId)"));
         assert!(code.contains("Object.values(paragraph).find"));
-        assert!(code.contains("nativeParagraph.Vt(nativeDistributed)"));
+        assert!(code.contains("nativeParagraph.Vt?.(nativeDistributed)"));
         assert!(code.contains("installDistributedPersistenceHook"));
         assert!(code.contains("DesktopOfflineAppDocumentEndSave"));
         assert!(code.contains("AscDesktopEditor.OnSave"));
@@ -5789,10 +5906,10 @@ mod tests {
         assert!(code.contains("/v1/distributed-alignment"));
         assert!(code.contains("paragraph_ids: paragraphIds"));
         assert!(
-            code.find("nativeParagraph.Vt(nativeDistributed)")
-                < code.find("native-paragraph-with-persistent-marker")
+            code.find("availableWidth - occupiedWidth")
+                < code.find("method: \"word-paragraph-width\"")
         );
-        assert!(!code.contains("document.ForceRecalculate()"));
+        assert!(code.contains("document.ForceRecalculate?.()"));
         assert!(code.contains("AddToolbarMenuItem"));
         assert!(code.contains("id: \"home\""));
         assert!(code.contains("installWordCompatibilityShortcuts"));
@@ -5809,8 +5926,10 @@ mod tests {
         assert!(code.contains("PMingLiU"));
         assert!(code.contains("MingLiU"));
         assert!(code.contains("put_TextPrFontName"));
-        assert!(code.contains("controlWordFormatShortcut"));
-        assert!(code.contains("macWordFormatShortcut"));
+        assert!(code.contains("wordFormatShortcut"));
+        assert!(code.contains("event.stopImmediatePropagation?.()"));
+        assert!(code.contains("__OpenDeskTwFormatClipboard"));
+        assert!(code.contains("__OpenDeskTwFormatPaste"));
         assert!(code.contains("GetCurrentSentence\", [\"before\"]"));
         assert!(code.contains("executeMethod(\"InputText\""));
         assert!(code.contains("OpenDeskTwUiPatch"));
@@ -6224,6 +6343,20 @@ mod tests {
 
     #[test]
     fn persistent_pdf_core_reuses_process() {
+        if std::env::var("CODEX_SANDBOX").is_ok()
+            && std::env::var("OPENDESK_ALLOW_LOCAL_OFFICE_LIVE")
+                .ok()
+                .as_deref()
+                != Some("1")
+        {
+            assert!(
+                acropdf_runtime_candidates()
+                    .iter()
+                    .all(|runtime| !runtime.display_path.ends_with("embedded_core.py")),
+                "受限背景環境已有 sidecar 時不得回退到系統 Python"
+            );
+            return;
+        }
         let (status, _) =
             acropdf_call("--integration-status", None).expect("內建 PDF 核心應能以常駐模式啟動");
         assert_eq!(
@@ -6240,6 +6373,16 @@ mod tests {
             warm_started.elapsed() < Duration::from_secs(3),
             "PDF 核心沒有重用常駐程序"
         );
+    }
+
+    #[test]
+    fn packaged_pdf_core_does_not_fall_back_to_user_python() {
+        assert!(
+            !allow_python_pdf_core_fallback(true, false),
+            "已有原生 sidecar 時不得默默載入系統 Python user-site"
+        );
+        assert!(allow_python_pdf_core_fallback(false, false));
+        assert!(allow_python_pdf_core_fallback(true, true));
     }
 
     #[test]

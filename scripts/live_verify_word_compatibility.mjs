@@ -295,9 +295,21 @@ async function main() {
         try {
           const document = Api.GetDocument();
           const paragraph = document.GetCurrentParagraph();
+          document.ForceRecalculate?.();
+          const nativeParagraph = AscCommon?.Ne?.Ug?.(paragraph.GetInternalId?.());
+          const layoutRange =
+            (nativeParagraph?.Lines || nativeParagraph?.Xb)?.[0];
+          const measuredRange =
+            (layoutRange?.Ranges || layoutRange?.Of)?.[0];
           return {
             text: paragraph.GetText(),
-            publicAlignment: paragraph.GetParaPr().GetJc()
+            publicAlignment: paragraph.GetParaPr().GetJc(),
+            layout: measuredRange ? {
+              available:
+                Number(measuredRange.XEnd ?? measuredRange.tB) -
+                Number(measuredRange.X ?? measuredRange.ha),
+              occupied: Number(measuredRange.W ?? measuredRange.Da)
+            } : null
           };
         } catch (error) {
           return { error: String(error), stack: error?.stack || "" };
@@ -316,7 +328,11 @@ async function main() {
       `window.__OpenDeskTwWordShortcuts.applyDistributedAlignment()`,
       editorContextId,
     );
-    await delay(500);
+    await delay(750);
+    const distributedDiagnostic = await evaluate(
+      `window.__OpenDeskTwDistributedLayout || null`,
+      pluginContextId,
+    );
     const distributedAfter = await evaluate(`new Promise((resolve) => {
       Asc.plugin.callCommand(function () {
         const document = Api.GetDocument();
@@ -325,10 +341,21 @@ async function main() {
           return item.GetText().trim() === "甲乙丙丁";
         });
         const nativeParagraph = AscCommon?.Ne?.Ug?.(paragraph.GetInternalId());
+        document.ForceRecalculate?.();
+        const layoutLine =
+          (nativeParagraph?.Lines || nativeParagraph?.Xb)?.[0];
+        const layoutRange =
+          (layoutLine?.Ranges || layoutLine?.Of)?.[0];
         return {
           paraId: paragraph.GetParaId?.(),
           publicAlignment: paragraph.GetParaPr().GetJc(),
-          nativeAlignment: nativeParagraph?.fa?.ye
+          nativeAlignment: nativeParagraph?.fa?.ye,
+          layout: layoutRange ? {
+            available:
+              Number(layoutRange.XEnd ?? layoutRange.tB) -
+              Number(layoutRange.X ?? layoutRange.ha),
+            occupied: Number(layoutRange.W ?? layoutRange.Da)
+          } : null
         };
       }, false, false, resolve);
     })`, pluginContextId);
@@ -336,6 +363,87 @@ async function main() {
       distributedAfter.nativeAlignment,
       4,
       `文字等距分布沒有套用文件核心的 distribute=4：${JSON.stringify({ distributedBefore, distributedAfter })}`,
+    );
+    assert.equal(
+      distributedDiagnostic?.method,
+      "word-paragraph-width",
+      `沒有使用 Word 段落實際寬度演算法：${JSON.stringify(distributedDiagnostic)}`,
+    );
+    assert.ok(
+      distributedDiagnostic?.appliedRanges >= 1 &&
+        distributedDiagnostic?.spacings?.[0] > 0,
+      `沒有產生依版面量測的動態字距：${JSON.stringify(distributedDiagnostic)}`,
+    );
+    assert.ok(
+      distributedAfter.layout &&
+        Math.abs(
+          distributedAfter.layout.available - distributedAfter.layout.occupied,
+        ) <= Math.max(1, distributedAfter.layout.available * 0.05),
+      `文字沒有真正攤滿當下可用寬度：${JSON.stringify({ distributedBefore, distributedAfter, distributedDiagnostic })}`,
+    );
+
+    // 同一段改變右縮排後，必須依新的段落寬度重算，而不是重用固定字距。
+    await evaluate(`new Promise((resolve) => {
+      Asc.plugin.callCommand(function () {
+        const paragraphs = Api.GetDocument().GetAllParagraphs();
+        const paragraph = paragraphs.slice().reverse().find(function (item) {
+          return item.GetText().trim() === "甲乙丙丁";
+        });
+        paragraph.SetIndRight(1440);
+        paragraph.GetRange(0, paragraph.GetText().length).Select();
+        return true;
+      }, false, true, resolve);
+    })`, pluginContextId);
+    await evaluate(
+      `window.__OpenDeskTwWordShortcuts.applyDistributedAlignment()`,
+      editorContextId,
+    );
+    await delay(750);
+    const distributedAfterResize = await evaluate(
+      `window.__OpenDeskTwDistributedLayout || null`,
+      pluginContextId,
+    );
+    const distributedResizeLayout = await evaluate(`new Promise((resolve) => {
+      Asc.plugin.callCommand(function () {
+        const paragraph = Api.GetDocument().GetAllParagraphs().slice().reverse().find(function (item) {
+          return item.GetText().trim() === "甲乙丙丁";
+        });
+        const nativeParagraph = AscCommon?.Ne?.Ug?.(paragraph.GetInternalId());
+        Api.GetDocument().ForceRecalculate?.();
+        const line = (nativeParagraph?.Lines || nativeParagraph?.Xb)?.[0];
+        const range = (line?.Ranges || line?.Of)?.[0];
+        return range ? {
+          available:
+            Number(range.XEnd ?? range.tB) -
+            Number(range.X ?? range.ha),
+          occupied: Number(range.W ?? range.Da),
+          lines: (nativeParagraph?.Lines || nativeParagraph?.Xb)?.length || 0
+        } : null;
+      }, false, false, resolve);
+    })`, pluginContextId);
+    assert.ok(
+      distributedAfterResize?.spacings?.[0] > 0 &&
+        distributedAfterResize.spacings[0] !==
+          distributedDiagnostic.spacings[0],
+      `段落寬度改變後仍使用固定字距：${JSON.stringify({ before: distributedDiagnostic, resized: distributedAfterResize })}`,
+    );
+    assert.ok(
+      distributedAfterResize?.implementation === "word-layout-ranges-v2" &&
+        distributedAfterResize.preclearedRuns >= 1,
+      `沒有載入會先完成清除再量測的 1.9.2 實作：${JSON.stringify(distributedAfterResize)}`,
+    );
+    assert.ok(
+      distributedAfterResize.widths?.[0]?.available <
+        distributedDiagnostic.widths?.[0]?.available,
+      `右縮排後沒有量測到較窄的實際可用寬度：${JSON.stringify({ before: distributedDiagnostic, resized: distributedAfterResize })}`,
+    );
+    assert.ok(
+      distributedResizeLayout &&
+        Math.abs(
+          distributedResizeLayout.available -
+            distributedResizeLayout.occupied,
+        ) <= Math.max(1, distributedResizeLayout.available * 0.05),
+      `縮排改變後文字沒有重新攤滿新寬度：${JSON.stringify({ layout: distributedResizeLayout, diagnostic: distributedAfterResize })}`,
     );
     const distributedAfterScreenshot = await captureScreenshot(
       "distributed-alignment-after",
@@ -367,7 +475,7 @@ async function main() {
         const paragraph = Api.CreateParagraph();
         paragraph.AddText("新細明體LIVE");
         document.Push(paragraph);
-        document.MoveCursorToEnd();
+        paragraph.GetRange(0, "新細明體LIVE".length).Select();
         return true;
       }, false, true, resolve);
     })`, pluginContextId);
@@ -380,12 +488,23 @@ async function main() {
     const pmingliu = await evaluate(`new Promise((resolve) => {
       Asc.plugin.callCommand(function () {
         const paragraph = Api.GetDocument().GetCurrentParagraph();
-        const textPr = paragraph.GetRange(0, paragraph.GetText().length).GetTextPr();
+        const textPr = paragraph.GetRange(0, "新細明體LIVE".length).GetTextPr();
         return {
-          family: textPr.GetFontFamily()
+          family: textPr.GetFontFamily(),
+          eastAsia: textPr.GetFontFamily("eastAsia")
         };
       }, false, false, resolve);
     })`, pluginContextId);
+    assert.equal(
+      pmingliu.family,
+      "PMingLiU",
+      `新細明體沒有真正套用到選取文字：${JSON.stringify(pmingliu)}`,
+    );
+    assert.equal(
+      pmingliu.eastAsia,
+      "PMingLiU",
+      `新細明體沒有套用到中文字型槽：${JSON.stringify(pmingliu)}`,
+    );
     await forceLocalSave(editorContextId);
     const liveDocumentPath = process.env.OPENDESK_LIVE_DOCUMENT_PATH;
     if (liveDocumentPath && process.platform === "darwin") {
@@ -411,7 +530,21 @@ async function main() {
         /<w:jc\b[^>]*\bw:val=["']distribute["'][^>]*\/?>/,
         `DOCX 沒有寫入 Word 標準 distribute：${paragraph}`,
       );
-      distributedOoxml = { paraId, standardDistribute: true };
+      for (const spacing of distributedAfterResize.spacings || []) {
+        if (process.env.OPENDESK_LIVE_LEGACY_BRIDGE !== "1") {
+          assert.doesNotMatch(
+            paragraph,
+            new RegExp(`<w:spacing\\b[^>]*\\bw:val=["']${spacing}["']`),
+            `DOCX 不可把 ONLYOFFICE 畫面用字距 ${spacing} 寫死：${paragraph}`,
+          );
+        }
+      }
+      distributedOoxml = {
+        paraId,
+        standardDistribute: true,
+        transientSpacingRemoved:
+          process.env.OPENDESK_LIVE_LEGACY_BRIDGE !== "1",
+      };
     }
 
     await evaluate(
@@ -458,7 +591,7 @@ async function main() {
       }, false, true, resolve);
     })`, pluginContextId);
     assert.equal(formatFixture, true);
-    await press({ key: "c", code: "KeyC", virtualKeyCode: 67, modifiers: 10 });
+    await press({ key: "c", code: "KeyC", virtualKeyCode: 67, modifiers: 12 });
     await evaluate(`new Promise((resolve) => {
       Asc.plugin.callCommand(function () {
         const paragraphs = Api.GetDocument().GetAllParagraphs();
@@ -469,7 +602,7 @@ async function main() {
         return true;
       }, false, false, resolve);
     })`, pluginContextId);
-    await press({ key: "v", code: "KeyV", virtualKeyCode: 86, modifiers: 10 });
+    await press({ key: "v", code: "KeyV", virtualKeyCode: 86, modifiers: 12 });
     const formatCopyPaste = await evaluate(`new Promise((resolve) => {
       Asc.plugin.callCommand(function () {
         const paragraphs = Api.GetDocument().GetAllParagraphs();
@@ -483,7 +616,7 @@ async function main() {
     assert.equal(
       formatCopyPaste.bold,
       true,
-      "Ctrl+Shift+C／Ctrl+Shift+V 未把粗體格式套到目標文字",
+      "macOS Command+Shift+C／Command+Shift+V 未把粗體格式套到目標文字",
     );
 
     const seededHeading = await evaluate(`new Promise((resolve) => {
@@ -548,6 +681,9 @@ async function main() {
             restoredOnOpen: restoredDistribution,
             before: distributedBefore,
             after: distributedAfter,
+            dynamicLayout: distributedDiagnostic,
+            afterRightIndent: distributedAfterResize,
+            resizedLayout: distributedResizeLayout,
             ooxml: distributedOoxml,
             screenshots: {
               before: distributedBeforeScreenshot,

@@ -7,6 +7,7 @@
   let magiResultWindow = null;
   let magiResultPayload = null;
   let distributedPersistenceTimer = null;
+  let distributedLayoutTimer = null;
   const numericFontSizes = [9, 10, 10.5, 11, 12, 14, 16, 18, 20, 22, 24, 28, 36, 48, 72];
   const traditionalFonts = [
     { id: "pmingliu", name: "PMingLiU", text: "新細明體（PMingLiU）" },
@@ -447,18 +448,162 @@
     });
   }
 
-  function applyDistributedAlignment() {
+  function runDistributedLayout(mode, callback, preclearResult) {
+    window.Asc.scope.openDeskDistributedLayoutMode = String(mode || "selection");
+    if (!preclearResult) {
+      plugin.callCommand(
+        function () {
+          try {
+            const document = Api.GetDocument();
+            const customProperties = document.GetCustomProperties?.();
+            let markerIds = new Set();
+            try {
+              const stored = customProperties?.Get?.(
+                "OpenDeskTW.DistributedParagraphs",
+              );
+              const markers = stored ? JSON.parse(stored) : [];
+              markerIds = new Set(
+                (Array.isArray(markers) ? markers : [])
+                  .map(function (marker) {
+                    return marker?.id;
+                  })
+                  .filter(function (id) {
+                    return id !== undefined && id !== null && id !== "";
+                  })
+                  .map(String),
+              );
+            } catch (_error) {
+              markerIds = new Set();
+            }
+            let paragraphs;
+            if (Asc.scope.openDeskDistributedLayoutMode === "markers") {
+              paragraphs = document.GetAllParagraphs().filter(function (paragraph) {
+                return markerIds.has(String(paragraph.GetParaId?.() || ""));
+              });
+            } else {
+              const selection = document.GetRangeBySelect();
+              paragraphs = selection?.GetAllParagraphs?.() || [];
+              if (!paragraphs.length) {
+                const current = document.GetCurrentParagraph?.();
+                paragraphs = current ? [current] : [];
+              }
+            }
+            let clearedRuns = 0;
+            function clearDirectRunSpacing(container) {
+              const elementCount = Number(container?.GetElementsCount?.() || 0);
+              for (let index = 0; index < elementCount; index += 1) {
+                const element = container.GetElement?.(index);
+                if (!element) continue;
+                if (
+                  element.GetClassType?.() === "run" &&
+                  typeof element.SetSpacing === "function"
+                ) {
+                  element.SetSpacing(0);
+                  clearedRuns += 1;
+                } else {
+                  clearDirectRunSpacing(element);
+                }
+              }
+            }
+            paragraphs.forEach(function (paragraph) {
+              paragraph.SetJc?.("left");
+              const internalId = paragraph.GetInternalId?.();
+              const nativeParagraph = internalId
+                ? AscCommon?.Ne?.Ug?.(internalId)
+                : paragraph.Paragraph;
+              nativeParagraph?.Vt?.(
+                typeof AscCommon !== "undefined" &&
+                  Number.isFinite(AscCommon.align_Left)
+                  ? AscCommon.align_Left
+                  : 0,
+              );
+              clearDirectRunSpacing(paragraph);
+              paragraph.SetSpacing?.(0);
+            });
+            document.ForceRecalculate?.();
+            return {
+              applied: paragraphs.length,
+              clearedRuns,
+              completed: true,
+            };
+          } catch (error) {
+            return {
+              applied: 0,
+              clearedRuns: 0,
+              completed: false,
+              error: `${error?.name || "Error"}: ${error?.message || error}`,
+            };
+          }
+        },
+        false,
+        true,
+        function (result) {
+          const completed = result || { completed: true, clearedRuns: 0 };
+          runDistributedLayout(
+            mode,
+            function (layoutResult) {
+              if (layoutResult && typeof layoutResult === "object") {
+                layoutResult.preclearedRuns = Number(
+                  completed.clearedRuns || 0,
+                );
+                if (!layoutResult.error && completed.error) {
+                  layoutResult.error = completed.error;
+                }
+              }
+              callback?.(layoutResult);
+            },
+            completed,
+          );
+        },
+      );
+      return;
+    }
     plugin.callCommand(
       function () {
         try {
           const document = Api.GetDocument();
-          const selection = document.GetRangeBySelect();
-          let paragraphs = selection?.GetAllParagraphs?.() || [];
-          if (!paragraphs.length) {
-            const current = document.GetCurrentParagraph?.();
-            paragraphs = current ? [current] : [];
+          const customProperties = document.GetCustomProperties?.();
+          let markers = [];
+          try {
+            const stored = customProperties?.Get?.(
+              "OpenDeskTW.DistributedParagraphs",
+            );
+            markers = stored ? JSON.parse(stored) : [];
+            if (!Array.isArray(markers)) markers = [];
+          } catch (_error) {
+            markers = [];
           }
-          if (!paragraphs.length) return { applied: 0 };
+          const markerIds = new Set(
+            markers
+              .map(function (marker) {
+                return marker?.id;
+              })
+              .filter(function (id) {
+                return id !== undefined && id !== null && id !== "";
+              })
+              .map(String),
+          );
+          let paragraphs;
+          if (Asc.scope.openDeskDistributedLayoutMode === "markers") {
+            paragraphs = document.GetAllParagraphs().filter(function (paragraph) {
+              return markerIds.has(String(paragraph.GetParaId?.() || ""));
+            });
+          } else {
+            const selection = document.GetRangeBySelect();
+            paragraphs = selection?.GetAllParagraphs?.() || [];
+            if (!paragraphs.length) {
+              const current = document.GetCurrentParagraph?.();
+              paragraphs = current ? [current] : [];
+            }
+          }
+          if (!paragraphs.length) {
+            return {
+              applied: 0,
+              appliedRanges: 0,
+              markerCount: markerIds.size,
+              dynamic: true,
+            };
+          }
 
           const nativeDistributed =
             typeof AscCommon !== "undefined" &&
@@ -466,151 +611,377 @@
               ? AscCommon.align_Distributed
               : 4;
           const logicDocument = document.Document;
-          const nativeParagraphs = paragraphs
-            .map(function (paragraph) {
-              const internalId = paragraph.GetInternalId?.();
-              const registeredParagraph = internalId
-                ? AscCommon?.Ne?.Ug?.(internalId)
-                : undefined;
-              if (
-                registeredParagraph &&
-                typeof registeredParagraph.Vt === "function"
-              ) {
-                return registeredParagraph;
-              }
-              if (paragraph.Paragraph && typeof paragraph.Paragraph.Vt === "function") {
-                return paragraph.Paragraph;
-              }
-              // ONLYOFFICE 9.4 壓縮了 ApiParagraph 的原生段落欄位名稱
-              // （目前為 Ha）。依能力尋找，避免把相容性綁死在壓縮名稱上。
-              return Object.values(paragraph).find(function (candidate) {
-                return candidate && typeof candidate.Vt === "function";
-              });
-            })
-            .filter(Boolean);
-          if (nativeParagraphs.length === paragraphs.length) {
-            nativeParagraphs.forEach(function (nativeParagraph) {
-              nativeParagraph.Vt(nativeDistributed);
+          function nativeParagraphFor(paragraph) {
+            const internalId = paragraph.GetInternalId?.();
+            const registeredParagraph = internalId
+              ? AscCommon?.Ne?.Ug?.(internalId)
+              : undefined;
+            if (registeredParagraph) return registeredParagraph;
+            if (paragraph.Paragraph) return paragraph.Paragraph;
+            return Object.values(paragraph).find(function (candidate) {
+              return (
+                candidate &&
+                (typeof candidate.Vt === "function" ||
+                  Array.isArray(candidate.Lines))
+              );
             });
-
-            // ONLYOFFICE 9.4 會把未知的 distribute 段落值正規化成 left
-            // 才寫入 DOCX；把段落識別碼另存於自訂屬性，重開時立即還原。
-            const customProperties = document.GetCustomProperties?.();
-            if (customProperties) {
-              let markers = [];
-              try {
-                const stored = customProperties.Get(
-                  "OpenDeskTW.DistributedParagraphs",
-                );
-                markers = stored ? JSON.parse(stored) : [];
-              } catch (_error) {
-                markers = [];
+          }
+          function apiOffsetForPosition(internal, contentPosition) {
+            if (!contentPosition) return null;
+            const classes =
+              internal.GetClassesByPos?.(contentPosition) ||
+              internal.soa?.(contentPosition) ||
+              [];
+            const targetRun =
+              internal.GetClassByPos?.(contentPosition) ||
+              classes[classes.length - 1];
+            const checkRunContent =
+              internal.CheckRunContent || internal.hu;
+            if (!targetRun || typeof checkRunContent !== "function") {
+              return null;
+            }
+            const depth =
+              contentPosition.GetDepth?.() ??
+              contentPosition.Tc?.();
+            const runPosition =
+              typeof depth === "number"
+                ? (contentPosition.Get?.(depth) ??
+                  contentPosition.Ce?.(depth))
+                : undefined;
+            if (!Number.isFinite(runPosition)) return null;
+            let offset = 0;
+            let first = true;
+            let result = null;
+            checkRunContent.call(internal, function (run) {
+              if (result !== null) return;
+              if (!first) offset += 1;
+              first = false;
+              if (run === targetRun) {
+                result = offset + runPosition;
+                return;
               }
-              paragraphs.forEach(function (paragraph) {
-                let id = paragraph.GetParaId?.();
-                if (!id && typeof paragraph.SetParaId === "function") {
-                  id = Math.floor(Math.random() * 0xffffffff)
-                    .toString(16)
-                    .padStart(8, "0")
-                    .toUpperCase();
-                  paragraph.SetParaId(id);
-                }
-                const text = paragraph.GetText?.().trim() || "";
+              offset += run.Content?.length || run.aa?.length || 0;
+            });
+            return result;
+          }
+          let clearedRuns = 0;
+          function clearDirectRunSpacing(container) {
+            const elementCount = Number(container?.GetElementsCount?.() || 0);
+            for (let index = 0; index < elementCount; index += 1) {
+              const element = container.GetElement?.(index);
+              if (!element) continue;
+              if (
+                element.GetClassType?.() === "run" &&
+                typeof element.SetSpacing === "function"
+              ) {
+                element.SetSpacing(0);
+                clearedRuns += 1;
+              } else {
+                clearDirectRunSpacing(element);
+              }
+            }
+          }
+
+          // Word 的 wdAlignParagraphDistribute 不是固定字距，而是把每一行
+          // 的字元依該行當下可用寬度重新分布。ONLYOFFICE 9.4 雖保留核心值
+          // 4，畫面仍按靠左排版；上一輪的備援字距會切成直接格式 Run，
+          // 必須逐一清除後才能以縮排、欄寬或視窗的新寬度取得自然文字寬度。
+          paragraphs.forEach(function (paragraph) {
+            paragraph.SetJc?.("left");
+            nativeParagraphFor(paragraph)?.Vt?.(
+              typeof AscCommon !== "undefined" &&
+                Number.isFinite(AscCommon.align_Left)
+                ? AscCommon.align_Left
+                : 0,
+            );
+            clearDirectRunSpacing(paragraph);
+            paragraph.SetSpacing?.(0);
+            const paragraphTextLength = Array.from(
+              paragraph.GetText?.() || "",
+            ).length;
+            if (paragraphTextLength > 0) {
+              paragraph
+                .GetRange(0, paragraphTextLength)
+                ?.SetSpacing(0);
+            }
+          });
+          document.ForceRecalculate?.();
+
+          const jobs = [];
+          const spacingByParagraph = new Map();
+          let lineCount = 0;
+          let skipped = 0;
+          paragraphs.forEach(function (paragraph) {
+            const internal = nativeParagraphFor(paragraph);
+            // ONLYOFFICE 的非壓縮 SDK 使用 Lines/Ranges/X/XEnd/W；
+            // 9.4 桌面正式版會把同一欄位壓縮為 Xb/Of/ha/tB/Da，
+            // 兩種名稱都依實際物件讀取，避免把版本名稱誤當固定版面。
+            const lines = internal?.Lines || internal?.Xb || [];
+            lineCount += lines.length;
+            lines.forEach(function (line, lineIndex) {
+              (line.Ranges || line.Of || []).forEach(function (layoutRange, rangeIndex) {
+                const getStartRangePosition =
+                  internal.Get_StartRangePos2 || internal.BBa;
+                const getEndRangePosition =
+                  internal.Get_EndRangePos2 || internal.yBa;
+                const startPosition = getStartRangePosition?.call(
+                  internal,
+                  lineIndex,
+                  rangeIndex,
+                );
+                const endPosition = getEndRangePosition?.call(
+                  internal,
+                  lineIndex,
+                  rangeIndex,
+                  false,
+                );
+                const start = apiOffsetForPosition(internal, startPosition);
+                const end = apiOffsetForPosition(internal, endPosition);
+                const availableWidth =
+                  Number(layoutRange.XEnd ?? layoutRange.tB) -
+                  Number(layoutRange.X ?? layoutRange.ha);
+                const occupiedWidth = Number(
+                  layoutRange.W ?? layoutRange.Da,
+                );
                 if (
-                  id &&
-                  !markers.some(function (marker) {
-                    return marker && marker.id === id;
-                  })
+                  !Number.isFinite(start) ||
+                  !Number.isFinite(end) ||
+                  end - start < 2 ||
+                  !Number.isFinite(availableWidth) ||
+                  !Number.isFinite(occupiedWidth) ||
+                  availableWidth <= occupiedWidth
                 ) {
-                  markers.push({ id, text });
+                  skipped += 1;
+                  return;
                 }
+                const measuredRange = paragraph.GetRange(start, end);
+                const text = measuredRange?.GetText?.() || "";
+                const glyphCount = Array.from(text).filter(function (character) {
+                  return (
+                    character !== "\r" &&
+                    character !== "\n" &&
+                    character !== "\t"
+                  );
+                }).length;
+                if (glyphCount < 2) {
+                  skipped += 1;
+                  return;
+                }
+                const spacingMm =
+                  (availableWidth - occupiedWidth) / (glyphCount - 1);
+                const spacingTwips = Math.max(
+                  0,
+                  Math.round((spacingMm * 1440) / 25.4),
+                );
+                if (!spacingTwips) {
+                  skipped += 1;
+                  return;
+                }
+                jobs.push({
+                  paragraph,
+                  start,
+                  end: end - 1,
+                  spacing: spacingTwips,
+                  availableWidth,
+                  occupiedWidth,
+                  glyphCount,
+                });
               });
+            });
+          });
+          jobs.forEach(function (job) {
+            job.paragraph
+              .GetRange(job.start, job.end)
+              ?.SetSpacing(job.spacing);
+            const key = String(job.paragraph.GetParaId?.() || "");
+            if (!spacingByParagraph.has(key)) {
+              spacingByParagraph.set(key, new Set());
+            }
+            spacingByParagraph.get(key).add(job.spacing);
+          });
+
+          const nativeParagraphs = paragraphs
+            .map(nativeParagraphFor)
+            .filter(Boolean);
+          nativeParagraphs.forEach(function (nativeParagraph) {
+            nativeParagraph.Vt?.(nativeDistributed);
+          });
+          document.ForceRecalculate?.();
+          logicDocument?.Kc?.();
+          logicDocument?.Ue?.();
+          logicDocument?.td?.();
+
+          // 留下段落 ID 與本次 ONLYOFFICE 畫面備援字距。桌面橋接會在
+          // DOCX 中移除這些暫時字距，只保留 Word 標準 distribute，
+          // 所以 Word 會依自己的版面寬度重新計算，不會變成固定值。
+          if (customProperties) {
+            const markerById = new Map(
+              markers
+                .filter(function (marker) {
+                  return marker && marker.id !== undefined;
+                })
+                .map(function (marker) {
+                  return [String(marker.id), marker];
+                }),
+            );
+            paragraphs.forEach(function (paragraph) {
+              let id = paragraph.GetParaId?.();
+              if (!id && typeof paragraph.SetParaId === "function") {
+                id = Math.floor(Math.random() * 0xffffffff)
+                  .toString(16)
+                  .padStart(8, "0")
+                  .toUpperCase();
+                paragraph.SetParaId(id);
+              }
+              if (!id) return;
+              const key = String(id);
+              const marker = markerById.get(key) || { id };
+              marker.id = id;
+              marker.text = paragraph.GetText?.().trim() || "";
+              marker.layout = "word-paragraph-width";
+              marker.dynamicSpacings = Array.from(
+                new Set(
+                  (Array.isArray(marker.dynamicSpacings)
+                    ? marker.dynamicSpacings
+                    : []
+                  )
+                    .filter(function (value) {
+                      return Number.isFinite(Number(value)) && Number(value) > 0;
+                    })
+                    .map(Number)
+                    .concat(
+                      Array.from(spacingByParagraph.get(key) || []),
+                    ),
+                ),
+              ).slice(-64);
+              markerById.set(key, marker);
+            });
+            const nextMarkers = Array.from(markerById.values()).slice(-500);
+            const nextStored = JSON.stringify(nextMarkers);
+            const previousStored = customProperties.Get(
+              "OpenDeskTW.DistributedParagraphs",
+            );
+            if (nextStored !== previousStored) {
               customProperties.Add(
                 "OpenDeskTW.DistributedParagraphs",
-                JSON.stringify(markers.slice(-500)),
+                nextStored,
               );
             }
-            logicDocument?.Kc?.();
-            logicDocument?.Ue?.();
-            logicDocument?.td?.();
-            return {
-              applied: paragraphs.length,
-              method: "native-paragraph-with-persistent-marker",
-              value: nativeDistributed,
-            };
+            markers = nextMarkers;
           }
 
           return {
-            applied: 0,
-            error: "這個編輯器版本沒有提供原生分散對齊介面。",
+            applied: paragraphs.length,
+            appliedRanges: jobs.length,
+            skipped,
+            lines: lineCount,
+            markerCount: markers.length,
+            dynamic: true,
+            method: "word-paragraph-width",
+            implementation: "word-layout-ranges-v2",
+            clearedRuns,
+            value: nativeDistributed,
+            spacings: Array.from(
+              new Set(
+                jobs.map(function (job) {
+                  return job.spacing;
+                }),
+              ),
+            ),
+            widths: jobs.slice(0, 20).map(function (job) {
+              return {
+                available: job.availableWidth,
+                occupiedBefore: job.occupiedWidth,
+                glyphs: job.glyphCount,
+                spacing: job.spacing,
+              };
+            }),
           };
         } catch (error) {
           return {
             applied: 0,
+            appliedRanges: 0,
             error: `${error?.name || "Error"}: ${error?.message || error}`,
           };
         }
       },
       false,
       true,
+      callback,
+    );
+  }
+
+  function applyDistributedAlignment() {
+    runDistributedLayout(
+      "selection",
       function (result) {
+        window.__OpenDeskTwDistributedLayout = result;
         if (result?.error) {
           showMessage(`分散對齊發生錯誤：${result.error}`);
-        } else if (!result?.applied) {
-          showMessage("目前沒有可分散對齊的段落。");
+        } else if (!result?.appliedRanges) {
+          showMessage(
+            "目前段落沒有至少兩個可分散的字元，或版面寬度尚未完成計算。",
+          );
         }
         focusEditor();
       },
     );
   }
 
-  function restoreDistributedAlignment() {
-    plugin.callCommand(
-      function () {
-        try {
-          const document = Api.GetDocument();
-          const customProperties = document.GetCustomProperties?.();
-          if (!customProperties) return { restored: 0 };
-          const stored = customProperties.Get("OpenDeskTW.DistributedParagraphs");
-          if (!stored) return { restored: 0 };
-          const markers = JSON.parse(stored);
-          if (!Array.isArray(markers) || !markers.length) return { restored: 0 };
-          const markerIds = new Set(
-            markers.map(function (marker) {
-              return marker?.id;
-            }),
-          );
-          const nativeDistributed =
-            typeof AscCommon !== "undefined" &&
-            Number.isFinite(AscCommon.align_Distributed)
-              ? AscCommon.align_Distributed
-              : 4;
-          let restored = 0;
-          document.GetAllParagraphs().forEach(function (paragraph) {
-            if (!markerIds.has(paragraph.GetParaId?.())) return;
-            const internalId = paragraph.GetInternalId?.();
-            const nativeParagraph = internalId
-              ? AscCommon?.Ne?.Ug?.(internalId)
-              : undefined;
-            if (!nativeParagraph || typeof nativeParagraph.Vt !== "function") return;
-            nativeParagraph.Vt(nativeDistributed);
-            restored += 1;
-          });
-          const logicDocument = document.Document;
-          logicDocument?.Kc?.();
-          logicDocument?.Ue?.();
-          logicDocument?.td?.();
-          return { restored };
-        } catch (_error) {
-          return { restored: 0 };
-        }
-      },
-      false,
-      true,
-      function () {
-        focusEditor();
-      },
-    );
+  function restoreDistributedAlignment(focusAfter, attempt) {
+    runDistributedLayout("markers", function (result) {
+      window.__OpenDeskTwDistributedLayout = result;
+      if (
+        result?.markerCount &&
+        !result?.appliedRanges &&
+        Number(attempt || 0) < 4
+      ) {
+        const nextAttempt = Number(attempt || 0) + 1;
+        window.setTimeout(function () {
+          restoreDistributedAlignment(false, nextAttempt);
+        }, 250 * 2 ** Number(attempt || 0));
+      }
+      if (focusAfter !== false) focusEditor();
+    });
+  }
+
+  function scheduleDistributedLayoutRefresh(delay) {
+    if (distributedLayoutTimer) window.clearTimeout(distributedLayoutTimer);
+    distributedLayoutTimer = window.setTimeout(function () {
+      distributedLayoutTimer = null;
+      restoreDistributedAlignment(false, 0);
+    }, Number(delay || 250));
+  }
+
+  function installDistributedLayoutRefresh(hostWindow) {
+    try {
+      if (!hostWindow) return false;
+      const stateKey = "__OpenDeskTwDistributedLayoutHook";
+      const previous = hostWindow[stateKey];
+      if (previous) {
+        hostWindow.removeEventListener?.("resize", previous.refresh);
+        hostWindow.document?.removeEventListener?.(
+          "pointerup",
+          previous.refresh,
+          true,
+        );
+        hostWindow.document?.removeEventListener?.(
+          "keyup",
+          previous.refresh,
+          true,
+        );
+      }
+      const refresh = function () {
+        scheduleDistributedLayoutRefresh(250);
+      };
+      hostWindow.addEventListener?.("resize", refresh);
+      hostWindow.document?.addEventListener?.("pointerup", refresh, true);
+      hostWindow.document?.addEventListener?.("keyup", refresh, true);
+      hostWindow[stateKey] = { guid: plugin.guid, refresh };
+      return true;
+    } catch (_error) {
+      return false;
+    }
   }
 
   function applyTraditionalFont(fontName) {
@@ -665,6 +1036,10 @@
       false,
       function (copied) {
         wordFormatClipboardReady = Boolean(copied);
+        window.__OpenDeskTwFormatClipboard = {
+          ready: wordFormatClipboardReady,
+          copiedAt: wordFormatClipboardReady ? Date.now() : null,
+        };
         if (!copied) showMessage("這個編輯器版本無法複製目前選取範圍的格式。");
         focusEditor();
       },
@@ -693,9 +1068,13 @@
       false,
       true,
       function (pasted) {
+        window.__OpenDeskTwFormatPaste = {
+          ok: Boolean(pasted),
+          pastedAt: pasted ? Date.now() : null,
+        };
         if (!pasted) {
           showMessage(
-            "尚未複製格式；請先選取來源文字並按 Ctrl+Shift+C／Ctrl+Alt+C，macOS 請按 ⌘⌥C。",
+            "尚未複製格式；請先選取來源文字並按 Ctrl+Shift+C，macOS 也可按 ⇧⌘C。",
           );
         }
         focusEditor();
@@ -977,7 +1356,7 @@
         hostWindow.document.removeEventListener("keydown", previous.handler, true);
       }
       const handler = function (event) {
-        if (!event || event.repeat || event.isComposing || event.defaultPrevented) return;
+        if (!event || event.repeat || event.isComposing) return;
         const target = event.target;
         if (
           target &&
@@ -986,12 +1365,18 @@
         const rawKey = String(event.key || "");
         const key = rawKey.toLowerCase();
         const command = event.ctrlKey || event.metaKey;
-        const controlWordFormatShortcut =
-          event.ctrlKey && !event.metaKey && (event.shiftKey || event.altKey);
-        const macWordFormatShortcut =
-          event.metaKey &&
-          !event.ctrlKey &&
-          (event.altKey || (event.shiftKey && key === "c"));
+        // Word 的格式複製／套用在 Windows 是 Ctrl+Shift+C/V，在 macOS
+        // 是 Command+Shift+C/V。也接受使用者在 Mac 上按實體 Control，
+        // 並保留既有的 Ctrl/Command+Option 備援組合。
+        const wordFormatShortcut =
+          (event.ctrlKey &&
+            !event.metaKey &&
+            ((event.shiftKey && !event.altKey) ||
+              (event.altKey && !event.shiftKey))) ||
+          (event.metaKey &&
+            !event.ctrlKey &&
+            ((event.shiftKey && !event.altKey) ||
+              (event.altKey && !event.shiftKey)));
         let action = null;
         if (
           !event.ctrlKey &&
@@ -1008,14 +1393,13 @@
           action = renumberHeadingsInDocument;
         } else if (
           key === "c" &&
-          (controlWordFormatShortcut || macWordFormatShortcut)
+          wordFormatShortcut
         ) {
           action = copyFormatting;
         } else if (
           key === "v" &&
-          ((controlWordFormatShortcut &&
-            (event.altKey || wordFormatClipboardReady)) ||
-            (event.metaKey && !event.ctrlKey && event.altKey && !event.shiftKey))
+          wordFormatShortcut &&
+          (event.altKey || wordFormatClipboardReady)
         ) {
           action = pasteFormatting;
         } else if (command && !event.shiftKey && !event.altKey && ["1", "2", "5"].includes(key)) {
@@ -1069,6 +1453,7 @@
         if (!action) return;
         event.preventDefault();
         event.stopPropagation();
+        event.stopImmediatePropagation?.();
         action();
       };
       hostWindow.document.addEventListener("keydown", handler, true);
@@ -1122,17 +1507,14 @@
   function showShortcuts() {
     showMessage(
       [
-        "格式複製：Windows／Linux Ctrl+Alt+C；macOS ⌘⌥C",
-        "套用格式：Windows／Linux Ctrl+Alt+V；macOS ⌘⌥V",
-        "只貼文字：Ctrl／⌘+Shift+V",
+        "格式複製：Windows／Linux Ctrl+Shift+C；macOS ⇧⌘C",
+        "套用格式：Windows／Linux Ctrl+Shift+V；macOS ⇧⌘V",
+        "備援：Ctrl+Alt+C／V；macOS ⌘⌥C／V",
         "清除格式：Ctrl+Space；macOS ⌘+Fn+Space",
         "字級顯示：一律使用 9、10.5、12 等數字，不混用初號、五號等名稱",
         "粗體／斜體／底線：Ctrl／⌘+B、I、U",
         "靠左／置中／左右對齊：Ctrl／⌘+L、E、J",
         "文字等距分布：Windows／Linux Ctrl+Shift+J；macOS ⇧⌘J",
-        "複製格式：Ctrl+Shift+C 或 Ctrl+Alt+C；macOS ⌘⌥C（也支援 ⇧⌘C）",
-        "套用格式：Ctrl+Shift+V 或 Ctrl+Alt+V；macOS ⌘⌥V",
-        "macOS ⇧⌘V 保留給 Word 的「只貼文字」",
         "智慧下引號：輸入引號時，會依目前尚未閉合的「／『自動選擇」或』",
         "台灣字型：全能文件 → 台灣字型，可直接選新細明體或細明體",
         "行距：Ctrl／⌘+1 單行、+2 雙行、+5 1.5 倍",
@@ -1289,6 +1671,7 @@
     if (plugin.info.editorType !== "word") return;
     installWordCompatibilityShortcuts(window.parent);
     installDistributedPersistenceHook(window.parent);
+    installDistributedLayoutRefresh(window.parent);
     if (!toolbarEventsBound) {
       this.attachToolbarMenuClickEvent("opendesk-distributed", applyDistributedAlignment);
       this.attachToolbarMenuClickEvent("opendesk-complete-pairs", completePairedPunctuation);
@@ -1330,8 +1713,8 @@
     }
     addTraditionalChineseToolbar();
     restoreDistributedAlignment();
-    // 把 2.7.3 已存在的持久標記遷移為 Word 標準的 w:jc="distribute"。
-    // 新套用的段落則在每次本機存檔成功後由上方 hook 寫回。
+    // 已存在的標記會依目前頁面／儲存格／縮排寬度重新排版；存檔時只把
+    // Word 標準 w:jc="distribute" 寫回，不保留畫面備援的固定字距。
     scheduleDistributedPersistence(window.parent, 1200, 0);
   };
 

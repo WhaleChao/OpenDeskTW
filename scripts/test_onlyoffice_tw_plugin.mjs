@@ -64,13 +64,18 @@ assert.match(pluginCode, /event\.code === "KeyJ"/);
 assert.match(pluginCode, /AscCommon\.align_Distributed/);
 assert.match(pluginCode, /OpenDeskTW\.DistributedParagraphs/);
 assert.match(pluginCode, /restoreDistributedAlignment\(\)/);
-assert.match(pluginCode, /native-paragraph-with-persistent-marker/);
+assert.match(pluginCode, /method: "word-paragraph-width"/);
+assert.match(pluginCode, /Get_StartRangePos2/);
+assert.match(pluginCode, /availableWidth - occupiedWidth/);
+assert.match(pluginCode, /SetSpacing\(job\.spacing\)/);
+assert.match(pluginCode, /marker\.dynamicSpacings/);
+assert.match(pluginCode, /installDistributedLayoutRefresh\(window\.parent\)/);
 assert.match(pluginCode, /AscCommon\?\.Ne\?\.Ug\?\.\(internalId\)/);
 assert.match(pluginCode, /Object\.values\(paragraph\)\.find/);
 assert.ok(
-  pluginCode.indexOf("nativeParagraph.Vt(nativeDistributed)") <
-    pluginCode.indexOf('method: "native-paragraph-with-persistent-marker"'),
-  "文字等距分布必須套用文件核心並留下可供重開還原的標記",
+  pluginCode.indexOf("availableWidth - occupiedWidth") <
+    pluginCode.indexOf('method: "word-paragraph-width"'),
+  "文字等距分布必須先按實際可用寬度計算，而不是只寫固定對齊值",
 );
 assert.match(pluginCode, /id: "opendesk-font-family"/);
 assert.match(pluginCode, /PMingLiU/);
@@ -182,7 +187,8 @@ function makeParagraph(initialText) {
         },
         SetSpacing(value) {
           distributedSpacing = value;
-          layoutRange.W = layoutRange.XEnd - layoutRange.X;
+          layoutRange.W =
+            value === 0 ? 20 : layoutRange.XEnd - layoutRange.X;
           return true;
         },
       };
@@ -461,6 +467,22 @@ keydownHandler({
 });
 assert.equal(paragraphAlignment, 4);
 assert.equal(prevented, true);
+assert.equal(distributedSpacing, 1512);
+assert.equal(pluginWindow.__OpenDeskTwDistributedLayout.dynamic, true);
+assert.equal(
+  pluginWindow.__OpenDeskTwDistributedLayout.method,
+  "word-paragraph-width",
+);
+assert.equal(pluginWindow.__OpenDeskTwDistributedLayout.appliedRanges, 1);
+assert.deepEqual(
+  JSON.parse(JSON.stringify(pluginWindow.__OpenDeskTwDistributedLayout.widths[0])),
+  {
+    available: 100,
+    occupiedBefore: 20,
+    glyphs: 4,
+    spacing: 1512,
+  },
+);
 paragraphAlignment = undefined;
 keydownHandler({
   key: "j",
@@ -528,10 +550,22 @@ assert.equal(copiedFormatting, true);
 assert.equal(press({ key: "v", code: "KeyV", metaKey: true, altKey: true }), true);
 assert.equal(pastedFormatting, true);
 assert.equal(
-  press({ key: "v", code: "KeyV", metaKey: true, shiftKey: true }),
-  false,
-  "macOS ⇧⌘V 必須保留給 Word 的只貼文字",
+  press({ key: "c", code: "KeyC", metaKey: true, shiftKey: true }),
+  true,
+  "macOS ⇧⌘C 必須複製格式",
 );
+assert.equal(
+  press({
+    key: "v",
+    code: "KeyV",
+    metaKey: true,
+    shiftKey: true,
+    defaultPrevented: true,
+  }),
+  true,
+  "即使 ONLYOFFICE 先標記事件，macOS ⇧⌘V 仍必須套用格式",
+);
+assert.equal(pastedFormatting, true);
 
 toolbarHandlers.get("opendesk-font-family-pmingliu")();
 assert.equal(appliedFont, "PMingLiU");
