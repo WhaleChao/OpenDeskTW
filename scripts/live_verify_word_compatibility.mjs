@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import { mkdir, writeFile } from "node:fs/promises";
 
 const port = Number(process.argv[2] || 9231);
@@ -325,6 +326,7 @@ async function main() {
         });
         const nativeParagraph = AscCommon?.Ne?.Ug?.(paragraph.GetInternalId());
         return {
+          paraId: paragraph.GetParaId?.(),
           publicAlignment: paragraph.GetParaPr().GetJc(),
           nativeAlignment: nativeParagraph?.fa?.ye
         };
@@ -339,6 +341,7 @@ async function main() {
       "distributed-alignment-after",
     );
     await forceLocalSave(editorContextId);
+    let distributedOoxml;
 
     const installedFonts = await evaluate(
       `new Promise((resolve) => Asc.plugin.executeMethod("GetFontList", [], resolve))`,
@@ -384,6 +387,32 @@ async function main() {
       }, false, false, resolve);
     })`, pluginContextId);
     await forceLocalSave(editorContextId);
+    const liveDocumentPath = process.env.OPENDESK_LIVE_DOCUMENT_PATH;
+    if (liveDocumentPath && process.platform === "darwin") {
+      await delay(3500);
+      const documentXml = execFileSync(
+        "/usr/bin/unzip",
+        ["-p", liveDocumentPath, "word/document.xml"],
+        { encoding: "utf8" },
+      );
+      const paraId =
+        typeof distributedAfter.paraId === "number"
+          ? distributedAfter.paraId.toString(16).padStart(8, "0").toUpperCase()
+          : String(distributedAfter.paraId || "").padStart(8, "0").toUpperCase();
+      const paragraph = documentXml.match(
+        new RegExp(
+          `<w:p[^>]*w14:paraId=["']${paraId}["'][^>]*>.*?</w:p>`,
+          "s",
+        ),
+      )?.[0];
+      assert.ok(paragraph, `DOCX 找不到分散對齊段落 ${paraId}`);
+      assert.match(
+        paragraph,
+        /<w:jc\b[^>]*\bw:val=["']distribute["'][^>]*\/?>/,
+        `DOCX 沒有寫入 Word 標準 distribute：${paragraph}`,
+      );
+      distributedOoxml = { paraId, standardDistribute: true };
+    }
 
     await evaluate(
       `new Promise((resolve) => Asc.plugin.executeMethod("FocusEditor", [], resolve))`,
@@ -519,6 +548,7 @@ async function main() {
             restoredOnOpen: restoredDistribution,
             before: distributedBefore,
             after: distributedAfter,
+            ooxml: distributedOoxml,
             screenshots: {
               before: distributedBeforeScreenshot,
               after: distributedAfterScreenshot,

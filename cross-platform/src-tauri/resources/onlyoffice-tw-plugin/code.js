@@ -6,6 +6,7 @@
   let wordFormatClipboardReady = false;
   let magiResultWindow = null;
   let magiResultPayload = null;
+  let distributedPersistenceTimer = null;
   const numericFontSizes = [9, 10, 10.5, 11, 12, 14, 16, 18, 20, 22, 24, 28, 36, 48, 72];
   const traditionalFonts = [
     { id: "pmingliu", name: "PMingLiU", text: "新細明體（PMingLiU）" },
@@ -119,6 +120,178 @@
       return { ok: false, message: magiBridgeConnectionMessage() };
     } finally {
       window.clearTimeout(timeout);
+    }
+  }
+
+  function editorSourcePath(hostWindow) {
+    try {
+      const desktop = hostWindow?.AscDesktopEditor;
+      if (!desktop || typeof desktop.LocalFileGetSourcePath !== "function") return "";
+      return String(desktop.LocalFileGetSourcePath() || "");
+    } catch (_) {
+      return "";
+    }
+  }
+
+  function collectNativeDistributedParagraphIds() {
+    return new Promise(function (resolve) {
+      plugin.callCommand(
+        function () {
+          const document = Api.GetDocument();
+          let ids = [];
+          try {
+            const stored = document
+              .GetCustomProperties?.()
+              ?.Get?.("OpenDeskTW.DistributedParagraphs");
+            const markers = stored ? JSON.parse(stored) : [];
+            ids = Array.isArray(markers)
+              ? markers.map(function (marker) {
+                  return marker?.id;
+                })
+              : [];
+          } catch (_) {
+            ids = [];
+          }
+          const nativeIds = document
+            .GetAllParagraphs()
+            .filter(function (paragraph) {
+              const internalId = paragraph.GetInternalId?.();
+              const registeredParagraph = internalId
+                ? AscCommon?.Ne?.Ug?.(internalId)
+                : undefined;
+              const nativeParagraph =
+                registeredParagraph ||
+                paragraph.Paragraph ||
+                Object.values(paragraph).find(function (candidate) {
+                  return candidate && typeof candidate.Vt === "function";
+                });
+              return nativeParagraph?.fa?.ye === 4;
+            })
+            .map(function (paragraph) {
+              return paragraph.GetParaId?.();
+            })
+            .filter(Boolean);
+          return Array.from(
+            new Map(
+              ids
+                .concat(nativeIds)
+                .filter(Boolean)
+                .map(function (id) {
+                  return [String(id), id];
+                }),
+            ).values(),
+          );
+        },
+        false,
+        false,
+        function (ids) {
+          resolve(Array.isArray(ids) ? ids.slice(0, 500) : []);
+        },
+      );
+    });
+  }
+
+  async function persistDistributedAlignment(hostWindow, attempt) {
+    const sourcePath = editorSourcePath(hostWindow);
+    if (!sourcePath || !/\.(docx|docm)$/i.test(sourcePath)) return;
+    const paragraphIds = await collectNativeDistributedParagraphIds();
+    if (!paragraphIds.length) return;
+    const bridge = await reloadMagiBridgeConfig();
+    const distributedUrl =
+      bridge?.distributedUrl ||
+      String(bridge?.url || "").replace(/\/v1\/analyze$/, "/v1/distributed-alignment");
+    if (!distributedUrl || !bridge?.token) return;
+    try {
+      const response = await window.fetch(distributedUrl, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${bridge.token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ path: sourcePath, paragraph_ids: paragraphIds }),
+        cache: "no-store",
+      });
+      const result = await response.json().catch(function () {
+        return {};
+      });
+      window.__OpenDeskTwDistributedPersistence = {
+        ok: Boolean(response.ok && result.ok),
+        path: sourcePath,
+        applied: Number(result.applied || 0),
+        status: response.status,
+      };
+      if (!response.ok || !result.ok) throw new Error(result.error || response.status);
+    } catch (error) {
+      window.__OpenDeskTwDistributedPersistence = {
+        ok: false,
+        path: sourcePath,
+        error: String(error?.message || error),
+      };
+      if (attempt < 4) {
+        scheduleDistributedPersistence(hostWindow, 300 * 2 ** attempt, attempt + 1);
+      }
+    }
+  }
+
+  function scheduleDistributedPersistence(hostWindow, delay, attempt) {
+    if (distributedPersistenceTimer) window.clearTimeout(distributedPersistenceTimer);
+    distributedPersistenceTimer = window.setTimeout(function () {
+      distributedPersistenceTimer = null;
+      persistDistributedAlignment(hostWindow, Number(attempt || 0));
+    }, Number(delay || 150));
+  }
+
+  function installDistributedPersistenceHook(hostWindow) {
+    try {
+      if (!hostWindow) return false;
+      const stateKey = "__OpenDeskTwDistributedSaveHook";
+      const previous = hostWindow[stateKey];
+      if (
+        previous?.wrapper &&
+        previous?.original &&
+        hostWindow.DesktopOfflineAppDocumentEndSave === previous.wrapper
+      ) {
+        hostWindow.DesktopOfflineAppDocumentEndSave = previous.original;
+      }
+      if (
+        previous?.onSaveWrapper &&
+        previous?.originalOnSave &&
+        hostWindow.AscDesktopEditor?.OnSave === previous.onSaveWrapper
+      ) {
+        hostWindow.AscDesktopEditor.OnSave = previous.originalOnSave;
+      }
+      const original = hostWindow.DesktopOfflineAppDocumentEndSave;
+      if (typeof original !== "function") return false;
+      const wrapper = function () {
+        const result = original.apply(this, arguments);
+        if (Number(arguments[0]) === 0) {
+          scheduleDistributedPersistence(hostWindow, 150, 0);
+        }
+        return result;
+      };
+      hostWindow.DesktopOfflineAppDocumentEndSave = wrapper;
+      const originalOnSave = hostWindow.AscDesktopEditor?.OnSave;
+      let onSaveWrapper;
+      if (typeof originalOnSave === "function") {
+        onSaveWrapper = function () {
+          const result = originalOnSave.apply(this, arguments);
+          // OnSave 代表 SDK 已產生要交給桌面程式的文件；原生檔案寫入完成
+          // 可能略晚於此回呼，延後再由橋接檢查段落 ID，未完成時自動重試。
+          scheduleDistributedPersistence(hostWindow, 1800, 0);
+          return result;
+        };
+        hostWindow.AscDesktopEditor.OnSave = onSaveWrapper;
+      }
+      hostWindow[stateKey] = {
+        guid: plugin.guid,
+        original,
+        wrapper,
+        originalOnSave,
+        onSaveWrapper,
+      };
+      return true;
+    } catch (_) {
+      return false;
     }
   }
 
@@ -1115,6 +1288,7 @@
     window.OpenDeskTwUiPatch?.install?.(window.parent);
     if (plugin.info.editorType !== "word") return;
     installWordCompatibilityShortcuts(window.parent);
+    installDistributedPersistenceHook(window.parent);
     if (!toolbarEventsBound) {
       this.attachToolbarMenuClickEvent("opendesk-distributed", applyDistributedAlignment);
       this.attachToolbarMenuClickEvent("opendesk-complete-pairs", completePairedPunctuation);
@@ -1156,6 +1330,9 @@
     }
     addTraditionalChineseToolbar();
     restoreDistributedAlignment();
+    // 把 2.7.3 已存在的持久標記遷移為 Word 標準的 w:jc="distribute"。
+    // 新套用的段落則在每次本機存檔成功後由上方 hook 寫回。
+    scheduleDistributedPersistence(window.parent, 1200, 0);
   };
 
   plugin.button = function (_id, windowId) {

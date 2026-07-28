@@ -52,6 +52,13 @@ struct MagiBridgeRequest {
     document_title: Option<String>,
 }
 
+#[derive(Deserialize)]
+struct DistributedAlignmentBridgeRequest {
+    path: String,
+    #[serde(default)]
+    paragraph_ids: Vec<Value>,
+}
+
 #[derive(Serialize)]
 struct SystemStatus {
     app_version: String,
@@ -261,7 +268,16 @@ static ACROPDF_REQUEST_ID: AtomicU64 = AtomicU64::new(1);
 static MAGI_BRIDGE_TOKEN: OnceLock<String> = OnceLock::new();
 static RECOVERY_SESSIONS: OnceLock<Mutex<()>> = OnceLock::new();
 static CITATION_SOURCES: OnceLock<Mutex<()>> = OnceLock::new();
+static DISTRIBUTED_ALIGNMENT_WRITE: OnceLock<Mutex<()>> = OnceLock::new();
 const MAGI_BRIDGE_PORT: u16 = 41_827;
+
+fn magi_bridge_port() -> u16 {
+    std::env::var("OPENDESK_MAGI_BRIDGE_PORT")
+        .ok()
+        .and_then(|value| value.parse::<u16>().ok())
+        .filter(|port| *port >= 1024)
+        .unwrap_or(MAGI_BRIDGE_PORT)
+}
 
 impl AcroPdfServer {
     fn request(&mut self, args: &[String], timeout: Duration) -> Result<Value, AcroPdfServerError> {
@@ -1884,11 +1900,27 @@ struct HeadingPrefix {
 }
 
 fn decode_xml_text(value: &str) -> String {
-    value
-        .replace("&lt;", "<")
-        .replace("&gt;", ">")
+    let numeric = Regex::new(r"&#(x[0-9A-Fa-f]+|[0-9]+);").unwrap();
+    let decoded = numeric
+        .replace_all(value, |captures: &regex::Captures<'_>| {
+            let token = captures.get(1).map(|value| value.as_str()).unwrap_or("");
+            let number = token
+                .strip_prefix('x')
+                .or_else(|| token.strip_prefix('X'))
+                .map(|value| u32::from_str_radix(value, 16))
+                .unwrap_or_else(|| token.parse::<u32>())
+                .ok();
+            number
+                .and_then(char::from_u32)
+                .map(|character| character.to_string())
+                .unwrap_or_else(|| captures[0].to_string())
+        })
+        .into_owned();
+    decoded
         .replace("&quot;", "\"")
         .replace("&apos;", "'")
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
         .replace("&amp;", "&")
 }
 
@@ -3298,8 +3330,9 @@ fn write_magi_bridge_config(token: &str) -> Result<PathBuf, String> {
     let plugin_root = onlyoffice_user_plugin_root()?;
     fs::create_dir_all(&plugin_root).map_err(|error| error.to_string())?;
     let config_path = plugin_root.join("magi-bridge-config.js");
+    let bridge_port = magi_bridge_port();
     let content = format!(
-        "window.OpenDeskMagiBridge = Object.freeze({{ url: \"http://127.0.0.1:{MAGI_BRIDGE_PORT}/v1/analyze\", healthUrl: \"http://127.0.0.1:{MAGI_BRIDGE_PORT}/v1/health\", token: \"{token}\" }});\n"
+        "window.OpenDeskMagiBridge = Object.freeze({{ url: \"http://127.0.0.1:{bridge_port}/v1/analyze\", healthUrl: \"http://127.0.0.1:{bridge_port}/v1/health\", distributedUrl: \"http://127.0.0.1:{bridge_port}/v1/distributed-alignment\", token: \"{token}\" }});\n"
     );
     fs::write(&config_path, content).map_err(|error| error.to_string())?;
     #[cfg(unix)]
@@ -3493,8 +3526,52 @@ fn handle_magi_bridge_connection(mut stream: TcpStream, token: &str) -> Result<(
             &mut stream,
             405,
             allowed_origin.as_deref(),
-            &json!({"ok": false, "error": "只接受 GET 健康檢查或 POST 分析"}),
+            &json!({"ok": false, "error": "只接受 GET 健康檢查或 POST 文件操作"}),
         );
+    }
+    if path == "/v1/distributed-alignment" {
+        let request: DistributedAlignmentBridgeRequest = match serde_json::from_slice(&body) {
+            Ok(request) => request,
+            Err(error) => {
+                return write_http_json(
+                    &mut stream,
+                    400,
+                    allowed_origin.as_deref(),
+                    &json!({"ok": false, "error": format!("請求格式錯誤：{error}")}),
+                )
+            }
+        };
+        let source = match distributed_alignment_document_path(&request.path) {
+            Ok(source) => source,
+            Err(error) => {
+                return write_http_json(
+                    &mut stream,
+                    422,
+                    allowed_origin.as_deref(),
+                    &json!({"ok": false, "error": error}),
+                )
+            }
+        };
+        let requested_ids = request
+            .paragraph_ids
+            .iter()
+            .filter_map(normalize_distributed_paragraph_id)
+            .take(500)
+            .collect::<BTreeSet<_>>();
+        return match persist_distributed_alignment(&source, &requested_ids) {
+            Ok(applied) => write_http_json(
+                &mut stream,
+                200,
+                allowed_origin.as_deref(),
+                &json!({"ok": true, "applied": applied}),
+            ),
+            Err(error) => write_http_json(
+                &mut stream,
+                422,
+                allowed_origin.as_deref(),
+                &json!({"ok": false, "error": error}),
+            ),
+        };
     }
     if path != "/v1/analyze" {
         return write_http_json(
@@ -3543,8 +3620,9 @@ fn handle_magi_bridge_connection(mut stream: TcpStream, token: &str) -> Result<(
 }
 
 fn start_magi_bridge() -> Result<PathBuf, String> {
-    let listener = TcpListener::bind(("127.0.0.1", MAGI_BRIDGE_PORT))
-        .map_err(|error| format!("無法啟動 MAGI 文件橋接（連接埠 {MAGI_BRIDGE_PORT}）：{error}"))?;
+    let bridge_port = magi_bridge_port();
+    let listener = TcpListener::bind(("127.0.0.1", bridge_port))
+        .map_err(|error| format!("無法啟動 MAGI 文件橋接（連接埠 {bridge_port}）：{error}"))?;
     let mut bytes = [0_u8; 32];
     getrandom::fill(&mut bytes).map_err(|error| format!("無法建立 MAGI 橋接權杖：{error}"))?;
     let token = bytes
@@ -3843,6 +3921,338 @@ fn write_word_document_xml(
     }
     writer.finish().map_err(|error| error.to_string())?;
     Ok(())
+}
+
+fn normalize_distributed_paragraph_id(value: &Value) -> Option<String> {
+    if let Some(number) = value.as_u64() {
+        return u32::try_from(number)
+            .ok()
+            .map(|number| format!("{number:08X}"));
+    }
+    let text = value.as_str()?.trim();
+    let hex = text
+        .strip_prefix("0x")
+        .or_else(|| text.strip_prefix("0X"))
+        .unwrap_or(text);
+    if hex.len() == 8 && hex.chars().all(|character| character.is_ascii_hexdigit()) {
+        return Some(hex.to_ascii_uppercase());
+    }
+    if text.chars().all(|character| character.is_ascii_digit()) {
+        if let Ok(number) = text.parse::<u32>() {
+            return Some(format!("{number:08X}"));
+        }
+    }
+    if !hex.is_empty()
+        && hex.len() <= 8
+        && hex.chars().all(|character| character.is_ascii_hexdigit())
+    {
+        return Some(format!("{:0>8}", hex.to_ascii_uppercase()));
+    }
+    None
+}
+
+fn distributed_marker_values(custom_xml: &str) -> Result<Vec<Value>, String> {
+    let property = Regex::new(
+        r#"(?s)<(?:[A-Za-z0-9_]+:)?property\b[^>]*\bname\s*=\s*["']OpenDeskTW\.DistributedParagraphs["'][^>]*>(.*?)</(?:[A-Za-z0-9_]+:)?property\s*>"#,
+    )
+    .unwrap();
+    let value =
+        Regex::new(r#"(?s)<(?:[A-Za-z0-9_]+:)?lpwstr\b[^>]*>(.*?)</(?:[A-Za-z0-9_]+:)?lpwstr\s*>"#)
+            .unwrap();
+    let Some(property_content) = property
+        .captures(custom_xml)
+        .and_then(|captures| captures.get(1))
+        .map(|value| value.as_str())
+    else {
+        return Ok(Vec::new());
+    };
+    let Some(encoded) = value
+        .captures(property_content)
+        .and_then(|captures| captures.get(1))
+        .map(|value| value.as_str())
+    else {
+        return Err("分散對齊標記缺少文字值".into());
+    };
+    let markers: Value = serde_json::from_str(&decode_xml_text(encoded))
+        .map_err(|error| format!("分散對齊標記格式錯誤：{error}"))?;
+    let Some(markers) = markers.as_array() else {
+        return Err("分散對齊標記必須是陣列".into());
+    };
+    Ok(markers.iter().take(500).cloned().collect())
+}
+
+fn distributed_paragraph_ids(custom_xml: &str) -> Result<BTreeSet<String>, String> {
+    Ok(distributed_marker_values(custom_xml)?
+        .iter()
+        .filter_map(|marker| marker.get("id"))
+        .filter_map(normalize_distributed_paragraph_id)
+        .collect())
+}
+
+fn merge_distributed_marker_values(
+    custom_xml: &str,
+    requested_ids: &BTreeSet<String>,
+) -> Result<String, String> {
+    if requested_ids.is_empty() {
+        return Ok(custom_xml.to_string());
+    }
+    let mut markers = distributed_marker_values(custom_xml)?;
+    let existing = markers
+        .iter()
+        .filter_map(|marker| marker.get("id"))
+        .filter_map(normalize_distributed_paragraph_id)
+        .collect::<BTreeSet<_>>();
+    for id in requested_ids.difference(&existing) {
+        let number = u32::from_str_radix(id, 16).map_err(|_| format!("段落識別碼無效：{id}"))?;
+        markers.push(json!({"id": number}));
+    }
+    markers.truncate(500);
+    let encoded =
+        encode_xml_text(&serde_json::to_string(&markers).map_err(|error| error.to_string())?);
+    let property = Regex::new(
+        r#"(?s)<(?:[A-Za-z0-9_]+:)?property\b[^>]*\bname\s*=\s*["']OpenDeskTW\.DistributedParagraphs["'][^>]*>.*?</(?:[A-Za-z0-9_]+:)?property\s*>"#,
+    )
+    .unwrap();
+    if let Some(existing_property) = property.find(custom_xml) {
+        let value = Regex::new(
+            r#"(?s)<((?:[A-Za-z0-9_]+:)?lpwstr)\b[^>]*>.*?</(?:[A-Za-z0-9_]+:)?lpwstr\s*>"#,
+        )
+        .unwrap();
+        let mut replacement = existing_property.as_str().to_string();
+        let Some(existing_value) = value.captures(&replacement) else {
+            return Err("分散對齊標記缺少文字值".into());
+        };
+        let tag = existing_value
+            .get(1)
+            .map(|value| value.as_str())
+            .unwrap_or("vt:lpwstr");
+        let range = existing_value.get(0).unwrap().range();
+        replacement.replace_range(range, &format!("<{tag}>{encoded}</{tag}>"));
+        let mut output = custom_xml.to_string();
+        output.replace_range(
+            existing_property.start()..existing_property.end(),
+            &replacement,
+        );
+        return Ok(output);
+    }
+    let Some(closing) = custom_xml.rfind("</Properties") else {
+        return Err("Word 文件缺少可更新的 custom.xml".into());
+    };
+    let pid = Regex::new(r#"\bpid\s*=\s*["'](\d+)["']"#)
+        .unwrap()
+        .captures_iter(custom_xml)
+        .filter_map(|captures| captures.get(1))
+        .filter_map(|value| value.as_str().parse::<u32>().ok())
+        .max()
+        .unwrap_or(1)
+        + 1;
+    let mut output = custom_xml.to_string();
+    output.insert_str(
+        closing,
+        &format!(
+            r#"<property fmtid="{{D5CDD505-2E9C-101B-9397-08002B2CF9AE}}" pid="{pid}" name="OpenDeskTW.DistributedParagraphs"><vt:lpwstr>{encoded}</vt:lpwstr></property>"#
+        ),
+    );
+    Ok(output)
+}
+
+fn document_paragraph_ids(document_xml: &str) -> BTreeSet<String> {
+    Regex::new(r#"(?i)\bw14:paraId\s*=\s*["']([0-9a-f]{1,8})["']"#)
+        .unwrap()
+        .captures_iter(document_xml)
+        .filter_map(|captures| captures.get(1))
+        .map(|value| format!("{:0>8}", value.as_str().to_ascii_uppercase()))
+        .collect()
+}
+
+fn distributed_paragraph_xml(paragraph: &str) -> String {
+    let distributed = r#"<w:jc w:val="distribute"/>"#;
+    let ppr = Regex::new(r#"(?s)<w:pPr(?:\s[^>]*)?>.*?</w:pPr\s*>"#).unwrap();
+    if let Some(properties) = ppr.find(paragraph) {
+        let mut replacement = properties.as_str().to_string();
+        let self_closing_jc = Regex::new(r#"<w:jc\b[^>]*/\s*>"#).unwrap();
+        let paired_jc = Regex::new(r#"(?s)<w:jc\b[^>]*>.*?</w:jc\s*>"#).unwrap();
+        if let Some(alignment) = self_closing_jc
+            .find(&replacement)
+            .or_else(|| paired_jc.find(&replacement))
+        {
+            replacement.replace_range(alignment.start()..alignment.end(), distributed);
+        } else if let Some(closing) = replacement.rfind("</w:pPr") {
+            replacement.insert_str(closing, distributed);
+        }
+        let mut output = paragraph.to_string();
+        output.replace_range(properties.start()..properties.end(), &replacement);
+        return output;
+    }
+
+    let self_closing_ppr = Regex::new(r#"<w:pPr(?:\s[^>]*)?/\s*>"#).unwrap();
+    if let Some(properties) = self_closing_ppr.find(paragraph) {
+        let mut output = paragraph.to_string();
+        output.replace_range(
+            properties.start()..properties.end(),
+            &format!("<w:pPr>{distributed}</w:pPr>"),
+        );
+        return output;
+    }
+
+    let opening = Regex::new(r#"^<w:p(?:\s[^>]*)?>"#).unwrap();
+    if let Some(opening) = opening.find(paragraph) {
+        let mut output = paragraph.to_string();
+        output.insert_str(opening.end(), &format!("<w:pPr>{distributed}</w:pPr>"));
+        return output;
+    }
+    paragraph.to_string()
+}
+
+fn rewrite_distributed_document_xml(
+    document_xml: &str,
+    paragraph_ids: &BTreeSet<String>,
+) -> (String, usize) {
+    if paragraph_ids.is_empty() {
+        return (document_xml.to_string(), 0);
+    }
+    let paragraphs = Regex::new(r#"(?s)<w:p(?:\s[^>]*)?>.*?</w:p>"#).unwrap();
+    let para_id = Regex::new(r#"(?i)\bw14:paraId\s*=\s*["']([0-9a-f]{1,8})["']"#).unwrap();
+    let mut replacements = Vec::new();
+    for paragraph in paragraphs.find_iter(document_xml) {
+        let Some(id) = para_id
+            .captures(paragraph.as_str())
+            .and_then(|captures| captures.get(1))
+            .map(|value| format!("{:0>8}", value.as_str().to_ascii_uppercase()))
+        else {
+            continue;
+        };
+        if !paragraph_ids.contains(&id) {
+            continue;
+        }
+        let replacement = distributed_paragraph_xml(paragraph.as_str());
+        if replacement != paragraph.as_str() {
+            replacements.push((paragraph.start()..paragraph.end(), replacement));
+        }
+    }
+    let count = replacements.len();
+    let mut output = document_xml.to_string();
+    for (range, replacement) in replacements.into_iter().rev() {
+        output.replace_range(range, &replacement);
+    }
+    (output, count)
+}
+
+fn distributed_alignment_document_path(value: &str) -> Result<PathBuf, String> {
+    let source = PathBuf::from(value.trim());
+    if !source.is_file() {
+        return Err("找不到要保存分散對齊的文件".into());
+    }
+    let extension = source
+        .extension()
+        .and_then(|value| value.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    if !matches!(extension.as_str(), "docx" | "docm") {
+        return Err("分散對齊寫回只接受 DOCX／DOCM 文件".into());
+    }
+    let metadata = source.metadata().map_err(|error| error.to_string())?;
+    if metadata.len() > 1_073_741_824 {
+        return Err("文件超過 1 GB，為避免記憶體不足而停止寫回".into());
+    }
+    fs::canonicalize(source).map_err(|error| error.to_string())
+}
+
+fn replace_distributed_alignment_file(source: &Path, temporary: &Path) -> Result<(), String> {
+    #[cfg(unix)]
+    {
+        fs::rename(temporary, source).map_err(|error| format!("無法更新 Word 文件：{error}"))
+    }
+    #[cfg(not(unix))]
+    {
+        let backup = source.with_extension(format!(
+            "{}.opendesk-distribute-backup-{}",
+            source
+                .extension()
+                .and_then(|value| value.to_str())
+                .unwrap_or("docx"),
+            std::process::id()
+        ));
+        fs::rename(source, &backup).map_err(|error| format!("無法暫存原始 Word 文件：{error}"))?;
+        if let Err(error) = fs::rename(temporary, source) {
+            let _ = fs::rename(&backup, source);
+            return Err(format!("無法更新 Word 文件：{error}"));
+        }
+        let _ = fs::remove_file(backup);
+        Ok(())
+    }
+}
+
+fn persist_distributed_alignment(
+    source: &Path,
+    requested_ids: &BTreeSet<String>,
+) -> Result<usize, String> {
+    let _guard = DISTRIBUTED_ALIGNMENT_WRITE
+        .get_or_init(|| Mutex::new(()))
+        .lock()
+        .map_err(|_| "分散對齊寫回目前無法鎖定")?;
+    let source = distributed_alignment_document_path(&source.to_string_lossy())?;
+    let input = File::open(&source).map_err(|error| error.to_string())?;
+    let mut archive =
+        ZipArchive::new(input).map_err(|_| "文件仍在儲存中，稍後會自動重試".to_string())?;
+    let custom_xml = zip_text(&mut archive, "docProps/custom.xml");
+    let document_xml = zip_text(&mut archive, "word/document.xml");
+    drop(archive);
+    if document_xml.is_empty() {
+        return Err("Word 文件缺少 document.xml".into());
+    }
+    let available_ids = document_paragraph_ids(&document_xml);
+    if !requested_ids.is_subset(&available_ids) {
+        return Err("文件仍在完成儲存，稍後會自動重試".into());
+    }
+    let mut paragraph_ids = distributed_paragraph_ids(&custom_xml)?;
+    paragraph_ids.extend(requested_ids.iter().cloned());
+    if paragraph_ids.is_empty() {
+        return Ok(0);
+    }
+    let (rewritten, changed) = rewrite_distributed_document_xml(&document_xml, &paragraph_ids);
+    let rewritten_custom = merge_distributed_marker_values(&custom_xml, &paragraph_ids)?;
+    if changed == 0 && rewritten_custom == custom_xml {
+        return Ok(0);
+    }
+
+    let file_name = source
+        .file_name()
+        .and_then(|value| value.to_str())
+        .unwrap_or("document.docx");
+    let temporary = source.parent().ok_or("無效文件位置")?.join(format!(
+        ".{file_name}.opendesk-distribute-{}-{}.tmp",
+        std::process::id(),
+        Local::now().timestamp_nanos_opt().unwrap_or_default()
+    ));
+    let result = (|| {
+        rewrite_word_package(&source, &temporary, |name, _content| match name {
+            "word/document.xml" => Some(rewritten.clone()),
+            "docProps/custom.xml" => Some(rewritten_custom.clone()),
+            _ => None,
+        })?;
+        let permissions = source
+            .metadata()
+            .map_err(|error| error.to_string())?
+            .permissions();
+        fs::set_permissions(&temporary, permissions).map_err(|error| error.to_string())?;
+        File::open(&temporary)
+            .and_then(|file| file.sync_all())
+            .map_err(|error| error.to_string())?;
+        let verification_document = read_word_document_xml(&temporary)?;
+        let verification_file = File::open(&temporary).map_err(|error| error.to_string())?;
+        let mut verification_archive =
+            ZipArchive::new(verification_file).map_err(|error| error.to_string())?;
+        let verification_custom = zip_text(&mut verification_archive, "docProps/custom.xml");
+        if verification_document != rewritten || verification_custom != rewritten_custom {
+            return Err("分散對齊寫回驗證失敗，原檔未變更".into());
+        }
+        replace_distributed_alignment_file(&source, &temporary)
+    })();
+    if result.is_err() {
+        let _ = fs::remove_file(&temporary);
+    }
+    result.map(|_| changed)
 }
 
 fn delimiter_score(line: &str, delimiter: char) -> usize {
@@ -5239,6 +5649,107 @@ mod tests {
     }
 
     #[test]
+    fn parses_onlyoffice_distributed_alignment_markers_as_word_para_ids() {
+        let custom_xml = r#"<?xml version="1.0" encoding="UTF-8"?>
+<Properties xmlns="http://schemas.openxmlformats.org/officeDocument/2006/custom-properties"
+ xmlns:vt="http://schemas.openxmlformats.org/officeDocument/2006/docPropsVTypes">
+ <property name="OpenDeskTW.DistributedParagraphs">
+  <vt:lpwstr>[{&quot;id&quot;:417465444},{&quot;id&quot;:&quot;76e0ee1b&quot;}]</vt:lpwstr>
+ </property>
+</Properties>"#;
+        assert_eq!(
+            distributed_paragraph_ids(custom_xml).unwrap(),
+            BTreeSet::from(["18E20464".to_string(), "76E0EE1B".to_string()])
+        );
+    }
+
+    #[test]
+    fn rewrites_only_marked_word_paragraphs_to_standard_distribute() {
+        let document_xml = r#"<w:document xmlns:w="w" xmlns:w14="w14"><w:body>
+<w:p w14:paraId="18E20464"><w:pPr><w:jc w:val="left"/></w:pPr><w:r><w:t>甲乙丙丁</w:t></w:r></w:p>
+<w:p w14:paraId="76E0EE1B"><w:r><w:t>一二三四</w:t></w:r></w:p>
+<w:p w14:paraId="11111111"><w:pPr><w:jc w:val="center"/></w:pPr><w:r><w:t>不可更動</w:t></w:r></w:p>
+</w:body></w:document>"#;
+        let ids = BTreeSet::from(["18E20464".to_string(), "76E0EE1B".to_string()]);
+        let (rewritten, changed) = rewrite_distributed_document_xml(document_xml, &ids);
+        assert_eq!(changed, 2);
+        assert_eq!(
+            rewritten.matches(r#"<w:jc w:val="distribute"/>"#).count(),
+            2
+        );
+        assert!(rewritten
+            .contains(r#"<w:p w14:paraId="11111111"><w:pPr><w:jc w:val="center"/></w:pPr>"#));
+        let (stable, changed_again) = rewrite_distributed_document_xml(&rewritten, &ids);
+        assert_eq!(changed_again, 0);
+        assert_eq!(stable, rewritten);
+    }
+
+    #[test]
+    fn persists_standard_distribute_in_docx_without_losing_other_parts() {
+        let root = std::env::temp_dir().join(format!(
+            "OpenDeskTW-Distributed-{}-{}",
+            std::process::id(),
+            Local::now().timestamp_nanos_opt().unwrap_or_default()
+        ));
+        let _cleanup = TemporaryFolder(root.clone());
+        fs::create_dir_all(&root).unwrap();
+        let source = root.join("distributed.docx");
+        let file = File::create(&source).unwrap();
+        let mut writer = ZipWriter::new(file);
+        let options = zip::write::SimpleFileOptions::default();
+        writer.start_file("word/document.xml", options).unwrap();
+        writer
+            .write_all(
+                r#"<w:document xmlns:w="w" xmlns:w14="w14"><w:body><w:p w14:paraId="18E20464"><w:pPr><w:jc w:val="left"/></w:pPr><w:r><w:t>甲乙丙丁</w:t></w:r></w:p><w:p w14:paraId="76E0EE1B"><w:pPr><w:jc w:val="left"/></w:pPr><w:r><w:t>第二段</w:t></w:r></w:p></w:body></w:document>"#
+                    .as_bytes(),
+            )
+            .unwrap();
+        writer.start_file("docProps/custom.xml", options).unwrap();
+        writer
+            .write_all(
+                br#"<Properties xmlns:vt="vt"><property name="OpenDeskTW.DistributedParagraphs"><vt:lpwstr>[{&quot;id&quot;:417465444}]</vt:lpwstr></property></Properties>"#,
+            )
+            .unwrap();
+        writer
+            .start_file("word/media/evidence.bin", options)
+            .unwrap();
+        writer.write_all(b"preserve-this-part").unwrap();
+        writer.finish().unwrap();
+
+        let requested = BTreeSet::from(["76E0EE1B".to_string()]);
+        assert_eq!(
+            persist_distributed_alignment(&source, &requested).unwrap(),
+            2
+        );
+        assert_eq!(
+            read_word_document_xml(&source)
+                .unwrap()
+                .matches(r#"<w:jc w:val="distribute"/>"#)
+                .count(),
+            2
+        );
+        assert_eq!(
+            persist_distributed_alignment(&source, &requested).unwrap(),
+            0
+        );
+
+        let file = File::open(&source).unwrap();
+        let mut archive = ZipArchive::new(file).unwrap();
+        let custom_xml = zip_text(&mut archive, "docProps/custom.xml");
+        assert_eq!(
+            distributed_paragraph_ids(&custom_xml).unwrap(),
+            BTreeSet::from(["18E20464".to_string(), "76E0EE1B".to_string()])
+        );
+        let mut evidence = Vec::new();
+        archive
+            .by_name("word/media/evidence.bin")
+            .unwrap()
+            .read_to_end(&mut evidence)
+            .unwrap();
+        assert_eq!(evidence, b"preserve-this-part");
+    }
+
+    #[test]
     fn bundled_onlyoffice_plugin_uses_rendered_distributed_alignment_and_tw_fonts() {
         let config = include_str!("../resources/onlyoffice-tw-plugin/config.json");
         let value: Value = serde_json::from_str(config).expect("外掛設定必須是有效 JSON");
@@ -5269,6 +5780,13 @@ mod tests {
         assert!(code.contains("AscCommon?.Ne?.Ug?.(internalId)"));
         assert!(code.contains("Object.values(paragraph).find"));
         assert!(code.contains("nativeParagraph.Vt(nativeDistributed)"));
+        assert!(code.contains("installDistributedPersistenceHook"));
+        assert!(code.contains("DesktopOfflineAppDocumentEndSave"));
+        assert!(code.contains("AscDesktopEditor.OnSave"));
+        assert!(code.contains("LocalFileGetSourcePath"));
+        assert!(code.contains("distributedUrl"));
+        assert!(code.contains("/v1/distributed-alignment"));
+        assert!(code.contains("paragraph_ids: paragraphIds"));
         assert!(
             code.find("nativeParagraph.Vt(nativeDistributed)")
                 < code.find("native-paragraph-with-persistent-marker")
