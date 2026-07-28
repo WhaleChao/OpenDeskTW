@@ -626,6 +626,20 @@
               );
             });
           }
+          function ensureNumericParagraphId(paragraph) {
+            let id = paragraph.GetParaId?.();
+            if (!id && typeof paragraph.SetParaId === "function") {
+              // ONLYOFFICE 9.4 的 SetParaId 僅接受數字。全新未命名文件的
+              // 空白段落尚未配置 ID；舊版在這裡傳入八位十六進位字串，
+              // 因而拋出「ParaId must be a numerical」。ONLYOFFICE 9.4
+              // 進一步限制為 1..0x7fffffff，讓 SDK 儲存時自行序列化為
+              // OOXML 的八位十六進位 paraId。
+              id = Math.floor(Math.random() * 0x7fffffff) + 1;
+              paragraph.SetParaId(id);
+              id = paragraph.GetParaId?.() || id;
+            }
+            return id;
+          }
           function apiOffsetForPosition(internal, contentPosition) {
             if (!contentPosition) return null;
             const classes =
@@ -687,6 +701,7 @@
           // 4，畫面仍按靠左排版；上一輪的備援字距會切成直接格式 Run，
           // 必須逐一清除後才能以縮排、欄寬或視窗的新寬度取得自然文字寬度。
           paragraphs.forEach(function (paragraph) {
+            ensureNumericParagraphId(paragraph);
             paragraph.SetJc?.("left");
             nativeParagraphFor(paragraph)?.Vt?.(
               typeof AscCommon !== "undefined" &&
@@ -709,6 +724,7 @@
 
           const jobs = [];
           const spacingByParagraph = new Map();
+          const naturalLineCountByParagraph = new Map();
           let lineCount = 0;
           let skipped = 0;
           paragraphs.forEach(function (paragraph) {
@@ -717,6 +733,7 @@
             // 9.4 桌面正式版會把同一欄位壓縮為 Xb/Of/ha/tB/Da，
             // 兩種名稱都依實際物件讀取，避免把版本名稱誤當固定版面。
             const lines = internal?.Lines || internal?.Xb || [];
+            naturalLineCountByParagraph.set(paragraph, lines.length);
             lineCount += lines.length;
             lines.forEach(function (line, lineIndex) {
               (line.Ranges || line.Of || []).forEach(function (layoutRange, rangeIndex) {
@@ -767,11 +784,23 @@
                   skipped += 1;
                   return;
                 }
+                const distributableWidth = availableWidth - occupiedWidth;
+                // ONLYOFFICE 最後仍要把 mm 字距量化成整數 twips。若直接
+                // 四捨五入到理論上的滿寬，混合中英文或數字時各字寬的
+                // 累積誤差可能多出不到 1 mm，卻足以把最後一字換到下一行。
+                // 保留極小且隨行寬變動的安全邊界，視覺上仍是滿寬分布，
+                // 但不會越過右邊界。
+                const layoutSafetyMm = Math.min(
+                  0.8,
+                  Math.max(0.25, availableWidth * 0.004),
+                  distributableWidth * 0.25,
+                );
                 const spacingMm =
-                  (availableWidth - occupiedWidth) / (glyphCount - 1);
+                  (distributableWidth - layoutSafetyMm) /
+                  (glyphCount - 1);
                 const spacingTwips = Math.max(
                   0,
-                  Math.round((spacingMm * 1440) / 25.4),
+                  Math.floor((spacingMm * 1440) / 25.4),
                 );
                 if (!spacingTwips) {
                   skipped += 1;
@@ -811,6 +840,42 @@
           logicDocument?.Ue?.();
           logicDocument?.td?.();
 
+          // 字型 fallback 的實際 advance width 可能在第二次排版才確定。
+          // 如果套用後行數比自然排版增加，代表最後一字被擠到下一行；
+          // 每輪只縮回極少量字距並重算，最多四輪，不改用固定值。
+          let wrapCorrections = 0;
+          for (let attempt = 0; attempt < 4; attempt += 1) {
+            const wrappedParagraphs = new Set(
+              paragraphs.filter(function (paragraph) {
+                const internal = nativeParagraphFor(paragraph);
+                const currentLines = internal?.Lines || internal?.Xb || [];
+                return (
+                  currentLines.length >
+                  Number(naturalLineCountByParagraph.get(paragraph) || 0)
+                );
+              }),
+            );
+            if (!wrappedParagraphs.size) break;
+            jobs
+              .filter(function (job) {
+                return wrappedParagraphs.has(job.paragraph);
+              })
+              .forEach(function (job) {
+                const reduction = Math.max(
+                  1,
+                  Math.ceil(job.spacing * 0.005),
+                );
+                job.spacing = Math.max(0, job.spacing - reduction);
+                job.paragraph
+                  .GetRange(job.start, job.end)
+                  ?.SetSpacing(job.spacing);
+                const key = String(job.paragraph.GetParaId?.() || "");
+                spacingByParagraph.get(key)?.add(job.spacing);
+              });
+            wrapCorrections += wrappedParagraphs.size;
+            document.ForceRecalculate?.();
+          }
+
           // 留下段落 ID 與本次 ONLYOFFICE 畫面備援字距。桌面橋接會在
           // DOCX 中移除這些暫時字距，只保留 Word 標準 distribute，
           // 所以 Word 會依自己的版面寬度重新計算，不會變成固定值。
@@ -825,14 +890,7 @@
                 }),
             );
             paragraphs.forEach(function (paragraph) {
-              let id = paragraph.GetParaId?.();
-              if (!id && typeof paragraph.SetParaId === "function") {
-                id = Math.floor(Math.random() * 0xffffffff)
-                  .toString(16)
-                  .padStart(8, "0")
-                  .toUpperCase();
-                paragraph.SetParaId(id);
-              }
+              const id = ensureNumericParagraphId(paragraph);
               if (!id) return;
               const key = String(id);
               const marker = markerById.get(key) || { id };
@@ -880,6 +938,7 @@
             method: "word-paragraph-width",
             implementation: "word-layout-ranges-v2",
             clearedRuns,
+            wrapCorrections,
             value: nativeDistributed,
             spacings: Array.from(
               new Set(

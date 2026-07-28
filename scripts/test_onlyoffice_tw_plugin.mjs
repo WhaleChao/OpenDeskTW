@@ -67,6 +67,9 @@ assert.match(pluginCode, /restoreDistributedAlignment\(\)/);
 assert.match(pluginCode, /method: "word-paragraph-width"/);
 assert.match(pluginCode, /Get_StartRangePos2/);
 assert.match(pluginCode, /availableWidth - occupiedWidth/);
+assert.match(pluginCode, /layoutSafetyMm/);
+assert.match(pluginCode, /Math\.floor\(\(spacingMm \* 1440\) \/ 25\.4\)/);
+assert.match(pluginCode, /wrapCorrections/);
 assert.match(pluginCode, /SetSpacing\(job\.spacing\)/);
 assert.match(pluginCode, /marker\.dynamicSpacings/);
 assert.match(pluginCode, /installDistributedLayoutRefresh\(window\.parent\)/);
@@ -125,8 +128,13 @@ const magiPayloads = [];
 const messages = [];
 const toolbarHandlers = new Map();
 const customProperties = new Map();
-function makeParagraph(initialText) {
+function makeParagraph(
+  initialText,
+  initialParaId = 0x1bcdef01,
+  simulateQuantizationWrap = false,
+) {
   let text = initialText;
+  let paraId = initialParaId;
   const run = { Content: Array.from(initialText) };
   const layoutRange = { X: 0, XEnd: 100, W: 20 };
   function contentPosition(position) {
@@ -169,7 +177,21 @@ function makeParagraph(initialText) {
       run.Content = Array.from(text);
     },
     GetParaId() {
-      return "ABCDEF01";
+      return paraId;
+    },
+    SetParaId(value) {
+      if (
+        typeof value !== "number" ||
+        !Number.isInteger(value) ||
+        value <= 0 ||
+        value >= 0x80000000
+      ) {
+        throw new Error("ParaId must be a numerical");
+      }
+      paraId = value;
+    },
+    SetParaIdForTest(value) {
+      paraId = value;
     },
     GetRange(start, end) {
       return {
@@ -189,6 +211,15 @@ function makeParagraph(initialText) {
           distributedSpacing = value;
           layoutRange.W =
             value === 0 ? 20 : layoutRange.XEnd - layoutRange.X;
+          if (simulateQuantizationWrap) {
+            paragraph.Paragraph.Lines =
+              value > 370
+                ? [
+                    { Ranges: [layoutRange] },
+                    { Ranges: [{ X: 0, XEnd: 100, W: 10 }] },
+                  ]
+                : [{ Ranges: [layoutRange] }];
+          }
           return true;
         },
       };
@@ -227,9 +258,10 @@ const headingParagraphs = [
   makeParagraph("9. 第一目"),
 ];
 const selectionParagraph = makeParagraph("選取段落");
+let activeSelectionParagraph = selectionParagraph;
 const selectionRange = {
   GetAllParagraphs() {
-    return [selectionParagraph];
+    return [activeSelectionParagraph];
   },
   GetText() {
     return "選取段落";
@@ -269,7 +301,7 @@ const apiDocument = {
     return selectionRange;
   },
   GetCurrentParagraph() {
-    return selectionParagraph;
+    return activeSelectionParagraph;
   },
   GetStyle(name) {
     return name;
@@ -467,7 +499,7 @@ keydownHandler({
 });
 assert.equal(paragraphAlignment, 4);
 assert.equal(prevented, true);
-assert.equal(distributedSpacing, 1512);
+assert.equal(distributedSpacing, 1504);
 assert.equal(pluginWindow.__OpenDeskTwDistributedLayout.dynamic, true);
 assert.equal(
   pluginWindow.__OpenDeskTwDistributedLayout.method,
@@ -480,7 +512,7 @@ assert.deepEqual(
     available: 100,
     occupiedBefore: 20,
     glyphs: 4,
-    spacing: 1512,
+    spacing: 1504,
   },
 );
 paragraphAlignment = undefined;
@@ -499,6 +531,40 @@ keydownHandler({
 assert.equal(paragraphAlignment, 4);
 toolbarHandlers.get("opendesk-distributed")();
 assert.equal(paragraphAlignment, 4);
+selectionParagraph.SetTextForTest("");
+selectionParagraph.SetParaIdForTest(0);
+messages.length = 0;
+toolbarHandlers.get("opendesk-distributed")();
+assert.equal(
+  typeof selectionParagraph.GetParaId(),
+  "number",
+  "全新空白文件的暫時段落 ID 必須以數字傳入 ONLYOFFICE",
+);
+assert.ok(selectionParagraph.GetParaId() > 0);
+assert.ok(
+  !messages.some((message) => message.includes("ParaId must be a numerical")),
+  "空白未命名文件不得再出現 ParaId 類型錯誤",
+);
+selectionParagraph.SetTextForTest("選取段落");
+const mixedWidthParagraph = makeParagraph(
+  "中華民國114年7月25日",
+  0x12345678,
+  true,
+);
+activeSelectionParagraph = mixedWidthParagraph;
+messages.length = 0;
+toolbarHandlers.get("opendesk-distributed")();
+assert.equal(
+  mixedWidthParagraph.Paragraph.Lines.length,
+  1,
+  "twips／字型寬度量化造成最後一字換行時，必須自動縮回字距",
+);
+assert.ok(pluginWindow.__OpenDeskTwDistributedLayout.wrapCorrections >= 1);
+assert.ok(
+  !messages.some((message) => message.includes("發生錯誤")),
+  "防止末字換行的重排不得產生警告",
+);
+activeSelectionParagraph = selectionParagraph;
 
 function press(overrides) {
   let prevented = false;
