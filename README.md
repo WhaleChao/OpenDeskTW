@@ -2,7 +2,7 @@
 
 「全能文件工作台」是一套全繁體中文、Windows／macOS 共用的單機文件 App。名稱直接表達用途：在同一個視窗處理文字、試算表、簡報、PDF 與 MAGI，不必先理解檔案格式或切換多套啟動器。
 
-目前開發版為 2.7.1，主要程式位於 `cross-platform/`，以 Tauri 2、Rust 與原生 WebView 建置。本修補版讓 macOS 引擎版本偵測不再執行 LibreOffice，並預設阻止 Codex 受限背景測試啟動本機 Office。
+目前開發版為 2.7.2，主要程式位於 `cross-platform/`，以 Tauri 2、Rust 與原生 WebView 建置。新增文字文件、試算表或簡報會立即開啟未命名文件，第一次按儲存時才選擇檔名與位置；macOS 引擎版本偵測也不會執行 LibreOffice。
 
 ## 主要能力
 

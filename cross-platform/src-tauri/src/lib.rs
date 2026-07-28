@@ -4490,38 +4490,29 @@ fn resource_path<R: Runtime>(app: &tauri::AppHandle<R>, relative: &str) -> Resul
         .map(|root| root.join(relative))
 }
 
-#[tauri::command]
-fn create_document<R: Runtime>(
-    app: tauri::AppHandle<R>,
-    kind: String,
-    destination: String,
-) -> Result<ActionResult, String> {
-    let (template, extension) = match kind.as_str() {
-        "text" => ("resources/Templates/Blank-Document.docx", "docx"),
-        "spreadsheet" => ("resources/Templates/Blank-Spreadsheet.xlsx", "xlsx"),
-        "presentation" => ("resources/Templates/Blank-Presentation.pptx", "pptx"),
+fn new_document_spec(kind: &str) -> Result<(&'static str, &'static str), String> {
+    match kind {
+        "text" => Ok(("--new:word", "未命名文字文件")),
+        "spreadsheet" => Ok(("--new:cell", "未命名試算表")),
+        "presentation" => Ok(("--new:slide", "未命名簡報")),
         _ => return Err("未知文件類型".into()),
-    };
-    let source = resource_path(&app, template)?;
-    let mut target = PathBuf::from(destination);
-    if target.extension().is_none() {
-        target.set_extension(extension);
     }
-    if let Some(parent) = target.parent() {
-        fs::create_dir_all(parent).map_err(|error| error.to_string())?;
-    }
-    fs::copy(&source, &target).map_err(|error| format!("無法建立文件：{error}"))?;
-    launch_document(&target, "ONLYOFFICE")?;
-    let recovery = register_recovery_session(&target, "ONLYOFFICE")?;
-    start_recovery_monitor(recovery);
+}
+
+#[tauri::command]
+fn create_document(kind: String) -> Result<ActionResult, String> {
+    let (flag, file_name) = new_document_spec(&kind)?;
+    prepare_onlyoffice_locale_for_launch()?;
+    let executable =
+        engine_executable("ONLYOFFICE").ok_or("找不到 ONLYOFFICE，請先安裝桌面編輯器")?;
+    Command::new(executable)
+        .args(["--keeplang:zh-TW", flag])
+        .spawn()
+        .map_err(|error| format!("無法開啟未命名文件：{error}"))?;
     Ok(ActionResult {
-        path: target.to_string_lossy().to_string(),
-        file_name: target
-            .file_name()
-            .and_then(|value| value.to_str())
-            .unwrap_or("文件")
-            .into(),
-        message: "文件已建立".into(),
+        path: String::new(),
+        file_name: file_name.into(),
+        message: format!("已開啟{file_name}；第一次按儲存時，再選擇檔名與儲存位置"),
     })
 }
 
@@ -4993,6 +4984,24 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn new_office_documents_open_untitled_and_defer_save_location() {
+        assert_eq!(new_document_spec("text").unwrap().0, "--new:word");
+        assert_eq!(new_document_spec("spreadsheet").unwrap().0, "--new:cell");
+        assert_eq!(new_document_spec("presentation").unwrap().0, "--new:slide");
+        assert!(new_document_spec("unknown").is_err());
+
+        let frontend = include_str!("../../src/main.js");
+        let create_flow = frontend
+            .split("async function createDocument(kind)")
+            .nth(1)
+            .and_then(|value| value.split("function renderFeatures()").next())
+            .expect("應存在新增文件前端流程");
+        assert!(create_flow.contains("invoke(\"create_document\", { kind })"));
+        assert!(!create_flow.contains("await save("));
+        assert!(!create_flow.contains("destination"));
+    }
 
     #[test]
     fn local_office_processes_require_explicit_permission_in_sandbox() {

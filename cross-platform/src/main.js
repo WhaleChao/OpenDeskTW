@@ -1062,16 +1062,9 @@ async function selectDocument(path) {
 }
 
 async function createDocument(kind) {
-  const map = { text: ["未命名文字文件.docx", "docx"], spreadsheet: ["未命名試算表.xlsx", "xlsx"], presentation: ["未命名簡報.pptx", "pptx"] };
-  const [defaultPath, extension] = map[kind];
-  const destination = await save({ defaultPath, filters: [{ name: "Office 文件", extensions: [extension] }] });
-  if (!destination) return;
   try {
-    const result = await invoke("create_document", { kind, destination });
-    await refreshRecoveryOverview(false);
-    recordRecent(result.path);
-    toast(`已建立 ${result.file_name}，正在開啟編輯器…`);
-    await selectDocument(result.path);
+    const result = await invoke("create_document", { kind });
+    toast(result.message, 7000);
   } catch (error) { toast(`新增失敗：${error}`); }
 }
 
