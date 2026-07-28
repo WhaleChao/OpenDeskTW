@@ -4247,6 +4247,7 @@ fn persist_distributed_alignment(
         if verification_document != rewritten || verification_custom != rewritten_custom {
             return Err("分散對齊寫回驗證失敗，原檔未變更".into());
         }
+        drop(verification_archive);
         replace_distributed_alignment_file(&source, &temporary)
     })();
     if result.is_err() {
