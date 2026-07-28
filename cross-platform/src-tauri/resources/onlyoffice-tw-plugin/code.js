@@ -3,6 +3,7 @@
 
   const plugin = window.Asc.plugin;
   let toolbarEventsBound = false;
+  let wordFormatClipboardReady = false;
   let magiResultWindow = null;
   let magiResultPayload = null;
   const numericFontSizes = [9, 10, 10.5, 11, 12, 14, 16, 18, 20, 22, 24, 28, 36, 48, 72];
@@ -291,40 +292,81 @@
             Number.isFinite(AscCommon.align_Distributed)
               ? AscCommon.align_Distributed
               : 4;
-          const nativeParagraphs = paragraphs.filter(function (paragraph) {
-            return paragraph.Paragraph && typeof paragraph.Paragraph.Vt === "function";
-          });
-          if (nativeParagraphs.length === paragraphs.length) {
-            nativeParagraphs.forEach(function (paragraph) {
-              paragraph.Paragraph.Vt(nativeDistributed);
-            });
-            return {
-              applied: paragraphs.length,
-              method: "paragraph.Vt",
-              value: nativeDistributed,
-            };
-          }
-          if (
-            typeof Asc !== "undefined" &&
-            Asc.editor &&
-            typeof Asc.editor.put_PrAlign === "function"
-          ) {
-            Asc.editor.put_PrAlign(nativeDistributed);
-            return {
-              applied: paragraphs.length,
-              method: "put_PrAlign",
-              value: nativeDistributed,
-            };
-          }
           const logicDocument = document.Document;
-          if (logicDocument && typeof logicDocument.Vt === "function") {
-            logicDocument.Vt(nativeDistributed, { rej: true });
+          const nativeParagraphs = paragraphs
+            .map(function (paragraph) {
+              const internalId = paragraph.GetInternalId?.();
+              const registeredParagraph = internalId
+                ? AscCommon?.Ne?.Ug?.(internalId)
+                : undefined;
+              if (
+                registeredParagraph &&
+                typeof registeredParagraph.Vt === "function"
+              ) {
+                return registeredParagraph;
+              }
+              if (paragraph.Paragraph && typeof paragraph.Paragraph.Vt === "function") {
+                return paragraph.Paragraph;
+              }
+              // ONLYOFFICE 9.4 壓縮了 ApiParagraph 的原生段落欄位名稱
+              // （目前為 Ha）。依能力尋找，避免把相容性綁死在壓縮名稱上。
+              return Object.values(paragraph).find(function (candidate) {
+                return candidate && typeof candidate.Vt === "function";
+              });
+            })
+            .filter(Boolean);
+          if (nativeParagraphs.length === paragraphs.length) {
+            nativeParagraphs.forEach(function (nativeParagraph) {
+              nativeParagraph.Vt(nativeDistributed);
+            });
+
+            // ONLYOFFICE 9.4 會把未知的 distribute 段落值正規化成 left
+            // 才寫入 DOCX；把段落識別碼另存於自訂屬性，重開時立即還原。
+            const customProperties = document.GetCustomProperties?.();
+            if (customProperties) {
+              let markers = [];
+              try {
+                const stored = customProperties.Get(
+                  "OpenDeskTW.DistributedParagraphs",
+                );
+                markers = stored ? JSON.parse(stored) : [];
+              } catch (_error) {
+                markers = [];
+              }
+              paragraphs.forEach(function (paragraph) {
+                let id = paragraph.GetParaId?.();
+                if (!id && typeof paragraph.SetParaId === "function") {
+                  id = Math.floor(Math.random() * 0xffffffff)
+                    .toString(16)
+                    .padStart(8, "0")
+                    .toUpperCase();
+                  paragraph.SetParaId(id);
+                }
+                const text = paragraph.GetText?.().trim() || "";
+                if (
+                  id &&
+                  !markers.some(function (marker) {
+                    return marker && marker.id === id;
+                  })
+                ) {
+                  markers.push({ id, text });
+                }
+              });
+              customProperties.Add(
+                "OpenDeskTW.DistributedParagraphs",
+                JSON.stringify(markers.slice(-500)),
+              );
+            }
+            logicDocument?.Kc?.();
+            logicDocument?.Ue?.();
+            logicDocument?.td?.();
             return {
               applied: paragraphs.length,
-              method: "logicDocument",
+              method: "native-paragraph-with-persistent-marker",
               value: nativeDistributed,
             };
           }
+
           return {
             applied: 0,
             error: "這個編輯器版本沒有提供原生分散對齊介面。",
@@ -344,6 +386,55 @@
         } else if (!result?.applied) {
           showMessage("目前沒有可分散對齊的段落。");
         }
+        focusEditor();
+      },
+    );
+  }
+
+  function restoreDistributedAlignment() {
+    plugin.callCommand(
+      function () {
+        try {
+          const document = Api.GetDocument();
+          const customProperties = document.GetCustomProperties?.();
+          if (!customProperties) return { restored: 0 };
+          const stored = customProperties.Get("OpenDeskTW.DistributedParagraphs");
+          if (!stored) return { restored: 0 };
+          const markers = JSON.parse(stored);
+          if (!Array.isArray(markers) || !markers.length) return { restored: 0 };
+          const markerIds = new Set(
+            markers.map(function (marker) {
+              return marker?.id;
+            }),
+          );
+          const nativeDistributed =
+            typeof AscCommon !== "undefined" &&
+            Number.isFinite(AscCommon.align_Distributed)
+              ? AscCommon.align_Distributed
+              : 4;
+          let restored = 0;
+          document.GetAllParagraphs().forEach(function (paragraph) {
+            if (!markerIds.has(paragraph.GetParaId?.())) return;
+            const internalId = paragraph.GetInternalId?.();
+            const nativeParagraph = internalId
+              ? AscCommon?.Ne?.Ug?.(internalId)
+              : undefined;
+            if (!nativeParagraph || typeof nativeParagraph.Vt !== "function") return;
+            nativeParagraph.Vt(nativeDistributed);
+            restored += 1;
+          });
+          const logicDocument = document.Document;
+          logicDocument?.Kc?.();
+          logicDocument?.Ue?.();
+          logicDocument?.td?.();
+          return { restored };
+        } catch (_error) {
+          return { restored: 0 };
+        }
+      },
+      false,
+      true,
+      function () {
         focusEditor();
       },
     );
@@ -400,6 +491,7 @@
       false,
       false,
       function (copied) {
+        wordFormatClipboardReady = Boolean(copied);
         if (!copied) showMessage("這個編輯器版本無法複製目前選取範圍的格式。");
         focusEditor();
       },
@@ -428,7 +520,11 @@
       false,
       true,
       function (pasted) {
-        if (!pasted) showMessage("尚未複製格式；請先選取來源文字並按 Ctrl+Alt+C／⌘⌥C。");
+        if (!pasted) {
+          showMessage(
+            "尚未複製格式；請先選取來源文字並按 Ctrl+Shift+C／Ctrl+Alt+C，macOS 請按 ⌘⌥C。",
+          );
+        }
         focusEditor();
       },
     );
@@ -717,6 +813,12 @@
         const rawKey = String(event.key || "");
         const key = rawKey.toLowerCase();
         const command = event.ctrlKey || event.metaKey;
+        const controlWordFormatShortcut =
+          event.ctrlKey && !event.metaKey && (event.shiftKey || event.altKey);
+        const macWordFormatShortcut =
+          event.metaKey &&
+          !event.ctrlKey &&
+          (event.altKey || (event.shiftKey && key === "c"));
         let action = null;
         if (
           !event.ctrlKey &&
@@ -731,9 +833,17 @@
           action = applyDistributedAlignment;
         } else if (command && event.shiftKey && event.altKey && (key === "r" || event.code === "KeyR")) {
           action = renumberHeadingsInDocument;
-        } else if (command && event.altKey && !event.shiftKey && key === "c") {
+        } else if (
+          key === "c" &&
+          (controlWordFormatShortcut || macWordFormatShortcut)
+        ) {
           action = copyFormatting;
-        } else if (command && event.altKey && !event.shiftKey && key === "v") {
+        } else if (
+          key === "v" &&
+          ((controlWordFormatShortcut &&
+            (event.altKey || wordFormatClipboardReady)) ||
+            (event.metaKey && !event.ctrlKey && event.altKey && !event.shiftKey))
+        ) {
           action = pasteFormatting;
         } else if (command && !event.shiftKey && !event.altKey && ["1", "2", "5"].includes(key)) {
           action = function () {
@@ -846,7 +956,10 @@
         "字級顯示：一律使用 9、10.5、12 等數字，不混用初號、五號等名稱",
         "粗體／斜體／底線：Ctrl／⌘+B、I、U",
         "靠左／置中／左右對齊：Ctrl／⌘+L、E、J",
-        "分散對齊：Windows／Linux Ctrl+Shift+J；macOS ⇧⌘J",
+        "文字等距分布：Windows／Linux Ctrl+Shift+J；macOS ⇧⌘J",
+        "複製格式：Ctrl+Shift+C 或 Ctrl+Alt+C；macOS ⌘⌥C（也支援 ⇧⌘C）",
+        "套用格式：Ctrl+Shift+V 或 Ctrl+Alt+V；macOS ⌘⌥V",
+        "macOS ⇧⌘V 保留給 Word 的「只貼文字」",
         "智慧下引號：輸入引號時，會依目前尚未閉合的「／『自動選擇」或』",
         "台灣字型：全能文件 → 台灣字型，可直接選新細明體或細明體",
         "行距：Ctrl／⌘+1 單行、+2 雙行、+5 1.5 倍",
@@ -870,8 +983,8 @@
               {
                 id: "opendesk-distributed",
                 type: "button",
-                text: "分散對齊",
-                hint: "分散對齊（Ctrl+Shift+J／⇧⌘J）",
+                text: "文字等距分布",
+                hint: "像 Word 一樣，將所選段落文字平均攤滿可用寬度（Ctrl+Shift+J／⇧⌘J）",
                 lockInViewMode: true,
                 icons: "resources/distributed.svg",
               },
@@ -1042,6 +1155,7 @@
       toolbarEventsBound = true;
     }
     addTraditionalChineseToolbar();
+    restoreDistributedAlignment();
   };
 
   plugin.button = function (_id, windowId) {

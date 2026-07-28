@@ -1494,10 +1494,109 @@ fn repair_macos_onlyoffice_locale() -> Result<Option<PathBuf>, String> {
     Ok(Some(backup))
 }
 
+const MICROSOFT_WORD_TW_FONT_FILES: [&str; 2] = ["mingliu.ttc", "mingliub.ttc"];
+
+#[cfg(target_os = "macos")]
+fn microsoft_office_font_bundles() -> Vec<PathBuf> {
+    [
+        "/Applications/Microsoft Word.app",
+        "/Applications/Microsoft Excel.app",
+        "/Applications/Microsoft PowerPoint.app",
+    ]
+    .into_iter()
+    .map(PathBuf::from)
+    .collect()
+}
+
+#[cfg(target_os = "macos")]
+fn copy_microsoft_tw_fonts_from_bundles(
+    bundles: &[PathBuf],
+    destination: &Path,
+) -> Result<Vec<PathBuf>, String> {
+    let mut installed = Vec::new();
+    for file_name in MICROSOFT_WORD_TW_FONT_FILES {
+        let source = bundles
+            .iter()
+            .map(|bundle| {
+                bundle
+                    .join("Contents")
+                    .join("Resources")
+                    .join("DFonts")
+                    .join(file_name)
+            })
+            .find(|path| path.is_file());
+        let Some(source) = source else {
+            continue;
+        };
+        fs::create_dir_all(destination).map_err(|error| error.to_string())?;
+        let target = destination.join(format!("OpenDeskTW-Licensed-{file_name}"));
+        let source_size = source.metadata().map_err(|error| error.to_string())?.len();
+        let target_is_current = target
+            .symlink_metadata()
+            .ok()
+            .filter(|metadata| !metadata.file_type().is_symlink())
+            .map(|metadata| metadata.len() == source_size)
+            .unwrap_or(false);
+        if !target_is_current {
+            fs::copy(&source, &target).map_err(|error| {
+                format!("無法從已授權的 Microsoft Office 安裝註冊 {file_name}：{error}")
+            })?;
+        }
+        installed.push(target);
+    }
+    Ok(installed)
+}
+
+#[cfg(target_os = "macos")]
+fn install_microsoft_tw_fonts() -> Result<Vec<PathBuf>, String> {
+    let home = dirs::home_dir().ok_or("找不到使用者資料夾，無法註冊台灣繁中字型")?;
+    copy_microsoft_tw_fonts_from_bundles(
+        &microsoft_office_font_bundles(),
+        &home.join("Library/Fonts"),
+    )
+}
+
+#[cfg(target_os = "macos")]
+fn onlyoffice_font_cache_log_is_current(log: &str, installed_fonts: &[PathBuf]) -> bool {
+    installed_fonts
+        .iter()
+        .all(|font| log.contains(font.to_string_lossy().as_ref()))
+}
+
+#[cfg(target_os = "macos")]
+fn refresh_onlyoffice_font_cache_if_needed(
+    installed_fonts: &[PathBuf],
+) -> Result<Option<PathBuf>, String> {
+    if installed_fonts.is_empty() || onlyoffice_is_running() {
+        return Ok(None);
+    }
+    let data = dirs::data_dir()
+        .ok_or("找不到 ONLYOFFICE 資料資料夾")?
+        .join("asc.onlyoffice.ONLYOFFICE/data");
+    let font_cache = data.join("fonts");
+    if !font_cache.is_dir() {
+        return Ok(None);
+    }
+    let log = fs::read_to_string(font_cache.join("fonts.log")).unwrap_or_default();
+    if onlyoffice_font_cache_log_is_current(&log, installed_fonts) {
+        return Ok(None);
+    }
+    let backup = data_root()?
+        .join("OnlyOfficeFontCacheBackups")
+        .join(Local::now().format("%Y%m%d-%H%M%S-%3f").to_string());
+    fs::create_dir_all(&backup).map_err(|error| error.to_string())?;
+    let backup_cache = backup.join("fonts");
+    fs::rename(&font_cache, &backup_cache)
+        .map_err(|error| format!("無法更新 ONLYOFFICE 字型快取：{error}"))?;
+    Ok(Some(backup_cache))
+}
+
 fn prepare_onlyoffice_locale_for_launch() -> Result<(), String> {
     #[cfg(target_os = "macos")]
     {
         repair_macos_onlyoffice_locale()?;
+        let installed_fonts = install_microsoft_tw_fonts()?;
+        refresh_onlyoffice_font_cache_if_needed(&installed_fonts)?;
     }
     Ok(())
 }
@@ -1601,10 +1700,32 @@ fn magi_runtime_roots(name: &str) -> Vec<PathBuf> {
     let mut roots = Vec::new();
     if let Some(home) = dirs::home_dir() {
         #[cfg(target_os = "macos")]
-        roots.push(
-            home.join("Library/Application Support/MAGI/runtime")
-                .join(name),
-        );
+        {
+            let magi_root = home.join("Library/Application Support/MAGI");
+            roots.push(magi_root.join("runtime").join(name));
+            let active_release = magi_root.join("runtime/active-release.json");
+            if let Ok(content) = fs::read_to_string(active_release) {
+                if let Ok(value) = serde_json::from_str::<Value>(&content) {
+                    let expected_release = name.strip_prefix("MAGI_").unwrap_or(name);
+                    let release_matches = value
+                        .get("release")
+                        .and_then(Value::as_str)
+                        .map(|release| release.eq_ignore_ascii_case(expected_release))
+                        .unwrap_or(false);
+                    if release_matches {
+                        if let Some(release_root) =
+                            value.get("release_root").and_then(Value::as_str)
+                        {
+                            let release_root = PathBuf::from(release_root);
+                            let releases_root = magi_root.join("releases");
+                            if release_root.is_dir() && release_root.starts_with(&releases_root) {
+                                roots.push(release_root);
+                            }
+                        }
+                    }
+                }
+            }
+        }
         #[cfg(target_os = "windows")]
         roots.push(home.join("AppData/Roaming/MAGI/runtime").join(name));
         #[cfg(not(any(target_os = "macos", target_os = "windows")))]
@@ -1655,6 +1776,14 @@ fn repair_onlyoffice_traditional_chinese<R: Runtime>(
     let locale_backup = repair_macos_onlyoffice_locale()?;
     #[cfg(not(target_os = "macos"))]
     let locale_backup: Option<PathBuf> = None;
+    #[cfg(target_os = "macos")]
+    let registered_fonts = install_microsoft_tw_fonts()?;
+    #[cfg(not(target_os = "macos"))]
+    let registered_fonts: Vec<PathBuf> = Vec::new();
+    #[cfg(target_os = "macos")]
+    let font_cache_backup = refresh_onlyoffice_font_cache_if_needed(&registered_fonts)?;
+    #[cfg(not(target_os = "macos"))]
+    let font_cache_backup: Option<PathBuf> = None;
 
     let plugin_source = resource_path(&app, "resources/onlyoffice-tw-plugin")?;
     let ai_locale_source = resource_path(&app, "resources/onlyoffice-ai-tw-locale")?;
@@ -1680,11 +1809,21 @@ fn repair_onlyoffice_traditional_chinese<R: Runtime>(
     let backup_message = locale_backup
         .map(|path| format!("；原設定與簡體範本快取備份於 {}", path.display()))
         .unwrap_or_default();
+    let font_message = if registered_fonts.len() == MICROSOFT_WORD_TW_FONT_FILES.len() {
+        "；已從本機已授權的 Microsoft Office 註冊新細明體、細明體"
+    } else if cfg!(target_os = "macos") {
+        "；未找到 Microsoft Office 隨附的新細明體／細明體，未複製或散布任何專有字型"
+    } else {
+        ""
+    };
+    let font_cache_message = font_cache_backup
+        .map(|path| format!("；舊字型快取備份於 {}", path.display()))
+        .unwrap_or_default();
     Ok(ActionResult {
         path: plugin_destination.to_string_lossy().to_string(),
         file_name: "繁中寫作工具（全能文件）".into(),
         message: format!(
-            "已固定 ONLYOFFICE 為 zh-TW、補齊繁中介面、安裝台灣繁中 AI 相容副本（{}）並鎖定數字字級{backup_message}。重新開啟 ONLYOFFICE 後，可在「常用」使用逐行填滿的分散對齊（Ctrl+Shift+J／⇧⌘J），在「全能文件」選新細明體／細明體並使用即時智慧引號，另可從「MAGI」頁籤呼叫本機 MAGI。",
+            "已固定 ONLYOFFICE 為 zh-TW、補齊繁中介面、安裝台灣繁中 AI 相容副本（{}）並鎖定數字字級{font_message}{font_cache_message}{backup_message}。重新開啟 ONLYOFFICE 後，可在「常用」使用 Word 式文字等距分布（Ctrl+Shift+J／⇧⌘J），以 Ctrl+Shift+C／V 或 macOS ⌘⌥C／V 複製與套用格式，在「全能文件」選新細明體／細明體並使用即時智慧引號，另可從「MAGI」頁籤呼叫本機 MAGI。",
             ai_destination.display()
         ),
     })
@@ -4928,6 +5067,12 @@ fn run_self_test<R: Runtime>(app: tauri::AppHandle<R>) -> SelfTestReport {
 pub fn run() {
     tauri::Builder::default()
         .setup(|_app| {
+            #[cfg(target_os = "macos")]
+            {
+                if let Ok(installed_fonts) = install_microsoft_tw_fonts() {
+                    let _ = refresh_onlyoffice_font_cache_if_needed(&installed_fonts);
+                }
+            }
             start_magi_bridge().map_err(std::io::Error::other)?;
             Ok(())
         })
@@ -5118,7 +5263,16 @@ mod tests {
         assert_eq!(supported_editors.len(), 4);
         let code = include_str!("../resources/onlyoffice-tw-plugin/code.js");
         assert!(code.contains("AscCommon.align_Distributed"));
-        assert!(code.contains("paragraph.Paragraph.Vt(nativeDistributed)"));
+        assert!(code.contains("OpenDeskTW.DistributedParagraphs"));
+        assert!(code.contains("restoreDistributedAlignment()"));
+        assert!(code.contains("native-paragraph-with-persistent-marker"));
+        assert!(code.contains("AscCommon?.Ne?.Ug?.(internalId)"));
+        assert!(code.contains("Object.values(paragraph).find"));
+        assert!(code.contains("nativeParagraph.Vt(nativeDistributed)"));
+        assert!(
+            code.find("nativeParagraph.Vt(nativeDistributed)")
+                < code.find("native-paragraph-with-persistent-marker")
+        );
         assert!(!code.contains("document.ForceRecalculate()"));
         assert!(code.contains("AddToolbarMenuItem"));
         assert!(code.contains("id: \"home\""));
@@ -5136,6 +5290,8 @@ mod tests {
         assert!(code.contains("PMingLiU"));
         assert!(code.contains("MingLiU"));
         assert!(code.contains("put_TextPrFontName"));
+        assert!(code.contains("controlWordFormatShortcut"));
+        assert!(code.contains("macWordFormatShortcut"));
         assert!(code.contains("GetCurrentSentence\", [\"before\"]"));
         assert!(code.contains("executeMethod(\"InputText\""));
         assert!(code.contains("OpenDeskTwUiPatch"));
@@ -5183,9 +5339,9 @@ mod tests {
     fn primary_interface_includes_searchable_document_shortcuts() {
         let surface = include_str!("../../src/main.js");
         for marker in [
-            "Ctrl+Alt+C",
+            "Ctrl+Shift+C",
             "⌘⌥C",
-            "Ctrl+Alt+V",
+            "Ctrl+Shift+V",
             "⌘⌥V",
             "Ctrl+Alt+Shift+R",
             "⌥⇧⌘R",
@@ -5197,6 +5353,54 @@ mod tests {
         ] {
             assert!(surface.contains(marker), "快捷鍵總覽缺少：{marker}");
         }
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn copies_locally_licensed_microsoft_tw_fonts_as_real_files() {
+        let root = std::env::temp_dir().join(format!(
+            "OpenDeskTW-Font-Test-{}-{}",
+            std::process::id(),
+            Local::now().timestamp_millis()
+        ));
+        let _cleanup = TemporaryFolder(root.clone());
+        let office = root.join("Microsoft Word.app");
+        let source = office.join("Contents/Resources/DFonts");
+        let destination = root.join("Library/Fonts");
+        fs::create_dir_all(&source).unwrap();
+        fs::write(source.join("mingliu.ttc"), b"mingliu-test-font").unwrap();
+        fs::write(source.join("mingliub.ttc"), b"mingliub-test-font").unwrap();
+
+        let installed = copy_microsoft_tw_fonts_from_bundles(&[office], &destination).unwrap();
+        assert_eq!(installed.len(), 2);
+        for path in installed {
+            let metadata = path.symlink_metadata().unwrap();
+            assert!(metadata.is_file());
+            assert!(!metadata.file_type().is_symlink());
+            assert!(path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap()
+                .starts_with("OpenDeskTW-Licensed-"));
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn detects_when_onlyoffice_font_cache_needs_refreshing() {
+        let fonts = vec![
+            PathBuf::from("/Users/test/Library/Fonts/OpenDeskTW-Licensed-mingliu.ttc"),
+            PathBuf::from("/Users/test/Library/Fonts/OpenDeskTW-Licensed-mingliub.ttc"),
+        ];
+        assert!(!onlyoffice_font_cache_log_is_current("", &fonts));
+        assert!(!onlyoffice_font_cache_log_is_current(
+            "/Users/test/Library/Fonts/OpenDeskTW-Licensed-mingliu.ttc\n",
+            &fonts
+        ));
+        assert!(onlyoffice_font_cache_log_is_current(
+            "/Users/test/Library/Fonts/OpenDeskTW-Licensed-mingliu.ttc\n/Users/test/Library/Fonts/OpenDeskTW-Licensed-mingliub.ttc\n",
+            &fonts
+        ));
     }
 
     #[test]
@@ -5550,6 +5754,22 @@ mod tests {
             "請先儲存文件並正常關閉 ONLYOFFICE"
         );
         repair_macos_onlyoffice_locale().expect("語系應能修復為 zh-TW");
+        let installed_fonts =
+            install_microsoft_tw_fonts().expect("應能從已授權的 Microsoft Office 註冊繁中字型");
+        assert_eq!(
+            installed_fonts.len(),
+            MICROSOFT_WORD_TW_FONT_FILES.len(),
+            "應同時註冊新細明體／細明體所需的兩個字型檔"
+        );
+        for font in &installed_fonts {
+            let metadata = font.symlink_metadata().expect("註冊字型應存在");
+            assert!(
+                metadata.is_file() && !metadata.file_type().is_symlink(),
+                "註冊字型必須是可供 ONLYOFFICE 掃描的實體檔案"
+            );
+        }
+        refresh_onlyoffice_font_cache_if_needed(&installed_fonts)
+            .expect("應能安全備份過期的 ONLYOFFICE 字型快取");
         let source =
             PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("resources/onlyoffice-tw-plugin");
         let destination = onlyoffice_user_plugin_root().expect("應找到使用者外掛資料夾");

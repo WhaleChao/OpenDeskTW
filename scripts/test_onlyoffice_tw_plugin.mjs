@@ -62,7 +62,16 @@ assert.match(pluginCode, /id: "opendesk-distributed"/);
 assert.match(pluginCode, /installWordCompatibilityShortcuts\(window\.parent\)/);
 assert.match(pluginCode, /event\.code === "KeyJ"/);
 assert.match(pluginCode, /AscCommon\.align_Distributed/);
-assert.match(pluginCode, /paragraph\.Paragraph\.Vt\(nativeDistributed\)/);
+assert.match(pluginCode, /OpenDeskTW\.DistributedParagraphs/);
+assert.match(pluginCode, /restoreDistributedAlignment\(\)/);
+assert.match(pluginCode, /native-paragraph-with-persistent-marker/);
+assert.match(pluginCode, /AscCommon\?\.Ne\?\.Ug\?\.\(internalId\)/);
+assert.match(pluginCode, /Object\.values\(paragraph\)\.find/);
+assert.ok(
+  pluginCode.indexOf("nativeParagraph.Vt(nativeDistributed)") <
+    pluginCode.indexOf('method: "native-paragraph-with-persistent-marker"'),
+  "文字等距分布必須套用文件核心並留下可供重開還原的標記",
+);
 assert.match(pluginCode, /id: "opendesk-font-family"/);
 assert.match(pluginCode, /PMingLiU/);
 assert.match(pluginCode, /MingLiU/);
@@ -94,6 +103,7 @@ let keydownHandler;
 let toolbarDefinition;
 let distributedSpacing;
 let internalDistributedValue;
+let editorDistributedValue;
 let paragraphAlignment;
 let appliedFont;
 let currentSentence = "";
@@ -109,6 +119,7 @@ const magiFetches = [];
 const magiPayloads = [];
 const messages = [];
 const toolbarHandlers = new Map();
+const customProperties = new Map();
 function makeParagraph(initialText) {
   let text = initialText;
   const run = { Content: Array.from(initialText) };
@@ -151,6 +162,9 @@ function makeParagraph(initialText) {
     SetTextForTest(value) {
       text = String(value);
       run.Content = Array.from(text);
+    },
+    GetParaId() {
+      return "ABCDEF01";
     },
     GetRange(start, end) {
       return {
@@ -226,6 +240,7 @@ const apiDocument = {
   Document: {
     Vt(value) {
       internalDistributedValue = value;
+      paragraphAlignment = value;
     },
     Dne() {
       copiedFormatting = true;
@@ -255,6 +270,17 @@ const apiDocument = {
   },
   GetAllParagraphs() {
     return headingParagraphs;
+  },
+  GetCustomProperties() {
+    return {
+      Get(name) {
+        return customProperties.get(name) ?? null;
+      },
+      Add(name, value) {
+        customProperties.set(name, value);
+        return true;
+      },
+    };
   },
   IsTrackRevisions() {
     return tracked;
@@ -295,6 +321,10 @@ const asc = {
   plugin,
   scope: {},
   editor: {
+    put_PrAlign(value) {
+      editorDistributedValue = value;
+      paragraphAlignment = value === 2 ? 4 : value;
+    },
     put_TextPrFontName(value) {
       appliedFont = value;
     },
@@ -365,6 +395,8 @@ const pluginWindow = {
     };
   },
   parent: {
+    Asc: asc,
+    AscCommon: { align_Distributed: 4 },
     document: hostDocument,
     DE: {
       getController(name) {
@@ -483,6 +515,23 @@ assert.equal(press({ key: "c", code: "KeyC", ctrlKey: true, altKey: true }), tru
 assert.equal(copiedFormatting, true);
 assert.equal(press({ key: "v", code: "KeyV", ctrlKey: true, altKey: true }), true);
 assert.equal(pastedFormatting, true);
+copiedFormatting = false;
+pastedFormatting = false;
+assert.equal(press({ key: "c", code: "KeyC", ctrlKey: true, shiftKey: true }), true);
+assert.equal(copiedFormatting, true);
+assert.equal(press({ key: "v", code: "KeyV", ctrlKey: true, shiftKey: true }), true);
+assert.equal(pastedFormatting, true);
+copiedFormatting = false;
+pastedFormatting = false;
+assert.equal(press({ key: "c", code: "KeyC", metaKey: true, altKey: true }), true);
+assert.equal(copiedFormatting, true);
+assert.equal(press({ key: "v", code: "KeyV", metaKey: true, altKey: true }), true);
+assert.equal(pastedFormatting, true);
+assert.equal(
+  press({ key: "v", code: "KeyV", metaKey: true, shiftKey: true }),
+  false,
+  "macOS ⇧⌘V 必須保留給 Word 的只貼文字",
+);
 
 toolbarHandlers.get("opendesk-font-family-pmingliu")();
 assert.equal(appliedFont, "PMingLiU");

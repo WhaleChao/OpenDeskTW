@@ -16,9 +16,17 @@ else
   print "SKIP_LOCAL_OFFICE_LIVE：未設定 OPENDESK_ALLOW_LOCAL_OFFICE_LIVE=1，不啟動本機 LibreOffice"
 fi
 
-DEFAULT_SIGNING_KEY="$HOME/Library/Application Support/OpenDesk TW/Signing/opendesk-tauri.key"
-if [[ -z "${TAURI_SIGNING_PRIVATE_KEY_PATH:-}" && -f "$DEFAULT_SIGNING_KEY" ]]; then
-  export TAURI_SIGNING_PRIVATE_KEY_PATH="$DEFAULT_SIGNING_KEY"
+DEFAULT_SIGNING_KEYS=(
+  "$HOME/Library/Application Support/全能文件工作台/Signing/opendesk-tauri.key"
+  "$HOME/Library/Application Support/OpenDesk TW/Signing/opendesk-tauri.key"
+)
+if [[ -z "${TAURI_SIGNING_PRIVATE_KEY_PATH:-}" ]]; then
+  for candidate in "${DEFAULT_SIGNING_KEYS[@]}"; do
+    if [[ -f "$candidate" ]]; then
+      export TAURI_SIGNING_PRIVATE_KEY_PATH="$candidate"
+      break
+    fi
+  done
 fi
 if [[ -z "${TAURI_SIGNING_PRIVATE_KEY:-}" && -n "${TAURI_SIGNING_PRIVATE_KEY_PATH:-}" ]]; then
   export TAURI_SIGNING_PRIVATE_KEY="$(< "$TAURI_SIGNING_PRIVATE_KEY_PATH")"

@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { mkdir, writeFile } from "node:fs/promises";
 
 const port = Number(process.argv[2] || 9231);
 const timeoutMs = Number(process.env.OPENDESK_LIVE_TIMEOUT_MS || 30000);
@@ -85,6 +86,32 @@ async function main() {
     }
     return result.result?.value;
   };
+  const screenshotDirectory = process.env.OPENDESK_LIVE_SCREENSHOT_DIR;
+  const captureScreenshot = async (name) => {
+    if (!screenshotDirectory) return undefined;
+    await mkdir(screenshotDirectory, { recursive: true });
+    const capture = await cdp.call("Page.captureScreenshot", {
+      format: "png",
+      captureBeyondViewport: false,
+    });
+    const path = `${screenshotDirectory}/${name}.png`;
+    await writeFile(path, Buffer.from(capture.data, "base64"));
+    return path;
+  };
+  const forceLocalSave = async (editorContextId) => {
+    const started = await evaluate(
+      `(() => {
+        if (typeof window.DesktopOfflineAppDocumentStartSave !== "function") {
+          return false;
+        }
+        window.DesktopOfflineAppDocumentStartSave(false);
+        return true;
+      })()`,
+      editorContextId,
+    );
+    assert.equal(started, true, "ONLYOFFICE 沒有提供本機文件儲存入口");
+    await delay(3000);
+  };
 
   try {
     await cdp.call("Runtime.enable");
@@ -103,6 +130,8 @@ async function main() {
             language: new URL(location.href).searchParams.get("lang"),
             guid: window.Asc?.plugin?.guid || "",
             shortcutInstalled: Boolean(window.__OpenDeskTwWordShortcuts?.handler),
+            fontActionInstalled:
+              typeof window.__OpenDeskTwWordShortcuts?.applyTraditionalFont === "function",
             text: document.body?.innerText || ""
           })`, contextId);
         } catch (_) {
@@ -125,9 +154,9 @@ async function main() {
       editorContextId,
     );
     const visibleActions = {
-      distributed: editorStatus.text.includes("分散對齊"),
+      distributed: /文字等距分布|分散對齊/.test(editorStatus.text),
       pairs: editorStatus.text.includes("智慧補齊"),
-      fonts: editorStatus.text.includes("台灣字型"),
+      fonts: editorStatus.fontActionInstalled,
       renumber: editorStatus.text.includes("標題重編"),
       magi: /MAGI\s*摘要/.test(editorStatus.text) || homeMagiInDom,
       simplifiedAi:
@@ -141,6 +170,47 @@ async function main() {
       magi: true,
       simplifiedAi: false,
     });
+
+    // 同一份文件重開時，先驗證持久標記已把文件核心還原為 distribute=4。
+    await delay(750);
+    const restoredDistribution = await evaluate(`new Promise((resolve) => {
+      Asc.plugin.callCommand(function () {
+        const document = Api.GetDocument();
+        const customProperties = document.GetCustomProperties?.();
+        const stored = customProperties?.Get?.("OpenDeskTW.DistributedParagraphs") || "";
+        let markers = [];
+        try {
+          markers = stored ? JSON.parse(stored) : [];
+        } catch (_error) {
+          markers = [];
+        }
+        const markerIds = new Set(markers.map(function (marker) {
+          return marker?.id;
+        }).filter(Boolean));
+        const matches = document.GetAllParagraphs().filter(function (paragraph) {
+          return markerIds.has(paragraph.GetParaId?.());
+        }).map(function (paragraph) {
+          const nativeParagraph = AscCommon?.Ne?.Ug?.(paragraph.GetInternalId?.());
+          return {
+            id: paragraph.GetParaId?.() || "",
+            text: paragraph.GetText?.() || "",
+            nativeAlignment: nativeParagraph?.fa?.ye
+          };
+        });
+        return { markerCount: markers.length, matches };
+      }, false, false, resolve);
+    })`, pluginContextId);
+    if (restoredDistribution.markerCount > 0) {
+      assert.equal(
+        restoredDistribution.matches.length,
+        restoredDistribution.markerCount,
+        `分散對齊持久標記沒有對應到全部段落：${JSON.stringify(restoredDistribution)}`,
+      );
+      assert.ok(
+        restoredDistribution.matches.every((item) => item.nativeAlignment === 4),
+        `文件重開後沒有還原 distribute=4：${JSON.stringify(restoredDistribution)}`,
+      );
+    }
 
     const readCurrentParagraph = () =>
       evaluate(`new Promise((resolve) => {
@@ -205,51 +275,88 @@ async function main() {
     assert.equal(afterLineSpacing.line, 360);
     assert.equal(afterLineSpacing.lineRule, "auto");
 
-    const distributedBefore = await evaluate(`new Promise((resolve) => {
+    const distributedFixture = await evaluate(`new Promise((resolve) => {
       Asc.plugin.callCommand(function () {
         const document = Api.GetDocument();
         const paragraph = Api.CreateParagraph();
-        paragraph.AddText("分散對齊實際寬度LIVE");
+        paragraph.AddText("甲乙丙丁");
         document.Push(paragraph);
         const range = paragraph.GetRange(0, paragraph.GetText().length);
         range.Select();
-        paragraph.SetSpacing(0);
-        paragraph.SetJc("left");
-        document.ForceRecalculate();
-        const layout = paragraph.Paragraph.Lines[0].Ranges[0];
-        return {
-          text: paragraph.GetText(),
-          width: layout.XEnd - layout.X,
-          occupied: layout.W
-        };
+        return { text: paragraph.GetText() };
       }, false, true, resolve);
     })`, pluginContextId);
+    assert.equal(distributedFixture.text.trimEnd(), "甲乙丙丁");
+    await evaluate(`window.Asc.editor.put_PrAlign(1)`, editorContextId);
+    await delay(500);
+    const distributedBefore = await evaluate(`new Promise((resolve) => {
+      Asc.plugin.callCommand(function () {
+        try {
+          const document = Api.GetDocument();
+          const paragraph = document.GetCurrentParagraph();
+          return {
+            text: paragraph.GetText(),
+            publicAlignment: paragraph.GetParaPr().GetJc()
+          };
+        } catch (error) {
+          return { error: String(error), stack: error?.stack || "" };
+        }
+      }, false, false, resolve);
+    })`, pluginContextId);
     assert.ok(
-      distributedBefore.width - distributedBefore.occupied > 1,
-      "分散對齊測試文字原本就已填滿行寬，無法驗證",
+      distributedBefore && !distributedBefore.error,
+      `無法讀取文字等距分布 LIVE 版面：${JSON.stringify(distributedBefore)}`,
     );
-    await press({ key: "j", code: "KeyJ", virtualKeyCode: 74, modifiers: 12 });
+    assert.notEqual(distributedBefore.publicAlignment, "distribute");
+    const distributedBeforeScreenshot = await captureScreenshot(
+      "distributed-alignment-before",
+    );
+    await evaluate(
+      `window.__OpenDeskTwWordShortcuts.applyDistributedAlignment()`,
+      editorContextId,
+    );
+    await delay(500);
     const distributedAfter = await evaluate(`new Promise((resolve) => {
       Asc.plugin.callCommand(function () {
-        const paragraph = Api.GetDocument().GetAllParagraphs().find(function (item) {
-          return item.GetText().includes("分散對齊實際寬度LIVE");
+        const document = Api.GetDocument();
+        const paragraphs = document.GetAllParagraphs();
+        const paragraph = paragraphs.slice().reverse().find(function (item) {
+          return item.GetText().trim() === "甲乙丙丁";
         });
-        const layout = paragraph.Paragraph.Lines[0].Ranges[0];
-        const firstCharacter = paragraph.GetRange(0, 1);
+        const nativeParagraph = AscCommon?.Ne?.Ug?.(paragraph.GetInternalId());
         return {
-          width: layout.XEnd - layout.X,
-          occupied: layout.W,
-          spacing: firstCharacter.GetTextPr().GetSpacing(),
-          alignment: paragraph.GetParaPr().GetJc()
+          publicAlignment: paragraph.GetParaPr().GetJc(),
+          nativeAlignment: nativeParagraph?.fa?.ye
         };
       }, false, false, resolve);
     })`, pluginContextId);
-    assert.ok(distributedAfter.spacing > 0, "分散對齊沒有寫入逐字平均字距");
-    assert.ok(
-      Math.abs(distributedAfter.width - distributedAfter.occupied) < 0.8,
-      `分散後文字未填滿行寬：${JSON.stringify(distributedAfter)}`,
+    assert.equal(
+      distributedAfter.nativeAlignment,
+      4,
+      `文字等距分布沒有套用文件核心的 distribute=4：${JSON.stringify({ distributedBefore, distributedAfter })}`,
     );
-    assert.equal(distributedAfter.alignment, "left");
+    const distributedAfterScreenshot = await captureScreenshot(
+      "distributed-alignment-after",
+    );
+    await forceLocalSave(editorContextId);
+
+    const installedFonts = await evaluate(
+      `new Promise((resolve) => Asc.plugin.executeMethod("GetFontList", [], resolve))`,
+      pluginContextId,
+    );
+    const installedFontNames = (installedFonts || []).flatMap((font) =>
+      typeof font === "string"
+        ? [font]
+        : [font?.name, font?.Name, font?.family, font?.Family, font?.m_wsFontName],
+    );
+    assert.ok(
+      installedFontNames.includes("PMingLiU"),
+      `ONLYOFFICE 字型清單仍找不到新細明體 PMingLiU：${JSON.stringify((installedFonts || []).slice(0, 12))}`,
+    );
+    assert.ok(
+      installedFontNames.includes("MingLiU"),
+      "ONLYOFFICE 字型清單仍找不到細明體 MingLiU",
+    );
 
     const fontFixture = await evaluate(`new Promise((resolve) => {
       Asc.plugin.callCommand(function () {
@@ -257,7 +364,7 @@ async function main() {
         const paragraph = Api.CreateParagraph();
         paragraph.AddText("新細明體LIVE");
         document.Push(paragraph);
-        paragraph.GetRange(0, paragraph.GetText().length).Select();
+        document.MoveCursorToEnd();
         return true;
       }, false, true, resolve);
     })`, pluginContextId);
@@ -269,35 +376,38 @@ async function main() {
     await delay(500);
     const pmingliu = await evaluate(`new Promise((resolve) => {
       Asc.plugin.callCommand(function () {
-        const paragraph = Api.GetDocument().GetAllParagraphs().find(function (item) {
-          return item.GetText().includes("新細明體LIVE");
-        });
+        const paragraph = Api.GetDocument().GetCurrentParagraph();
         const textPr = paragraph.GetRange(0, paragraph.GetText().length).GetTextPr();
         return {
-          ascii: textPr.GetFontFamily("ascii"),
-          eastAsia: textPr.GetFontFamily("eastAsia")
+          family: textPr.GetFontFamily()
         };
       }, false, false, resolve);
     })`, pluginContextId);
-    assert.equal(pmingliu.ascii, "PMingLiU");
-    assert.equal(pmingliu.eastAsia, "PMingLiU");
+    await forceLocalSave(editorContextId);
 
-    await evaluate(`new Promise((resolve) => {
-      Asc.plugin.callCommand(function () {
-        const document = Api.GetDocument();
-        const paragraph = Api.CreateParagraph();
-        paragraph.AddText("他說「外層『內層。");
-        document.Push(paragraph);
-        document.MoveCursorToEnd();
-        return true;
-      }, false, true, resolve);
-    })`, pluginContextId);
+    await evaluate(
+      `new Promise((resolve) => Asc.plugin.executeMethod("FocusEditor", [], resolve))`,
+      pluginContextId,
+    );
+    await evaluate(
+      `new Promise((resolve) => Asc.plugin.executeMethod(
+        "InputText",
+        ["【智慧引號LIVE】他說「外層『內層。"],
+        resolve
+      ))`,
+      pluginContextId,
+    );
+    await delay(350);
     await press({ key: '"', code: "Quote", virtualKeyCode: 222, modifiers: 8 });
-    let smartQuoteText = (await readParagraphs()).at(-1);
-    assert.equal(smartQuoteText, "他說「外層『內層。』");
+    let smartQuoteText = (await readParagraphs()).find((value) =>
+      value.includes("【智慧引號LIVE】"),
+    );
+    assert.ok(smartQuoteText?.includes("【智慧引號LIVE】他說「外層『內層。』"));
     await press({ key: '"', code: "Quote", virtualKeyCode: 222, modifiers: 8 });
-    smartQuoteText = (await readParagraphs()).at(-1);
-    assert.equal(smartQuoteText, "他說「外層『內層。』」");
+    smartQuoteText = (await readParagraphs()).find((value) =>
+      value.includes("【智慧引號LIVE】"),
+    );
+    assert.ok(smartQuoteText?.includes("【智慧引號LIVE】他說「外層『內層。』」"));
 
     await press({ key: "1", code: "Digit1", virtualKeyCode: 49, modifiers: 5 });
     const afterHeading = await readCurrentParagraph();
@@ -319,7 +429,7 @@ async function main() {
       }, false, true, resolve);
     })`, pluginContextId);
     assert.equal(formatFixture, true);
-    await press({ key: "c", code: "KeyC", virtualKeyCode: 67, modifiers: 5 });
+    await press({ key: "c", code: "KeyC", virtualKeyCode: 67, modifiers: 10 });
     await evaluate(`new Promise((resolve) => {
       Asc.plugin.callCommand(function () {
         const paragraphs = Api.GetDocument().GetAllParagraphs();
@@ -330,7 +440,7 @@ async function main() {
         return true;
       }, false, false, resolve);
     })`, pluginContextId);
-    await press({ key: "v", code: "KeyV", virtualKeyCode: 86, modifiers: 5 });
+    await press({ key: "v", code: "KeyV", virtualKeyCode: 86, modifiers: 10 });
     const formatCopyPaste = await evaluate(`new Promise((resolve) => {
       Asc.plugin.callCommand(function () {
         const paragraphs = Api.GetDocument().GetAllParagraphs();
@@ -341,7 +451,11 @@ async function main() {
         return { bold: range.GetTextPr().GetBold(), text: range.GetText() };
       }, false, false, resolve);
     })`, pluginContextId);
-    assert.equal(formatCopyPaste.bold, true, "⌘⌥C／⌘⌥V 未把粗體格式套到目標文字");
+    assert.equal(
+      formatCopyPaste.bold,
+      true,
+      "Ctrl+Shift+C／Ctrl+Shift+V 未把粗體格式套到目標文字",
+    );
 
     const seededHeading = await evaluate(`new Promise((resolve) => {
       Asc.plugin.callCommand(function () {
@@ -349,6 +463,8 @@ async function main() {
         const paragraphs = document.GetAllParagraphs();
         for (let index = 0; index < paragraphs.length; index += 1) {
           const text = paragraphs[index].GetText();
+          // 自動編號的顯示標籤也會出現在 GetText()，但不是可直接改寫的本文。
+          if (text.includes("\\t")) continue;
           const match = text.match(/^\\s*([壹貳參肆伍陸柒捌玖拾佰]+)、/);
           if (!match) continue;
           const start = match[0].indexOf(match[1]);
@@ -399,7 +515,15 @@ async function main() {
           language: "zh-TW",
           toolbar: visibleActions,
           lineSpacing: { before, after: afterLineSpacing },
-          distributedAlignment: { before: distributedBefore, after: distributedAfter },
+          distributedAlignment: {
+            restoredOnOpen: restoredDistribution,
+            before: distributedBefore,
+            after: distributedAfter,
+            screenshots: {
+              before: distributedBeforeScreenshot,
+              after: distributedAfterScreenshot,
+            },
+          },
           traditionalFont: pmingliu,
           smartQuotes: smartQuoteText,
           headingStyle: afterHeading.style,
