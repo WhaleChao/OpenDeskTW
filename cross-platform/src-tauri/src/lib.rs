@@ -1033,8 +1033,25 @@ fn engine_executable(name: &str) -> Option<PathBuf> {
     })
 }
 
+#[cfg(target_os = "macos")]
+fn macos_bundle_version(executable: &Path) -> Option<String> {
+    let contents = executable.parent()?.parent()?;
+    let info_plist = contents.join("Info.plist");
+    let value = plist::Value::from_file(info_plist).ok()?;
+    value
+        .as_dictionary()?
+        .get("CFBundleShortVersionString")?
+        .as_string()
+        .map(str::to_string)
+}
+
 fn engine_status(name: &str) -> EngineStatus {
     let path = engine_executable(name);
+    #[cfg(target_os = "macos")]
+    let version = path
+        .as_ref()
+        .and_then(|executable| macos_bundle_version(executable));
+    #[cfg(not(target_os = "macos"))]
     let version = path.as_ref().and_then(|executable| {
         if name == "ONLYOFFICE" {
             return None;
@@ -4508,6 +4525,27 @@ fn create_document<R: Runtime>(
     })
 }
 
+fn local_office_process_policy(sandboxed: bool, explicit_permission: Option<&str>) -> bool {
+    explicit_permission == Some("1") || !sandboxed
+}
+
+fn local_office_process_allowed() -> bool {
+    let explicit_permission = std::env::var("OPENDESK_ALLOW_LOCAL_OFFICE_LIVE").ok();
+    local_office_process_policy(
+        std::env::var_os("CODEX_SANDBOX").is_some(),
+        explicit_permission.as_deref(),
+    )
+}
+
+fn require_local_office_process(action: &str) -> Result<(), String> {
+    if local_office_process_allowed() {
+        return Ok(());
+    }
+    Err(format!(
+        "已阻止在 Codex 受限背景環境啟動 LibreOffice（{action}），避免 macOS AppKit 崩潰通知。若已取得使用者明確允許，請設定 OPENDESK_ALLOW_LOCAL_OFFICE_LIVE=1 後重試"
+    ))
+}
+
 #[tauri::command]
 fn convert_pdf(path: String) -> Result<String, String> {
     let source = PathBuf::from(path);
@@ -4526,6 +4564,7 @@ fn convert_pdf(path: String) -> Result<String, String> {
 }
 
 fn convert_pdf_at(source: &Path, output: &Path) -> Result<PathBuf, String> {
+    require_local_office_process("PDF 轉換")?;
     let executable = engine_executable("LibreOffice").ok_or("找不到 LibreOffice")?;
     fs::create_dir_all(output).map_err(|error| error.to_string())?;
     let profile = std::env::temp_dir().join(format!(
@@ -4954,6 +4993,41 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn local_office_processes_require_explicit_permission_in_sandbox() {
+        assert!(!local_office_process_policy(true, None));
+        assert!(!local_office_process_policy(true, Some("0")));
+        assert!(local_office_process_policy(true, Some("1")));
+        assert!(local_office_process_policy(false, None));
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn reads_macos_engine_version_from_bundle_without_running_binary() {
+        let root = std::env::temp_dir().join(format!(
+            "OpenDeskTW-Bundle-Version-{}-{}",
+            std::process::id(),
+            Local::now().timestamp_millis()
+        ));
+        let _cleanup = TemporaryFolder(root.clone());
+        let executable = root.join("LibreOffice.app/Contents/MacOS/soffice");
+        fs::create_dir_all(executable.parent().unwrap()).unwrap();
+        fs::write(&executable, b"must never execute").unwrap();
+        fs::write(
+            root.join("LibreOffice.app/Contents/Info.plist"),
+            br#"<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+<key>CFBundleShortVersionString</key><string>25.8.4.2</string>
+</dict></plist>"#,
+        )
+        .unwrap();
+        assert_eq!(
+            macos_bundle_version(&executable).as_deref(),
+            Some("25.8.4.2")
+        );
+    }
 
     #[test]
     fn distinguishes_traditional_from_invalid_or_simplified_locales() {
@@ -5483,6 +5557,8 @@ mod tests {
     #[test]
     #[ignore = "需要本機 ONLYOFFICE、LibreOffice 與 MAGI"]
     fn live_complete_office_pipeline() {
+        require_local_office_process("Office 完整管線 LIVE 測試")
+            .expect("必須先取得使用者明確允許，並設定 OPENDESK_ALLOW_LOCAL_OFFICE_LIVE=1");
         assert!(engine_status("ONLYOFFICE").installed);
         assert!(engine_status("LibreOffice").installed);
         let onlyoffice_tw = onlyoffice_tw_status_value();

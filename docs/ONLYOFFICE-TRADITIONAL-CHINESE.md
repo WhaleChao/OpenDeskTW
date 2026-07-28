@@ -1,6 +1,6 @@
 # ONLYOFFICE 繁體中文與全能文件寫作工具
 
-全能文件工作台 2.7.0 不修改 `/Applications/ONLYOFFICE.app` 或 Windows 的已簽署程式檔，而是在使用者自己的設定與外掛資料夾完成修復，方便更新、回復與熱修。
+全能文件工作台 2.7.1 不修改 `/Applications/ONLYOFFICE.app` 或 Windows 的已簽署程式檔，而是在使用者自己的設定與外掛資料夾完成修復，方便更新、回復與熱修。
 
 ## 問題原因
 

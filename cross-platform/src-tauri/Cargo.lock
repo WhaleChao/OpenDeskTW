@@ -792,11 +792,12 @@ dependencies = [
 
 [[package]]
 name = "document-workbench-tw"
-version = "2.7.0"
+version = "2.7.1"
 dependencies = [
  "chrono",
  "dirs",
  "getrandom 0.3.4",
+ "plist",
  "regex",
  "serde",
  "serde_json",

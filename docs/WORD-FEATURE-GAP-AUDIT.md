@@ -34,7 +34,9 @@
 | 自動化與增益集 | 專有／排除 | ONLYOFFICE 可執行自己的 JavaScript 巨集與外掛 | VBA、ActiveX、COM／VSTO、Office.js 專用增益集與 Windows Office 物件模型不是等價執行環境 |
 | 雲端協作與版本 | 專有／部分 | 工作台有本機備份；ONLYOFFICE 引擎本身具協作協定 | 本專案沒有部署文件伺服器／入口網站，因此沒有即時共同編輯、雲端版本歷程、分享連結、留言通知與 Microsoft 365 整合 |
 
-## 2.7.0 完成項目與剩餘優先順序
+## 2.7.x 完成項目與剩餘優先順序
+
+2.7.1 修正 macOS 背景環境中的 LibreOffice 啟動問題：引擎版本改由 App 的 `Info.plist` 讀取，不再執行 `soffice --version`；Codex 受限背景環境也會在任何 LibreOffice 轉檔前停止，只有取得使用者明確允許並設定專用旗標後才可執行完整 LIVE 測試。
 
 ### 原 P0：已完成可操作流程
 

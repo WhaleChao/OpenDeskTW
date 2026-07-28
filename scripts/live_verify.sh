@@ -1,6 +1,11 @@
 #!/bin/zsh
 set -euo pipefail
 
+if [[ "${OPENDESK_ALLOW_LOCAL_OFFICE_LIVE:-}" != "1" ]]; then
+    print -u2 "已阻止啟動本機 Office：請先取得使用者明確允許，再設定 OPENDESK_ALLOW_LOCAL_OFFICE_LIVE=1"
+    exit 64
+fi
+
 SCRIPT_DIR="${0:A:h}"
 PROJECT_ROOT="${SCRIPT_DIR:h}"
 RUN_ID="$(/bin/date +%Y%m%d-%H%M%S)"
