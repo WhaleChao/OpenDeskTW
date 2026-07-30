@@ -41,7 +41,7 @@ const wordTabs = {
       ["openfile", "開啟與最近文件", "開啟 DOCX／DOCM、舊版 DOC、ODT 或 RTF；先檢查格式風險再編輯。", "檔案 → 開啟", "open"],
       ["saveprint", "儲存、另存新檔與列印", "使用 DOCX 保留編輯能力，另存副本、預覽頁面、選擇印表機與列印範圍。", "檔案 → 儲存／另存新檔／列印", "editor"],
       ["documentinfo", "文件資訊與交付檢查", "查看標題地圖、字型、註解、修訂、隱藏欄位、頁碼與無障礙提醒。", "工作台直接完成", "report"],
-      ["recover", "備份、復原與版本副本", "開啟文件即建立工作階段，之後每 45 秒檢查變更；重新啟動可另存最新快照，原檔不覆寫。", "工作台直接完成", "recovery"],
+      ["recover", "備份、未存草稿復原與版本副本", "每 45 秒保存已寫入檔案；ONLYOFFICE 另每 15 秒保存記憶體富文字草稿，當機後可插入空白文件復原。", "工作台＋常用 → 未存草稿復原", "recovery"],
       ["filepdf", "匯出可搜尋 PDF", "使用隔離的本機轉檔程序，不上傳內容，也不改寫原始 DOCX。", "工作台直接完成", "pdf"],
     ],
   },
@@ -114,7 +114,7 @@ const wordTabs = {
     tasks: [
       ["toc", "自動目錄", "依標題樣式產生可點擊目錄，更新頁碼或整份目錄。", "參考資料 → 目錄", "editor"],
       ["notes", "註腳與尾註", "插入註腳／尾註、切換位置、設定編號格式與重新開始方式。", "參考資料 → 註腳", "editor"],
-      ["citations", "引文、來源與書目", "在本機管理來源，複製內文引文，並依 APA 7、MLA 9、Chicago 或台灣格式寫入參考書目。", "工作台直接完成", "citations"],
+      ["citations", "動態引文、來源與書目", "在本機管理來源，插入含來源 ID 的內文引文與書目，依 APA 7、MLA 9、Chicago 或台灣格式重新更新。", "工作台直接完成", "citations"],
       ["captions", "標號與圖表目錄", "為圖、表、方程式加自動標號，再產生圖表目錄。", "參考資料 → 標號", "editor"],
       ["crossref", "交互參照", "引用標題、圖表、註腳或書籤，內容與頁碼可更新。", "參考資料 → 交互參照", "editor"],
       ["index", "索引與引證目錄", "標記索引項目並建立索引；法律文件可建立引證目錄。", "參考資料 → 索引", "editor", "LibreOffice"],
@@ -127,8 +127,8 @@ const wordTabs = {
     tasks: [
       ["envelopes", "信封與標籤", "建立含實際合併欄位的信封、標籤或信件範本。", "工作台直接完成", "merge"],
       ["startmerge", "啟動合併列印", "選取 DOCX 主文件及 CSV／TSV 收件人資料，所有內容留在本機。", "工作台直接完成", "merge"],
-      ["recipients", "選取與篩選收件者", "預覽欄位及前五筆資料，可依指定欄位包含文字篩選。", "工作台直接完成", "merge"],
-      ["mergefields", "插入合併欄位", "支援 {{姓名}}、«姓名» 及 Word MERGEFIELD 顯示文字，即使欄位被拆成多個文字區段也能合併。", "工作台直接完成", "merge"],
+      ["recipients", "選取與篩選收件者", "預覽欄位及前五筆資料，可用包含、不包含、等於、開頭、結尾、空白與數字比較篩選。", "工作台直接完成", "merge"],
+      ["mergefields", "合併欄位與條件規則", "支援 {{姓名}}、«姓名»、Word MERGEFIELD、IF、Ask、Fill-in、Set、記錄編號及略過規則。", "工作台直接完成", "merge"],
       ["previewmerge", "預覽與完成合併", "輸出個別 DOCX、PDF 或兩者；檔名可指定資料欄位並避免覆寫既有檔案。", "工作台直接完成", "merge"],
     ],
   },
@@ -144,13 +144,14 @@ const wordTabs = {
       ["compare", "比較與合併兩個版本", "保留原檔，把差異產生為修訂標記；也能合併多人修改。", "編輯 → 追蹤修訂 → 比較文件", "editor", "LibreOffice"],
       ["protect", "限制編輯與文件保護", "限制格式、唯讀或允許填表；IRM 權限屬 Microsoft 專有能力。", "校閱 → 保護", "editor"],
       ["accessibility", "無障礙檢查與安全修復", "逐項定位替代文字、表格標題列、文件語言、標題跳級、含糊連結與文件標題；確定項目可另存修復。", "工作台直接完成", "accessibility"],
+      ["quality", "台灣文件交付前校閱", "檢查未完成欄位、成對標點、半形標點、空白排版、長句、待辦註記、重複文字與台灣常用詞。", "工作台直接完成", "quality"],
     ],
   },
   view: {
     title: "檢視：用最適合目前工作的方式看文件",
     detail: "閱讀、編輯、導覽與並排比較各有不同的最佳畫面。",
     tasks: [
-      ["modes", "大綱、草稿與 Web 模式", "以本機結構化文字切換大綱、草稿與 Web 版面，不改寫原文件。", "工作台直接完成", "view"],
+      ["modes", "可編輯大綱、草稿與 Web 模式", "大綱可提升／降低標題層級，或連同所屬內容上下移動並另存；草稿與 Web 模式不改寫原檔。", "工作台直接完成", "view"],
       ["navigation", "文件地圖與導覽窗格", "依標題瀏覽長文件，檢查層級與快速跳到章節。", "工作台直接顯示", "report"],
       ["ruler", "尺規、格線與格式標記", "顯示尺規、格線、段落符號、分頁與分節符號。", "檢視／常用 → 顯示", "editor"],
       ["zoom", "縮放與多頁檢視", "單頁、多頁、頁寬與自訂縮放比例。", "檢視 → 縮放", "editor"],
@@ -265,6 +266,8 @@ const wordShortcuts = [
   ["文件", "下一個文件頁籤", "Ctrl+Tab", "Control+Tab"],
   ["文件", "上一個文件頁籤", "Ctrl+Shift+Tab", "Control+Shift+Tab"],
   ["文件", "更新目錄與欄位", "F9", "Fn+F9"],
+  ["文件", "重複上一個全能文件格式操作", "F4", "Fn+F4", "Word 相容"],
+  ["文件", "移至頁碼或書籤", "F5", "Fn+F5", "Word 相容"],
   ["編輯", "復原", "Ctrl+Z", "⌘Z"],
   ["編輯", "取消復原／重做", "Ctrl+Y", "⌘Y／⇧⌘Z"],
   ["編輯", "剪下", "Ctrl+X", "⌘X"],
@@ -287,6 +290,8 @@ const wordShortcuts = [
   ["文字格式", "放大字型一級", "Ctrl+]", "⌘]"],
   ["文字格式", "縮小字型一級", "Ctrl+[", "⌘["],
   ["文字格式", "開啟字型對話框", "Ctrl+D", "⌘D", "Word 標準"],
+  ["文字格式", "選擇字型", "Ctrl+Shift+F", "⇧⌘F", "Word 相容"],
+  ["文字格式", "選擇字級", "Ctrl+Shift+P", "⇧⌘P", "Word 相容"],
   ["文字格式", "切換英文大小寫", "Shift+F3", "Fn+Shift+F3", "Word 標準"],
   ["樣式", "套用標題 1", "Ctrl+Alt+1", "⌘⌥1", "Word 相容"],
   ["樣式", "套用標題 2", "Ctrl+Alt+2", "⌘⌥2", "Word 相容"],
@@ -309,7 +314,9 @@ const wordShortcuts = [
   ["段落", "減少凸排", "Ctrl+Shift+T", "⇧⌘T", "Word 相容"],
   ["插入", "分頁符號", "Ctrl+Enter", "⌘Return"],
   ["插入", "分欄符號", "Ctrl+Shift+Enter", "⇧⌘Return"],
-  ["插入", "插入頁碼（PAGE 欄位）", "Alt+Shift+P", "Control+Shift+P", "Word 標準"],
+  ["插入", "插入頁碼（PAGE 欄位）", "Alt+Shift+P", "⌥⇧P", "Word 相容"],
+  ["插入", "插入目前日期", "Alt+Shift+D", "⌥⇧D", "Word 相容"],
+  ["插入", "插入目前時間", "Alt+Shift+T", "⌥⇧T", "Word 相容"],
   ["檢視", "顯示／隱藏格式標記", "Ctrl+Shift+8", "⇧⌘8"],
   ["檢視", "回到 100% 縮放", "Ctrl+0", "⌘0"],
   ["校閱", "新增註解", "Ctrl+Alt+M", "⌘⌥A", "Word 相容"],
@@ -400,6 +407,7 @@ const state = {
   mergeDataSource: null,
   mergePreview: null,
   accessibilityReport: null,
+  qualityReport: null,
   citationSources: [],
   readingPrimary: null,
   readingSecondary: null,
@@ -464,6 +472,7 @@ async function openWordTools(tab = "recovery") {
   if (tab === "recovery") await refreshRecoveryOverview();
   if (tab === "citations") await loadCitationSources();
   if (tab === "accessibility" && isWordPath(state.selectedPath)) await runAccessibilityCheck(false);
+  if (tab === "quality" && isWordPath(state.selectedPath)) await runQualityCheck(false);
   if (tab === "view" && isWordPath(state.selectedPath)) await loadCurrentReadingContent();
   if (tab === "quickparts") renderAutoText();
 }
@@ -604,6 +613,7 @@ async function generateMailMerge() {
       outputFormat: $("#merge-output-format").value,
       namingField: $("#merge-naming-field").value,
       filterColumn: $("#merge-filter-column").value,
+      filterOperator: $("#merge-filter-operator").value,
       filterValue: $("#merge-filter-value").value,
     });
     $("#merge-preview-result").innerHTML = `<p class="citation-preview"><b>${escapeHtml(result.message)}</b><br>${result.created.slice(0, 12).map(escapeHtml).join("<br>")}${result.created.length > 12 ? `<br>…另有 ${result.created.length - 12} 個檔案` : ""}</p>`;
@@ -655,6 +665,52 @@ async function repairAccessibility() {
     await runAccessibilityCheck(false);
   } catch (error) {
     toast(`無障礙修復未完成：${error}`, 9000);
+  }
+}
+
+function renderQualityReport() {
+  const report = state.qualityReport;
+  if (!report) return;
+  const issues = report.issues.map((issue) => `
+    <article class="quality-issue ${escapeHtml(issue.severity)}">
+      <div><b>${escapeHtml(issue.category)}：${escapeHtml(issue.message)}</b><p>${escapeHtml(issue.suggestion)}</p><small>${escapeHtml(issue.location)}</small></div>
+      <span>${issue.severity === "error" ? "交付前處理" : "建議確認"}</span>
+    </article>`).join("");
+  $("#quality-results").innerHTML = `
+    <div class="accessibility-summary"><div class="accessibility-score">${report.score}</div><div><b>${escapeHtml(report.file_name)}</b><p>${report.characters.toLocaleString("zh-TW")} 字・${report.sentences.toLocaleString("zh-TW")} 句・${report.issues.length ? `發現 ${report.issues.length} 項` : "檢查通過"}</p><small>${report.passed_checks.map(escapeHtml).join("、")}</small></div></div>
+    ${issues || '<p class="citation-preview">未發現台灣標點、未完成欄位或交付前註記問題。</p>'}`;
+}
+
+async function runQualityCheck(showToast = true) {
+  const path = await ensureWordDocument();
+  if (!path) return;
+  try {
+    state.qualityReport = await invoke("word_quality_report", { path });
+    renderQualityReport();
+    if (showToast) toast(`台灣文件校閱完成：${state.qualityReport.score} 分。`);
+  } catch (error) {
+    toast(`文件校閱失敗：${error}`, 9000);
+  }
+}
+
+async function createStructuredWordTemplate(kind) {
+  const names = {
+    "official-letter": "機關函稿.docx",
+    "legal-pleading": "法律書狀.docx",
+    "meeting-minutes": "會議紀錄.docx",
+    "structured-report": "結構化報告.docx",
+  };
+  const destination = await save({
+    defaultPath: names[kind] || "Word範本.docx",
+    filters: [{ name: "Word 文件", extensions: ["docx"] }],
+  });
+  if (!destination) return;
+  try {
+    const result = await invoke("create_word_template", { kind, destination });
+    toast(result.message, 9000);
+    await selectDocument(result.path);
+  } catch (error) {
+    toast(`無法建立範本：${error}`, 9000);
   }
 }
 
@@ -781,24 +837,75 @@ async function appendBibliography() {
   }
 }
 
-function readingParagraphHtml(paragraph) {
-  const level = paragraph.heading_level;
-  return `<p class="reading-paragraph${level ? " reading-heading" : ""}"${level ? ` data-level="${level}"` : ""} data-paragraph="${paragraph.index}">${escapeHtml(paragraph.text)}</p>`;
+async function insertDynamicCitation() {
+  const path = await ensureWordDocument();
+  if (!path) return;
+  const sourceIds = selectedCitationIds();
+  if (!sourceIds.length) {
+    toast("請先勾選要插入的引文來源。");
+    return;
+  }
+  const stem = path.split(/[\\/]/).pop().replace(/\.[^.]+$/, "");
+  const destination = await save({ defaultPath: `${stem}-含動態引文.docx`, filters: [{ name: "Word 文件", extensions: ["docx"] }] });
+  if (!destination) return;
+  try {
+    const result = await invoke("insert_dynamic_citation", { path, destination, sourceIds, style: $("#citation-style").value });
+    toast(result.message, 9000);
+    await selectDocument(result.path);
+  } catch (error) {
+    toast(`無法插入動態引文：${error}`, 9000);
+  }
 }
 
-function renderReadingPane(target, content) {
+async function updateDocumentCitations() {
+  const path = await ensureWordDocument();
+  if (!path) return;
+  const stem = path.split(/[\\/]/).pop().replace(/\.[^.]+$/, "");
+  const destination = await save({ defaultPath: `${stem}-引文已更新.docx`, filters: [{ name: "Word 文件", extensions: ["docx"] }] });
+  if (!destination) return;
+  try {
+    const result = await invoke("update_document_citations", { path, destination });
+    toast(result.message, 9000);
+    await selectDocument(result.path);
+  } catch (error) {
+    toast(`無法更新文件引文：${error}`, 9000);
+  }
+}
+
+function readingParagraphHtml(paragraph, editable = false) {
+  const level = paragraph.heading_level;
+  const actions = level && editable
+    ? `<span class="outline-actions" aria-label="編輯「${escapeHtml(paragraph.text)}」">
+        <button data-outline-action="move_up" data-outline-paragraph="${paragraph.index}" title="連同所屬內容上移">↑</button>
+        <button data-outline-action="move_down" data-outline-paragraph="${paragraph.index}" title="連同所屬內容下移">↓</button>
+        <button data-outline-action="promote" data-outline-paragraph="${paragraph.index}" title="提升標題層級">←</button>
+        <button data-outline-action="demote" data-outline-paragraph="${paragraph.index}" title="降低標題層級">→</button>
+      </span>`
+    : "";
+  return `<p class="reading-paragraph${level ? " reading-heading" : ""}"${level ? ` data-level="${level}"` : ""} data-paragraph="${paragraph.index}">${level ? `<span class="outline-level">H${level}</span>` : ""}<span class="reading-text">${escapeHtml(paragraph.text)}</span>${actions}</p>`;
+}
+
+function renderReadingPane(target, content, editable = false) {
   target.classList.remove("mode-outline", "mode-draft", "mode-web");
   target.classList.add(`mode-${$("#reading-mode").value}`);
   target.innerHTML = content?.paragraphs?.length
-    ? content.paragraphs.map(readingParagraphHtml).join("")
+    ? content.paragraphs.map((paragraph) => readingParagraphHtml(paragraph, editable)).join("")
     : '<p class="empty">文件沒有可顯示的文字段落。</p>';
+  if (editable) {
+    target.querySelectorAll("[data-outline-action]").forEach((button) => {
+      button.addEventListener("click", () => editReadingOutline(
+        Number(button.dataset.outlineParagraph),
+        button.dataset.outlineAction,
+      ));
+    });
+  }
 }
 
 function renderReadingWorkspace() {
-  if (state.readingPrimary) renderReadingPane($("#reading-primary"), state.readingPrimary);
+  if (state.readingPrimary) renderReadingPane($("#reading-primary"), state.readingPrimary, true);
   const secondary = $("#reading-secondary");
   secondary.classList.toggle("hidden", !state.readingSecondary);
-  if (state.readingSecondary) renderReadingPane(secondary, state.readingSecondary);
+  if (state.readingSecondary) renderReadingPane(secondary, state.readingSecondary, false);
   $("#reading-status").textContent = state.readingPrimary
     ? `${state.readingPrimary.file_name}・${state.readingPrimary.paragraphs.length} 段${state.readingSecondary ? `　並排：${state.readingSecondary.file_name}` : ""}`
     : "尚未載入文件";
@@ -807,6 +914,25 @@ function renderReadingWorkspace() {
     ? `<div class="word-tool-heading"><div><h3>本機註解工作清單</h3><p>顯示作者、日期及 @指派；回覆、圖片與雲端通知仍由編輯器／協作平台處理。</p></div><b>${comments.length} 則</b></div>` + comments.map((comment) => `
       <article class="review-comment"><b>${escapeHtml(comment.author || "未署名")}${comment.mentions.length ? `　指派：${comment.mentions.map((value) => `@${escapeHtml(value)}`).join("、")}` : ""}</b><p>${escapeHtml(comment.text)}</p><small>${escapeHtml(comment.date || "未記錄日期")}</small></article>`).join("")
     : '<p class="empty">目前文件沒有註解。</p>';
+}
+
+async function editReadingOutline(paragraph, action) {
+  const path = await ensureWordDocument();
+  if (!path) return;
+  const stem = path.split(/[\\/]/).pop().replace(/\.[^.]+$/, "");
+  const destination = await save({
+    defaultPath: `${stem}-大綱編輯.docx`,
+    filters: [{ name: "Word 文件", extensions: ["docx"] }],
+  });
+  if (!destination) return;
+  try {
+    const result = await invoke("edit_word_outline", { path, destination, paragraph, action });
+    toast(result.message, 9000);
+    await selectDocument(result.path);
+    await loadReadingContent(result.path);
+  } catch (error) {
+    toast(`大綱編輯失敗：${error}`, 9000);
+  }
 }
 
 async function loadReadingContent(path, secondary = false) {
@@ -1110,9 +1236,9 @@ function renderWordTab() {
   $("#word-tab-intro").innerHTML = `<b>${escapeHtml(tab.title)}</b><span>${escapeHtml(tab.detail)}</span>`;
   $("#word-task-grid").innerHTML = tab.tasks.map(([id, title, detail, location, action]) => `
     <article class="word-task-card">
-      <div class="word-task-icon" aria-hidden="true">${action === "report" || action === "accessibility" ? "✓" : action === "renumber" ? "↻" : action === "pdf" ? "PDF" : action === "magi" ? "AI" : action === "twtools" ? "繁" : action === "new" ? "+" : action === "open" ? "↗" : action === "recovery" ? "↺" : action === "merge" ? "✉" : action === "citations" ? "§" : action === "view" ? "👁" : action === "language" ? "譯" : action === "quickparts" ? "▦" : "→"}</div>
+      <div class="word-task-icon" aria-hidden="true">${action === "report" || action === "accessibility" || action === "quality" ? "✓" : action === "renumber" ? "↻" : action === "pdf" ? "PDF" : action === "magi" ? "AI" : action === "twtools" ? "繁" : action === "new" ? "+" : action === "open" ? "↗" : action === "recovery" ? "↺" : action === "merge" ? "✉" : action === "citations" ? "§" : action === "view" ? "👁" : action === "language" ? "譯" : action === "quickparts" ? "▦" : "→"}</div>
       <div class="word-task-copy"><h3>${escapeHtml(title)}</h3><p>${escapeHtml(detail)}</p><small>${escapeHtml(location)}</small></div>
-      <button class="word-task-action" data-word-task="${id}">${action === "report" || action === "accessibility" ? "立即檢查" : action === "renumber" ? "安全重編" : action === "pdf" ? "轉成 PDF" : action === "magi" ? "交給 MAGI" : action === "twtools" ? "啟用工具" : action === "new" ? "新增文件" : action === "open" ? "選擇文件" : action === "recovery" ? "查看復原" : action === "merge" ? "開啟精靈" : action === "citations" ? "管理來源" : action === "view" ? "開啟檢視" : action === "language" ? "開啟語言工具" : action === "quickparts" ? "建立元件" : "開啟使用"}</button>
+      <button class="word-task-action" data-word-task="${id}">${action === "report" || action === "accessibility" || action === "quality" ? "立即檢查" : action === "renumber" ? "安全重編" : action === "pdf" ? "轉成 PDF" : action === "magi" ? "交給 MAGI" : action === "twtools" ? "啟用工具" : action === "new" ? "新增文件" : action === "open" ? "選擇文件" : action === "recovery" ? "查看復原" : action === "merge" ? "開啟精靈" : action === "citations" ? "管理來源" : action === "view" ? "開啟檢視" : action === "language" ? "開啟語言工具" : action === "quickparts" ? "建立元件" : "開啟使用"}</button>
     </article>`).join("");
   $$('[data-word-task]').forEach((button) => button.addEventListener("click", () => runWordTask(button.dataset.wordTask)));
 }
@@ -1137,7 +1263,7 @@ async function runWordTask(id) {
     await chooseWordDocument();
     return;
   }
-  if (["recovery", "merge", "accessibility", "citations", "view", "language", "quickparts"].includes(action)) {
+  if (["recovery", "merge", "accessibility", "quality", "citations", "view", "language", "quickparts"].includes(action)) {
     await openWordTools(action);
     return;
   }
@@ -2337,6 +2463,7 @@ $$("[data-word-tool-tab]").forEach((button) => button.addEventListener("click", 
   selectWordToolTab(button.dataset.wordToolTab);
   if (button.dataset.wordToolTab === "recovery") await refreshRecoveryOverview();
   if (button.dataset.wordToolTab === "citations") await loadCitationSources();
+  if (button.dataset.wordToolTab === "quality" && isWordPath(state.selectedPath)) await runQualityCheck(false);
   if (button.dataset.wordToolTab === "view" && isWordPath(state.selectedPath)) await loadCurrentReadingContent();
   if (button.dataset.wordToolTab === "quickparts") renderAutoText();
 }));
@@ -2349,10 +2476,14 @@ $("#merge-generate").addEventListener("click", generateMailMerge);
 $$("[data-merge-template]").forEach((button) => button.addEventListener("click", () => createMergeTemplate(button.dataset.mergeTemplate)));
 $("#accessibility-check").addEventListener("click", () => runAccessibilityCheck());
 $("#accessibility-repair").addEventListener("click", repairAccessibility);
+$("#quality-check").addEventListener("click", () => runQualityCheck());
+$$("[data-word-template]").forEach((button) => button.addEventListener("click", () => createStructuredWordTemplate(button.dataset.wordTemplate)));
 $("#citation-form").addEventListener("submit", saveCitationSource);
 $("#citation-reset").addEventListener("click", () => fillCitationForm());
 $("#citation-copy").addEventListener("click", copyInlineCitation);
+$("#citation-insert").addEventListener("click", insertDynamicCitation);
 $("#citation-append").addEventListener("click", appendBibliography);
+$("#citation-update").addEventListener("click", updateDocumentCitations);
 $("#reading-load-current").addEventListener("click", loadCurrentReadingContent);
 $("#reading-load-second").addEventListener("click", loadSecondReadingContent);
 $("#reading-mode").addEventListener("change", renderReadingWorkspace);

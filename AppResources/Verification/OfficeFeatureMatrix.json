@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "suite": "OpenDesk TW Office 完整功能矩陣",
-  "generatedForVersion": "1.4.0",
+  "generatedForVersion": "2.8.0",
   "passed": true,
   "summary": "37/37 項通過",
   "passedCount": 37,
@@ -26,7 +26,7 @@
       {
         "name": "DOCX 自動中文編號",
         "passed": true,
-        "detail": "繁體中文法律編號格式"
+        "detail": "無外括號的繁體中文法律編號格式"
       },
       {
         "name": "DOCX 頁首頁尾與頁碼",

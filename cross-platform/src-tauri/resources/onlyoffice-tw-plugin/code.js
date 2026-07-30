@@ -6,8 +6,15 @@
   let wordFormatClipboardReady = false;
   let magiResultWindow = null;
   let magiResultPayload = null;
+  let recoveryWindow = null;
+  let draftSnapshotTimer = null;
+  let lastWordAction = null;
   let distributedPersistenceTimer = null;
   let distributedLayoutTimer = null;
+  const draftStorageKey = "opendesk-tw-rich-drafts-v2";
+  const draftSnapshotIntervalMs = 15000;
+  const maxDraftSnapshots = 12;
+  const maxDraftHtmlLength = 2_500_000;
   const numericFontSizes = [9, 10, 10.5, 11, 12, 14, 16, 18, 20, 22, 24, 28, 36, 48, 72];
   const traditionalFonts = [
     { id: "pmingliu", name: "PMingLiU", text: "新細明體（PMingLiU）" },
@@ -25,6 +32,191 @@
 
   function showMessage(message) {
     plugin.executeMethod("ShowError", [message, 0]);
+  }
+
+  function readDraftSnapshots() {
+    try {
+      const value = JSON.parse(window.localStorage.getItem(draftStorageKey) || "[]");
+      return Array.isArray(value) ? value : [];
+    } catch (_) {
+      return [];
+    }
+  }
+
+  function writeDraftSnapshots(snapshots) {
+    const normalized = snapshots
+      .filter(function (snapshot) {
+        return snapshot && snapshot.id && snapshot.html;
+      })
+      .sort(function (left, right) {
+        return Number(right.savedAt || 0) - Number(left.savedAt || 0);
+      })
+      .slice(0, maxDraftSnapshots);
+    try {
+      window.localStorage.setItem(draftStorageKey, JSON.stringify(normalized));
+      return true;
+    } catch (_) {
+      // A very image-heavy HTML snapshot can exceed the browser quota. Keep the
+      // newest text-rich half before giving up, so an unsaved document still has
+      // a useful recovery path.
+      try {
+        window.localStorage.setItem(
+          draftStorageKey,
+          JSON.stringify(
+            normalized.slice(0, Math.max(2, Math.floor(maxDraftSnapshots / 2))),
+          ),
+        );
+        return true;
+      } catch (_error) {
+        return false;
+      }
+    }
+  }
+
+  function draftDocumentIdentity(hostWindow) {
+    const sourcePath = editorSourcePath(hostWindow);
+    const title = String(plugin.info?.documentTitle || "未命名文件").trim() || "未命名文件";
+    return {
+      key: sourcePath || `unsaved:${title}`,
+      sourcePath,
+      title,
+    };
+  }
+
+  function simpleDraftHash(value) {
+    let hash = 2166136261;
+    for (let index = 0; index < value.length; index += 1) {
+      hash ^= value.charCodeAt(index);
+      hash = Math.imul(hash, 16777619);
+    }
+    return (hash >>> 0).toString(16);
+  }
+
+  function captureRichDraft(hostWindow, callback) {
+    plugin.executeMethod("GetFileHTML", [], function (html) {
+      const content = String(html || "");
+      const text = content
+        .replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, "")
+        .replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, "")
+        .replace(/<[^>]+>/g, " ")
+        .replace(/\s+/g, " ")
+        .trim();
+      if (!text || content.length > maxDraftHtmlLength) {
+        callback?.(false);
+        return;
+      }
+      const identity = draftDocumentIdentity(hostWindow);
+      const hash = simpleDraftHash(content);
+      const snapshots = readDraftSnapshots();
+      const current = snapshots.find(function (snapshot) {
+        return snapshot.documentKey === identity.key;
+      });
+      if (current?.hash === hash) {
+        callback?.(false);
+        return;
+      }
+      const now = Date.now();
+      snapshots.unshift({
+        id: `draft-${now}-${Math.random().toString(36).slice(2, 8)}`,
+        documentKey: identity.key,
+        title: identity.title,
+        sourcePath: identity.sourcePath,
+        savedAt: now,
+        characters: text.length,
+        hash,
+        html: content,
+      });
+      // Keep one recent version per document plus a second checkpoint for the
+      // active document. This avoids a single document evicting all other drafts.
+      let currentDocumentCopies = 0;
+      const compact = snapshots.filter(function (snapshot) {
+        if (snapshot.documentKey !== identity.key) return true;
+        currentDocumentCopies += 1;
+        return currentDocumentCopies <= 2;
+      });
+      callback?.(writeDraftSnapshots(compact));
+    });
+  }
+
+  function scheduleRichDraftSnapshots(hostWindow) {
+    if (draftSnapshotTimer && typeof window.clearInterval === "function") {
+      window.clearInterval(draftSnapshotTimer);
+    }
+    captureRichDraft(hostWindow);
+    if (typeof window.setInterval === "function") {
+      draftSnapshotTimer = window.setInterval(function () {
+        captureRichDraft(hostWindow);
+      }, draftSnapshotIntervalMs);
+    }
+  }
+
+  function sendRecoveryWindowPayload() {
+    if (!recoveryWindow) return;
+    recoveryWindow.command("onDraftSnapshots", {
+      snapshots: readDraftSnapshots().map(function (snapshot) {
+        return {
+          id: snapshot.id,
+          title: snapshot.title,
+          sourcePath: snapshot.sourcePath,
+          savedAt: snapshot.savedAt,
+          characters: snapshot.characters,
+        };
+      }),
+    });
+  }
+
+  function restoreRichDraft(id) {
+    const snapshot = readDraftSnapshots().find(function (value) {
+      return value.id === id;
+    });
+    if (!snapshot) {
+      showMessage("找不到這份草稿，可能已被清除。");
+      return;
+    }
+    plugin.executeMethod("PasteHtml", [snapshot.html], function () {
+      showMessage(
+        `已把「${snapshot.title}」的未存草稿插入目前游標位置。\n請立即使用「另存新檔」保留復原內容。`,
+      );
+      focusEditor();
+    });
+  }
+
+  function deleteRichDraft(id) {
+    writeDraftSnapshots(
+      readDraftSnapshots().filter(function (snapshot) {
+        return snapshot.id !== id;
+      }),
+    );
+    sendRecoveryWindowPayload();
+  }
+
+  function showRichDraftRecovery() {
+    captureRichDraft(window.parent, function () {
+      if (!recoveryWindow) {
+        recoveryWindow = new window.Asc.PluginWindow();
+        recoveryWindow.attachEvent("onDraftRecoveryReady", sendRecoveryWindowPayload);
+        recoveryWindow.attachEvent("onRestoreDraft", function (id) {
+          restoreRichDraft(String(id || ""));
+        });
+        recoveryWindow.attachEvent("onDeleteDraft", function (id) {
+          deleteRichDraft(String(id || ""));
+        });
+        recoveryWindow.attachEvent("onClose", function () {
+          if (recoveryWindow) recoveryWindow.close();
+          recoveryWindow = null;
+        });
+      }
+      recoveryWindow.show({
+        url: "draft-recovery.html",
+        description: "未存草稿復原",
+        isVisual: true,
+        isModal: false,
+        EditorsSupport: ["word"],
+        size: [640, 520],
+        buttons: [{ text: "關閉", primary: false }],
+      });
+      window.setTimeout(sendRecoveryWindowPayload, 200);
+    });
   }
 
   function sendMagiWindowPayload() {
@@ -1141,6 +1333,257 @@
     );
   }
 
+  function runRepeatableWordAction(action) {
+    lastWordAction = action;
+    action();
+  }
+
+  function repeatLastWordAction() {
+    if (!lastWordAction) {
+      showMessage("目前沒有可重複的全能文件操作。");
+      focusEditor();
+      return;
+    }
+    lastWordAction();
+  }
+
+  function clearParagraphFormatting() {
+    plugin.callCommand(
+      function () {
+        const document = Api.GetDocument();
+        const range = document.GetRangeBySelect();
+        let paragraphs = range?.GetAllParagraphs?.() || [];
+        if (!paragraphs.length) {
+          const current = document.GetCurrentParagraph?.();
+          paragraphs = current ? [current] : [];
+        }
+        paragraphs.forEach(function (paragraph) {
+          // Reapplying the paragraph's existing style is the closest Document API
+          // equivalent to Word Ctrl+Q: direct paragraph overrides are removed
+          // without changing Heading 1, Quote, Normal, or character formatting.
+          const style = paragraph.GetStyle?.() || paragraph.GetParaPr?.()?.GetStyle?.();
+          if (style) {
+            paragraph.SetStyle(style);
+            return;
+          }
+          paragraph.SetJc?.("left");
+          paragraph.SetIndLeft?.(0);
+          paragraph.SetIndRight?.(0);
+          paragraph.SetIndFirstLine?.(0);
+          paragraph.SetSpacingBefore?.(0, false);
+          paragraph.SetSpacingAfter?.(0, false);
+          paragraph.SetSpacingLine?.(240, "auto");
+          paragraph.SetTabs?.([]);
+        });
+        return paragraphs.length;
+      },
+      false,
+      true,
+      focusEditor,
+    );
+  }
+
+  function titleCaseLatinText(value) {
+    return value.replace(/\b([\p{L}])([\p{L}\p{M}'’-]*)/gu, function (_, first, rest) {
+      return first.toLocaleUpperCase() + rest.toLocaleLowerCase();
+    });
+  }
+
+  function nextWordCase(value) {
+    const cased = Array.from(value).filter(function (character) {
+      return character.toLocaleLowerCase() !== character.toLocaleUpperCase();
+    });
+    if (!cased.length) return value;
+    if (value === value.toLocaleUpperCase()) return titleCaseLatinText(value);
+    if (value === titleCaseLatinText(value)) return value.toLocaleLowerCase();
+    return value.toLocaleUpperCase();
+  }
+
+  function toggleSelectionCase() {
+    plugin.executeMethod("GetSelectedText", [selectedTextOptions], function (selectedText) {
+      if (!selectedText) {
+        plugin.executeMethod("GetCurrentWord", [], function (word) {
+          if (!word) {
+            showMessage("請先選取英文文字，或把游標放在英文單字內。");
+            return;
+          }
+          plugin.executeMethod("ReplaceCurrentWord", [nextWordCase(word), "entirely"], focusEditor);
+        });
+        return;
+      }
+      replaceSelection(nextWordCase(selectedText));
+    });
+  }
+
+  function insertAutomaticPageNumber() {
+    plugin.callCommand(
+      function () {
+        const paragraph = Api.GetDocument().GetCurrentParagraph?.();
+        if (!paragraph?.AddPageNumber) return false;
+        paragraph.AddPageNumber();
+        return true;
+      },
+      false,
+      true,
+      function (inserted) {
+        if (!inserted) showMessage("目前位置無法插入自動頁碼欄位。");
+        focusEditor();
+      },
+    );
+  }
+
+  function insertCurrentDateOrTime(kind) {
+    const now = new Date();
+    const value =
+      kind === "time"
+        ? new Intl.DateTimeFormat("zh-TW", {
+            hour: "2-digit",
+            minute: "2-digit",
+            hour12: false,
+          }).format(now)
+        : new Intl.DateTimeFormat("zh-TW", {
+            year: "numeric",
+            month: "2-digit",
+            day: "2-digit",
+          }).format(now);
+    plugin.executeMethod("InputText", [value], focusEditor);
+  }
+
+  function showFontDialog(hostWindow) {
+    plugin.executeMethod("GetFontList", [], function (fonts) {
+      const suggested = traditionalFonts[0].name;
+      const requested = String(
+        hostWindow?.prompt?.("輸入字型名稱：", suggested) || "",
+      ).trim();
+      if (!requested) {
+        focusEditor();
+        return;
+      }
+      const known = Array.isArray(fonts)
+        ? fonts.some(function (font) {
+            const name = String(font?.name || font?.Name || font || "");
+            return name.toLocaleLowerCase() === requested.toLocaleLowerCase();
+          })
+        : true;
+      if (!known) {
+        showMessage(`目前編輯器字型清單找不到「${requested}」。`);
+        focusEditor();
+        return;
+      }
+      const sizeInput = String(hostWindow?.prompt?.("輸入字級（pt）：", "12") || "").trim();
+      const size = Number(sizeInput);
+      if (!Number.isFinite(size) || size < 1 || size > 300) {
+        showMessage("字級必須是 1 到 300 的數字。");
+        focusEditor();
+        return;
+      }
+      window.Asc.scope.wordFontDialog = { name: requested, size };
+      plugin.callCommand(
+        function () {
+          const document = Api.GetDocument();
+          let range = document.GetRangeBySelect();
+          if (!range || !range.GetText?.()) {
+            document.SelectCurrentWord?.();
+            range = document.GetRangeBySelect();
+          }
+          if (!range) return false;
+          range.SetFontFamily?.(Asc.scope.wordFontDialog.name);
+          range.SetFontSize?.(Asc.scope.wordFontDialog.size);
+          return true;
+        },
+        false,
+        true,
+        focusEditor,
+      );
+    });
+  }
+
+  function showFontSizeDialog(hostWindow) {
+    const requested = String(hostWindow?.prompt?.("輸入字級（pt）：", "12") || "").trim();
+    const size = Number(requested);
+    if (!Number.isFinite(size) || size < 1 || size > 300) {
+      showMessage("字級必須是 1 到 300 的數字。");
+      focusEditor();
+      return;
+    }
+    runRepeatableWordAction(function () {
+      applyNumericFontSize(size);
+    });
+  }
+
+  function goToPageOrBookmark(hostWindow) {
+    const request = String(
+      hostWindow?.prompt?.("輸入頁碼或書籤名稱：", "1") || "",
+    ).trim();
+    if (!request) {
+      focusEditor();
+      return;
+    }
+    window.Asc.scope.wordGoToRequest = request;
+    plugin.callCommand(
+      function () {
+        const document = Api.GetDocument();
+        const request = Asc.scope.wordGoToRequest;
+        if (/^\d+$/.test(request)) {
+          const page = Math.max(0, Number(request) - 1);
+          return { ok: Boolean(document.GoToPage?.(page)), kind: "page" };
+        }
+        const bookmark = document.GetBookmark?.(request);
+        return { ok: Boolean(bookmark?.GoTo?.()), kind: "bookmark" };
+      },
+      false,
+      false,
+      function (result) {
+        if (!result?.ok) {
+          showMessage(
+            /^\d+$/.test(request)
+              ? "找不到指定頁碼。"
+              : `找不到書籤「${request}」。`,
+          );
+        }
+        focusEditor();
+      },
+    );
+  }
+
+  function insertFootnoteOrEndnote(kind) {
+    window.Asc.scope.wordNoteKind = kind;
+    plugin.callCommand(
+      function () {
+        const document = Api.GetDocument();
+        const note =
+          Asc.scope.wordNoteKind === "endnote"
+            ? document.AddEndnote?.()
+            : document.AddFootnote?.();
+        if (!note) return false;
+        const first = note.GetElement?.(0) || note.GetCurrentParagraph?.();
+        first?.AddText?.("");
+        return true;
+      },
+      false,
+      true,
+      function (inserted) {
+        if (!inserted) showMessage("目前位置無法插入註腳／尾註。");
+        focusEditor();
+      },
+    );
+  }
+
+  function updateDocumentFields() {
+    plugin.callCommand(
+      function () {
+        const document = Api.GetDocument();
+        document.UpdateAllFields?.();
+        document.UpdateAllTOC?.();
+        document.UpdateAllTOF?.();
+        return true;
+      },
+      false,
+      true,
+      focusEditor,
+    );
+  }
+
   function applyLineSpacing(multiplier) {
     window.Asc.scope.wordLineSpacing = Math.round(Number(multiplier) * 240);
     plugin.callCommand(
@@ -1446,10 +1889,63 @@
           action = function () {
             insertContextualQuote(rawKey);
           };
+        } else if (
+          !event.ctrlKey &&
+          !event.metaKey &&
+          !event.altKey &&
+          event.shiftKey &&
+          (key === "f3" || event.code === "F3")
+        ) {
+          action = function () {
+            runRepeatableWordAction(toggleSelectionCase);
+          };
+        } else if (
+          !event.ctrlKey &&
+          !event.metaKey &&
+          !event.altKey &&
+          !event.shiftKey &&
+          (key === "f4" || event.code === "F4")
+        ) {
+          action = repeatLastWordAction;
+        } else if (
+          !event.ctrlKey &&
+          !event.metaKey &&
+          !event.altKey &&
+          !event.shiftKey &&
+          (key === "f5" || event.code === "F5")
+        ) {
+          action = function () {
+            goToPageOrBookmark(hostWindow);
+          };
+        } else if (
+          !event.ctrlKey &&
+          !event.metaKey &&
+          !event.altKey &&
+          !event.shiftKey &&
+          (key === "f9" || event.code === "F9")
+        ) {
+          action = updateDocumentFields;
+        } else if (
+          event.altKey &&
+          event.shiftKey &&
+          !event.metaKey &&
+          !event.ctrlKey &&
+          ["d", "p", "t"].includes(key)
+        ) {
+          action = function () {
+            runRepeatableWordAction(function () {
+              if (key === "p") insertAutomaticPageNumber();
+              else insertCurrentDateOrTime(key === "t" ? "time" : "date");
+            });
+          };
         } else if (command && event.shiftKey && !event.altKey && (key === "j" || event.code === "KeyJ")) {
-          action = applyDistributedAlignment;
+          action = function () {
+            runRepeatableWordAction(applyDistributedAlignment);
+          };
         } else if (command && event.shiftKey && event.altKey && (key === "r" || event.code === "KeyR")) {
-          action = renumberHeadingsInDocument;
+          action = function () {
+            runRepeatableWordAction(renumberHeadingsInDocument);
+          };
         } else if (
           key === "c" &&
           wordFormatShortcut
@@ -1461,21 +1957,62 @@
           (event.altKey || wordFormatClipboardReady)
         ) {
           action = pasteFormatting;
+        } else if (
+          ((event.ctrlKey && !event.metaKey && !event.altKey) ||
+            (event.metaKey && !event.ctrlKey && !event.altKey)) &&
+          !event.shiftKey &&
+          key === "d"
+        ) {
+          action = function () {
+            showFontDialog(hostWindow);
+          };
+        } else if (
+          command &&
+          event.shiftKey &&
+          !event.altKey &&
+          (key === "f" || key === "p")
+        ) {
+          action = function () {
+            if (key === "p") showFontSizeDialog(hostWindow);
+            else showFontDialog(hostWindow);
+          };
+        } else if (
+          ((event.ctrlKey && !event.metaKey && (key === "d" || key === "f")) ||
+            (event.metaKey && !event.ctrlKey && (key === "e" || key === "f"))) &&
+          event.altKey &&
+          !event.shiftKey
+        ) {
+          action = function () {
+            runRepeatableWordAction(function () {
+              insertFootnoteOrEndnote(key === "d" || key === "e" ? "endnote" : "footnote");
+            });
+          };
         } else if (command && !event.shiftKey && !event.altKey && ["1", "2", "5"].includes(key)) {
           action = function () {
-            applyLineSpacing(key === "5" ? 1.5 : Number(key));
+            runRepeatableWordAction(function () {
+              applyLineSpacing(key === "5" ? 1.5 : Number(key));
+            });
           };
         } else if (command && event.altKey && !event.shiftKey && ["1", "2", "3"].includes(key)) {
           action = function () {
-            applyParagraphStyle(`Heading ${key}`);
+            runRepeatableWordAction(function () {
+              applyParagraphStyle(`Heading ${key}`);
+            });
           };
         } else if (command && event.shiftKey && !event.altKey && key === "n") {
           action = function () {
-            applyParagraphStyle("Normal");
+            runRepeatableWordAction(function () {
+              applyParagraphStyle("Normal");
+            });
           };
-        } else if (command && !event.shiftKey && key === "q" && (!event.metaKey || event.altKey)) {
+        } else if (
+          key === "q" &&
+          !event.shiftKey &&
+          ((event.ctrlKey && !event.metaKey && !event.altKey) ||
+            (event.metaKey && !event.ctrlKey && event.altKey))
+        ) {
           action = function () {
-            applyParagraphStyle("Normal");
+            runRepeatableWordAction(clearParagraphFormatting);
           };
         } else if (command && event.shiftKey && !event.altKey && key === "e") {
           action = toggleTrackRevisions;
@@ -1486,7 +2023,9 @@
           (key === "+" || event.code === "Equal")
         ) {
           action = function () {
-            toggleVerticalAlignment("superscript");
+            runRepeatableWordAction(function () {
+              toggleVerticalAlignment("superscript");
+            });
           };
         } else if (
           command &&
@@ -1495,11 +2034,15 @@
           (key === "_" || event.code === "Minus")
         ) {
           action = function () {
-            toggleVerticalAlignment("subscript");
+            runRepeatableWordAction(function () {
+              toggleVerticalAlignment("subscript");
+            });
           };
         } else if (command && !event.altKey && key === "t") {
           action = function () {
-            adjustHangingIndent(event.shiftKey ? -1 : 1);
+            runRepeatableWordAction(function () {
+              adjustHangingIndent(event.shiftKey ? -1 : 1);
+            });
           };
         } else if (
           (event.ctrlKey && event.altKey && !event.shiftKey && key === "m") ||
@@ -1579,6 +2122,10 @@
         "行距：Ctrl／⌘+1 單行、+2 雙行、+5 1.5 倍",
         "標題樣式：Ctrl+Alt+1／2／3；macOS ⌘⌥1／2／3",
         "一般樣式：Ctrl／⌘+Shift+N；追蹤修訂：Ctrl／⌘+Shift+E",
+        "清除段落直接格式：Windows Ctrl+Q；macOS ⌘⌥Q（保留既有標題樣式）",
+        "切換英文大小寫：Shift+F3；重複上一個格式操作：F4；跳頁／書籤：F5",
+        "欄位：F9 更新；Alt+Shift+D／T／P 插入日期、時間或自動頁碼",
+        "未存草稿：每 15 秒保留富文字快照，可從常用 → 未存草稿復原",
         "新增註解：Windows Ctrl+Alt+M；macOS ⌘⌥A",
         "更多內容請在全能文件工作台開啟「快捷鍵總覽」。",
       ].join("\n"),
@@ -1625,6 +2172,14 @@
                 hint: "不離開常用頁籤，直接摘要選取文字或整份文件",
                 lockInViewMode: false,
                 icons: "resources/opendesk.svg",
+              },
+              {
+                id: "opendesk-draft-recovery",
+                type: "button",
+                text: "未存草稿復原",
+                hint: "每 15 秒保留目前記憶體中的富文字草稿；當機後可插入空白文件復原",
+                lockInViewMode: false,
+                icons: "resources/recovery.svg",
               },
             ],
           },
@@ -1738,6 +2293,7 @@
       this.attachToolbarMenuClickEvent("opendesk-home-magi-summary", function () {
         runMagiAnalysis("summary", "MAGI 文件摘要");
       });
+      this.attachToolbarMenuClickEvent("opendesk-draft-recovery", showRichDraftRecovery);
       this.attachToolbarMenuClickEvent(
         "opendesk-normalize-punctuation",
         normalizeTaiwanPunctuation,
@@ -1772,6 +2328,7 @@
     }
     addTraditionalChineseToolbar();
     restoreDistributedAlignment();
+    scheduleRichDraftSnapshots(window.parent);
     // 已存在的標記會依目前頁面／儲存格／縮排寬度重新排版；存檔時只把
     // Word 標準 w:jc="distribute" 寫回，不保留畫面備援的固定字距。
     scheduleDistributedPersistence(window.parent, 1200, 0);
@@ -1781,6 +2338,10 @@
     if (magiResultWindow && magiResultWindow.id === windowId) {
       magiResultWindow.close();
       magiResultWindow = null;
+    }
+    if (recoveryWindow && recoveryWindow.id === windowId) {
+      recoveryWindow.close();
+      recoveryWindow = null;
     }
   };
 })(window);

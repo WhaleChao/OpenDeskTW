@@ -122,6 +122,10 @@ let tracked = false;
 let nativeComments = 0;
 let copiedFormatting = false;
 let pastedFormatting = false;
+let replacedSelection = "";
+let pageNumberFields = 0;
+let updatedFields = 0;
+let wentToPage = null;
 let magiFetchMode = "success";
 const magiFetches = [];
 const magiPayloads = [];
@@ -235,6 +239,9 @@ function makeParagraph(
       this.style = style;
       return true;
     },
+    GetStyle() {
+      return this.style || "Normal";
+    },
     SetSpacingLine(value, rule) {
       lineSpacing = [value, rule];
       return true;
@@ -303,6 +310,13 @@ const apiDocument = {
   GetCurrentParagraph() {
     return activeSelectionParagraph;
   },
+  GoToPage(page) {
+    wentToPage = page;
+    return true;
+  },
+  GetBookmark() {
+    return null;
+  },
   GetStyle(name) {
     return name;
   },
@@ -328,6 +342,15 @@ const apiDocument = {
   },
   SelectCurrentWord() {},
   ForceRecalculate() {},
+  UpdateAllFields() {
+    updatedFields += 1;
+  },
+  UpdateAllTOC() {},
+  UpdateAllTOF() {},
+};
+selectionParagraph.AddPageNumber = function () {
+  pageNumberFields += 1;
+  return {};
 };
 const hostDocument = {
   addEventListener(type, handler, capture) {
@@ -436,6 +459,9 @@ const pluginWindow = {
     Asc: asc,
     AscCommon: { align_Distributed: 4 },
     document: hostDocument,
+    prompt() {
+      return "2";
+    },
     DE: {
       getController(name) {
         if (name !== "DocumentHolder") return null;
@@ -457,6 +483,10 @@ runInNewContext(pluginCode, {
     GetDocument() {
       return apiDocument;
     },
+    ReplaceTextSmart(values) {
+      replacedSelection = values.join("\n");
+      return true;
+    },
   },
 });
 plugin.init.call(plugin);
@@ -473,6 +503,7 @@ assert.deepEqual(
     "opendesk-complete-pairs",
     "opendesk-renumber-headings",
     "opendesk-home-magi-summary",
+    "opendesk-draft-recovery",
   ],
 );
 assert.ok(!customTab.items.some((item) => item.id === "opendesk-complete-pairs"));
@@ -589,12 +620,24 @@ function press(overrides) {
 
 assert.equal(press({ key: "5", code: "Digit5", ctrlKey: true }), true);
 assert.deepEqual(lineSpacing, [360, "auto"]);
+lineSpacing = null;
+assert.equal(press({ key: "F4", code: "F4" }), true);
+assert.deepEqual(lineSpacing, [360, "auto"], "F4 應重複上一個全能文件格式操作");
 assert.equal(press({ key: "2", code: "Digit2", metaKey: true }), true);
 assert.deepEqual(lineSpacing, [480, "auto"]);
 assert.equal(press({ key: "1", code: "Digit1", ctrlKey: true, altKey: true }), true);
 assert.equal(appliedStyle, "Heading 1");
 assert.equal(press({ key: "n", code: "KeyN", ctrlKey: true, shiftKey: true }), true);
 assert.equal(appliedStyle, "Normal");
+selectionParagraph.style = "Heading 2";
+assert.equal(press({ key: "q", code: "KeyQ", ctrlKey: true }), true);
+assert.equal(appliedStyle, "Heading 2", "Ctrl+Q 必須保留原段落樣式，不得強制改成 Normal");
+assert.equal(press({ key: "F5", code: "F5" }), true);
+assert.equal(wentToPage, 1, "F5 輸入第 2 頁時應移到零起算頁碼 1");
+assert.equal(press({ key: "F9", code: "F9" }), true);
+assert.equal(updatedFields, 1);
+assert.equal(press({ key: "p", code: "KeyP", altKey: true, shiftKey: true }), true);
+assert.equal(pageNumberFields, 1);
 assert.equal(press({ key: "e", code: "KeyE", ctrlKey: true, shiftKey: true }), true);
 assert.equal(tracked, true);
 assert.equal(press({ key: "m", code: "KeyM", ctrlKey: true, altKey: true }), true);

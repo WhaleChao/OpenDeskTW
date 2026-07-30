@@ -164,6 +164,25 @@ struct AccessibilityReport {
     passed_checks: Vec<String>,
 }
 
+#[derive(Serialize, Clone, Debug, PartialEq, Eq)]
+struct QualityIssue {
+    severity: String,
+    category: String,
+    message: String,
+    location: String,
+    suggestion: String,
+}
+
+#[derive(Serialize)]
+struct WordQualityReport {
+    file_name: String,
+    score: usize,
+    characters: usize,
+    sentences: usize,
+    issues: Vec<QualityIssue>,
+    passed_checks: Vec<String>,
+}
+
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 struct CitationSource {
     id: String,
@@ -1553,6 +1572,7 @@ fn copy_microsoft_tw_fonts_from_bundles(
 ) -> Result<Vec<PathBuf>, String> {
     let mut installed = Vec::new();
     for file_name in MICROSOFT_WORD_TW_FONT_FILES {
+        let target = destination.join(format!("OpenDeskTW-Licensed-{file_name}"));
         let source = bundles
             .iter()
             .map(|bundle| {
@@ -1563,11 +1583,25 @@ fn copy_microsoft_tw_fonts_from_bundles(
                     .join(file_name)
             })
             .find(|path| path.is_file());
+
+        // Microsoft Office 更新時可能暫時移動 DFonts；已從本機授權副本
+        // 註冊完成的實體字型仍應保留為可用來源，不可誤報為遺失。
+        if source.is_none()
+            && target
+                .symlink_metadata()
+                .ok()
+                .filter(|metadata| {
+                    metadata.is_file() && !metadata.file_type().is_symlink() && metadata.len() > 0
+                })
+                .is_some()
+        {
+            installed.push(target);
+            continue;
+        }
         let Some(source) = source else {
             continue;
         };
         fs::create_dir_all(destination).map_err(|error| error.to_string())?;
-        let target = destination.join(format!("OpenDeskTW-Licensed-{file_name}"));
         let source_size = source.metadata().map_err(|error| error.to_string())?.len();
         let target_is_current = target
             .symlink_metadata()
@@ -2182,6 +2216,27 @@ fn build_word_report(path: &Path) -> Result<WordReport, String> {
     })
 }
 
+fn srgb_channel(value: u8) -> f64 {
+    let value = f64::from(value) / 255.0;
+    if value <= 0.04045 {
+        value / 12.92
+    } else {
+        ((value + 0.055) / 1.055).powf(2.4)
+    }
+}
+
+fn color_contrast_against_white(hex: &str) -> Option<f64> {
+    if hex.len() != 6 {
+        return None;
+    }
+    let red = u8::from_str_radix(&hex[0..2], 16).ok()?;
+    let green = u8::from_str_radix(&hex[2..4], 16).ok()?;
+    let blue = u8::from_str_radix(&hex[4..6], 16).ok()?;
+    let luminance =
+        0.2126 * srgb_channel(red) + 0.7152 * srgb_channel(green) + 0.0722 * srgb_channel(blue);
+    Some((1.05) / (luminance + 0.05))
+}
+
 fn build_accessibility_report(path: &Path) -> Result<AccessibilityReport, String> {
     let file = File::open(path).map_err(|error| error.to_string())?;
     let mut archive = ZipArchive::new(file).map_err(|_| "無法讀取 Word 文件結構")?;
@@ -2249,6 +2304,29 @@ fn build_accessibility_report(path: &Path) -> Result<AccessibilityReport, String
         });
     }
     let headings = detect_word_headings(&document);
+    let paragraph_count = Regex::new(r#"<w:p(?:\s|>)"#)
+        .unwrap()
+        .find_iter(&document)
+        .count();
+    if headings.is_empty() && paragraph_count >= 12 {
+        issues.push(AccessibilityIssue {
+            id: "missing-heading-structure".into(),
+            severity: "warning".into(),
+            category: "標題結構".into(),
+            message: "長文件沒有使用標題樣式，螢幕閱讀器與導覽窗格無法快速跳章".into(),
+            location: "整份文件".into(),
+            repairable: false,
+        });
+    } else if !headings.is_empty() && headings.iter().all(|heading| heading.level != 1) {
+        issues.push(AccessibilityIssue {
+            id: "missing-heading-1".into(),
+            severity: "warning".into(),
+            category: "標題結構".into(),
+            message: "文件有標題，但沒有最高層級的「標題 1」".into(),
+            location: "整份文件".into(),
+            repairable: false,
+        });
+    }
     for window in headings.windows(2) {
         if window[1].level > window[0].level + 1 {
             issues.push(AccessibilityIssue {
@@ -2282,6 +2360,75 @@ fn build_accessibility_report(path: &Path) -> Result<AccessibilityReport, String
             });
         }
     }
+    let cell_expression = Regex::new(r#"(?s)<w:tc(?:\s[^>]*)?>.*?</w:tc>"#).unwrap();
+    for (index, cell) in cell_expression.find_iter(&document).enumerate() {
+        if paragraph_text(cell.as_str()).trim().is_empty() {
+            issues.push(AccessibilityIssue {
+                id: format!("empty-table-cell-{}", index + 1),
+                severity: "warning".into(),
+                category: "表格".into(),
+                message: "空白儲存格沒有可供螢幕閱讀器理解的內容".into(),
+                location: format!("第 {} 個表格儲存格", index + 1),
+                repairable: false,
+            });
+        }
+    }
+    let control_expression = Regex::new(r#"(?s)<w:sdt(?:\s[^>]*)?>.*?</w:sdt>"#).unwrap();
+    for (index, control) in control_expression.find_iter(&document).enumerate() {
+        if !control.as_str().contains("<w:alias") && !control.as_str().contains("<w:tag") {
+            issues.push(AccessibilityIssue {
+                id: format!("content-control-label-{}", index + 1),
+                severity: "warning".into(),
+                category: "表單控制項".into(),
+                message: "內容控制項沒有標題或標籤，使用輔助工具時難以辨識用途".into(),
+                location: format!("第 {} 個內容控制項", index + 1),
+                repairable: false,
+            });
+        }
+    }
+    let run_expression = Regex::new(r#"(?s)<w:r(?:\s[^>]*)?>.*?</w:r>"#).unwrap();
+    let color_expression =
+        Regex::new(r#"<w:color\b[^>]*w:val="([0-9A-Fa-f]{6})"[^>]*/?>"#).unwrap();
+    let mut low_contrast_count = 0usize;
+    for run in run_expression.find_iter(&document) {
+        let Some(color) = color_expression
+            .captures(run.as_str())
+            .and_then(|capture| capture.get(1))
+        else {
+            continue;
+        };
+        let text = paragraph_text(run.as_str()).trim().to_string();
+        if text.is_empty() {
+            continue;
+        }
+        if color_contrast_against_white(color.as_str()).is_some_and(|ratio| ratio < 4.5) {
+            low_contrast_count += 1;
+            if low_contrast_count <= 8 {
+                issues.push(AccessibilityIssue {
+                    id: format!("color-contrast-{low_contrast_count}"),
+                    severity: "error".into(),
+                    category: "色彩對比".into(),
+                    message: format!(
+                        "文字色彩 #{} 在白底上的對比低於一般文字 4.5:1",
+                        color.as_str().to_uppercase()
+                    ),
+                    location: format!("文字：{}", text.chars().take(36).collect::<String>()),
+                    repairable: false,
+                });
+            }
+        }
+    }
+    let excessive_tabs = document.matches("<w:tab").count();
+    if excessive_tabs >= 5 {
+        issues.push(AccessibilityIssue {
+            id: "layout-tabs".into(),
+            severity: "warning".into(),
+            category: "閱讀順序".into(),
+            message: "文件大量使用定位字元排版，閱讀順序可能與視覺位置不同".into(),
+            location: format!("整份文件：{excessive_tabs} 個定位字元"),
+            repairable: false,
+        });
+    }
     if !names.iter().any(|name| name.starts_with("word/media/")) {
         // A document without images does not need an alternate-text issue.
     }
@@ -2305,6 +2452,18 @@ fn build_accessibility_report(path: &Path) -> Result<AccessibilityReport, String
     if !issues.iter().any(|issue| issue.category == "連結文字") {
         passed_checks.push("未發現含糊的連結文字".into());
     }
+    if !issues.iter().any(|issue| issue.category == "文件屬性") {
+        passed_checks.push("文件標題屬性已設定".into());
+    }
+    if !issues.iter().any(|issue| issue.category == "表單控制項") {
+        passed_checks.push("內容控制項都有可辨識標籤".into());
+    }
+    if !issues.iter().any(|issue| issue.category == "色彩對比") {
+        passed_checks.push("未發現明顯低對比直接文字色彩".into());
+    }
+    if !issues.iter().any(|issue| issue.category == "閱讀順序") {
+        passed_checks.push("未發現大量定位字元造成的閱讀順序風險".into());
+    }
     Ok(AccessibilityReport {
         file_name: path
             .file_name()
@@ -2324,6 +2483,240 @@ fn word_accessibility_report(path: String) -> Result<AccessibilityReport, String
         return Err("找不到 Word 文件".into());
     }
     build_accessibility_report(&source)
+}
+
+fn push_quality_issue(
+    issues: &mut Vec<QualityIssue>,
+    severity: &str,
+    category: &str,
+    message: impl Into<String>,
+    location: impl Into<String>,
+    suggestion: impl Into<String>,
+) {
+    issues.push(QualityIssue {
+        severity: severity.into(),
+        category: category.into(),
+        message: message.into(),
+        location: location.into(),
+        suggestion: suggestion.into(),
+    });
+}
+
+fn repeated_han_sequence(value: &str) -> Option<String> {
+    let characters = value.chars().collect::<Vec<_>>();
+    for width in (2..=8).rev() {
+        if characters.len() < width * 2 {
+            continue;
+        }
+        for start in 0..=characters.len() - width * 2 {
+            let left = &characters[start..start + width];
+            let right = &characters[start + width..start + width * 2];
+            if left == right
+                && left.iter().all(|character| {
+                    matches!(*character as u32, 0x3400..=0x4DBF | 0x4E00..=0x9FFF | 0xF900..=0xFAFF)
+                })
+            {
+                return Some(characters[start..start + width * 2].iter().collect());
+            }
+        }
+    }
+    None
+}
+
+fn build_word_quality_report(path: &Path) -> Result<WordQualityReport, String> {
+    let document = read_word_document_xml(path)?;
+    let paragraphs = Regex::new(r#"(?s)<w:p(?:\s[^>]*)?>.*?</w:p>"#)
+        .unwrap()
+        .find_iter(&document)
+        .enumerate()
+        .filter_map(|(index, paragraph)| {
+            let text = paragraph_text(paragraph.as_str()).trim().to_string();
+            (!text.is_empty()).then_some((index + 1, text))
+        })
+        .collect::<Vec<_>>();
+    let text = paragraphs
+        .iter()
+        .map(|(_, value)| value.as_str())
+        .collect::<Vec<_>>()
+        .join("\n");
+    let mut issues = Vec::new();
+    let unresolved = Regex::new(r#"\{\{[^{}\n]+\}\}|«[^»\n]+»|<<[^<>\n]+>>"#).unwrap();
+    for (paragraph, value) in &paragraphs {
+        if let Some(found) = unresolved.find(value) {
+            push_quality_issue(
+                &mut issues,
+                "error",
+                "未完成欄位",
+                format!("仍有未完成的欄位或預留文字：{}", found.as_str()),
+                format!("第 {paragraph} 段"),
+                "完成合併列印／引文更新，或刪除不需要的預留文字",
+            );
+        }
+    }
+    let pairs = [
+        ('（', '）'),
+        ('「', '」'),
+        ('『', '』'),
+        ('【', '】'),
+        ('〔', '〕'),
+        ('《', '》'),
+        ('〈', '〉'),
+    ];
+    for (opening, closing) in pairs {
+        let open_count = text.matches(opening).count();
+        let close_count = text.matches(closing).count();
+        if open_count != close_count {
+            push_quality_issue(
+                &mut issues,
+                "error",
+                "標點成對",
+                format!("「{opening}{closing}」數量不一致：{open_count}／{close_count}"),
+                "整份文件",
+                "使用「智慧補齊」後逐項確認巢狀標點",
+            );
+        }
+    }
+    let ascii_punctuation = Regex::new(r#"[\p{Han}][,;:!?]|[,;:!?][\p{Han}]"#).unwrap();
+    for (paragraph, value) in &paragraphs {
+        if ascii_punctuation.is_match(value) {
+            push_quality_issue(
+                &mut issues,
+                "warning",
+                "台灣標點",
+                "中文句子混用了半形逗號、分號、冒號、驚嘆號或問號",
+                format!(
+                    "第 {paragraph} 段：{}",
+                    value.chars().take(48).collect::<String>()
+                ),
+                "改用全形中文標點，網址、程式碼與數字格式除外",
+            );
+        }
+        if value.contains("  ") || value.contains('\t') {
+            push_quality_issue(
+                &mut issues,
+                "warning",
+                "空白與對齊",
+                "以連續空白或定位字元排版，修改字型後容易錯位",
+                format!("第 {paragraph} 段"),
+                "改用定位點、表格、縮排或分散對齊",
+            );
+        }
+        if value.chars().count() > 180
+            && !value.contains('。')
+            && !value.contains('；')
+            && !value.contains('：')
+        {
+            push_quality_issue(
+                &mut issues,
+                "warning",
+                "可讀性",
+                "句段過長且缺少明顯停頓，閱讀負擔較高",
+                format!(
+                    "第 {paragraph} 段：{}…",
+                    value.chars().take(48).collect::<String>()
+                ),
+                "拆成較短句子或條列，並確認不改變法律語意",
+            );
+        }
+        if Regex::new(r#"(?i)\b(?:TODO|FIXME|XXX)\b|待補|待確認|尚待"#)
+            .unwrap()
+            .is_match(value)
+        {
+            push_quality_issue(
+                &mut issues,
+                "error",
+                "交付前註記",
+                "仍有待辦或待確認註記",
+                format!(
+                    "第 {paragraph} 段：{}",
+                    value.chars().take(48).collect::<String>()
+                ),
+                "交付前完成、刪除，或明確標示為正式保留事項",
+            );
+        }
+    }
+    let mainland_terms = [
+        ("信息", "資訊"),
+        ("軟件", "軟體"),
+        ("硬件", "硬體"),
+        ("打印", "列印"),
+        ("視頻", "影片"),
+        ("文件夾", "資料夾"),
+    ];
+    for (source, replacement) in mainland_terms {
+        if let Some((paragraph, value)) =
+            paragraphs.iter().find(|(_, value)| value.contains(source))
+        {
+            push_quality_issue(
+                &mut issues,
+                "warning",
+                "台灣用語",
+                format!("偵測到「{source}」"),
+                format!(
+                    "第 {paragraph} 段：{}",
+                    value.chars().take(48).collect::<String>()
+                ),
+                format!("依語境考慮改為台灣常用「{replacement}」"),
+            );
+        }
+    }
+    for (paragraph, value) in &paragraphs {
+        if let Some(found) = repeated_han_sequence(value) {
+            push_quality_issue(
+                &mut issues,
+                "warning",
+                "重複文字",
+                format!("可能重複輸入：{found}"),
+                format!("第 {paragraph} 段"),
+                "確認是否為刻意強調；若不是，刪除重複文字",
+            );
+        }
+    }
+    let sentence_count = Regex::new(r#"[。！？!?](?:[」』）】〕》〉])?"#)
+        .unwrap()
+        .find_iter(&text)
+        .count()
+        .max(usize::from(!text.trim().is_empty()));
+    let deduction = issues
+        .iter()
+        .map(|issue| if issue.severity == "error" { 10 } else { 4 })
+        .sum::<usize>();
+    let categories = [
+        ("未完成欄位", "沒有未完成欄位"),
+        ("標點成對", "括號與引號數量成對"),
+        ("台灣標點", "未發現中文半形標點混用"),
+        ("交付前註記", "沒有待辦／待確認註記"),
+        ("台灣用語", "未發現常見非台灣用語"),
+    ];
+    let passed_checks = categories
+        .into_iter()
+        .filter(|(category, _)| !issues.iter().any(|issue| issue.category == *category))
+        .map(|(_, passed)| passed.to_string())
+        .collect::<Vec<_>>();
+    Ok(WordQualityReport {
+        file_name: path
+            .file_name()
+            .and_then(|value| value.to_str())
+            .unwrap_or("Word 文件")
+            .into(),
+        score: 100usize.saturating_sub(deduction),
+        characters: text
+            .chars()
+            .filter(|character| !character.is_whitespace())
+            .count(),
+        sentences: sentence_count,
+        issues,
+        passed_checks,
+    })
+}
+
+#[tauri::command]
+fn word_quality_report(path: String) -> Result<WordQualityReport, String> {
+    let source = PathBuf::from(path);
+    if !source.is_file() {
+        return Err("找不到 Word 文件".into());
+    }
+    build_word_quality_report(&source)
 }
 
 fn mark_table_header_rows(document: &str) -> (String, usize) {
@@ -2746,6 +3139,109 @@ fn bibliography_paragraph(text: &str) -> String {
     )
 }
 
+fn dynamic_citation_tag(kind: &str, style: &str, source_ids: &[String]) -> String {
+    format!(
+        "OpenDeskTW.Citation|{}|{}|{}",
+        kind,
+        style,
+        source_ids.join(",")
+    )
+}
+
+fn dynamic_citation_block(
+    kind: &str,
+    style: &str,
+    source_ids: &[String],
+    citation: &CitationText,
+) -> String {
+    let tag = encode_xml_text(&dynamic_citation_tag(kind, style, source_ids));
+    let (alias, content) = if kind == "inline" {
+        (
+            "OpenDeskTW 動態內文引文",
+            word_paragraph(&citation.inline, None),
+        )
+    } else {
+        let heading = if style == "taiwan" {
+            "參考文獻"
+        } else {
+            "References"
+        };
+        (
+            "OpenDeskTW 動態參考書目",
+            format!(
+                "{}{}",
+                word_paragraph(heading, Some("Heading1")),
+                citation
+                    .bibliography
+                    .iter()
+                    .map(|value| bibliography_paragraph(value))
+                    .collect::<String>()
+            ),
+        )
+    };
+    format!(
+        r#"<w:sdt><w:sdtPr><w:alias w:val="{alias}"/><w:tag w:val="{tag}"/></w:sdtPr><w:sdtContent>{content}</w:sdtContent></w:sdt>"#
+    )
+}
+
+fn remove_existing_bibliography(document: &str) -> String {
+    let old_bookmark = Regex::new(
+        r#"(?s)<w:bookmarkStart\b[^>]*w:name="OpenDeskBibliography"[^>]*/>.*?<w:bookmarkEnd\b[^>]*/>"#,
+    )
+    .unwrap()
+    .replace_all(document, "")
+    .into_owned();
+    Regex::new(
+        r#"(?s)<w:sdt><w:sdtPr>.*?<w:tag\b[^>]*w:val="OpenDeskTW\.Citation\|bibliography\|[^"]*"[^>]*/>.*?</w:sdt>"#,
+    )
+    .unwrap()
+    .replace_all(&old_bookmark, "")
+    .into_owned()
+}
+
+fn update_dynamic_citation_xml(document: &str) -> Result<(String, usize), String> {
+    let sources = read_citation_sources_unlocked()?;
+    let sdt_expression = Regex::new(r#"(?s)<w:sdt>.*?</w:sdt>"#).unwrap();
+    let tag_expression = Regex::new(
+        r#"<w:tag\b[^>]*w:val="OpenDeskTW\.Citation\|([^|"]+)\|([^|"]+)\|([^"]*)"[^>]*/?>"#,
+    )
+    .unwrap();
+    let mut replacements = Vec::new();
+    for block in sdt_expression.find_iter(document) {
+        let Some(tag) = tag_expression.captures(block.as_str()) else {
+            continue;
+        };
+        let kind = tag.get(1).unwrap().as_str();
+        let style = tag.get(2).unwrap().as_str();
+        let ids = tag
+            .get(3)
+            .unwrap()
+            .as_str()
+            .split(',')
+            .filter(|value| !value.trim().is_empty())
+            .map(str::to_string)
+            .collect::<Vec<_>>();
+        let selected = ids
+            .iter()
+            .filter_map(|id| sources.iter().find(|source| source.id == *id).cloned())
+            .collect::<Vec<_>>();
+        if selected.is_empty() {
+            continue;
+        }
+        let citation = format_citation_values(&selected, style);
+        replacements.push((
+            block.start()..block.end(),
+            dynamic_citation_block(kind, style, &ids, &citation),
+        ));
+    }
+    let count = replacements.len();
+    let mut output = document.to_string();
+    for (range, replacement) in replacements.into_iter().rev() {
+        output.replace_range(range, &replacement);
+    }
+    Ok((output, count))
+}
+
 #[tauri::command]
 fn append_bibliography(
     path: String,
@@ -2764,26 +3260,8 @@ fn append_bibliography(
     let sources = selected_citation_sources(&source_ids)?;
     let citation = format_citation_values(&sources, &style);
     let document = read_word_document_xml(&source)?;
-    let previous = Regex::new(
-        r#"(?s)<w:bookmarkStart\b[^>]*w:name=\"OpenDeskBibliography\"[^>]*/>.*?<w:bookmarkEnd\b[^>]*/>"#,
-    )
-    .unwrap()
-    .replace(&document, "")
-    .into_owned();
-    let heading = if style == "taiwan" {
-        "參考文獻"
-    } else {
-        "References"
-    };
-    let block = format!(
-        r#"<w:bookmarkStart w:id="9191" w:name="OpenDeskBibliography"/>{}{}<w:bookmarkEnd w:id="9191"/>"#,
-        word_paragraph(heading, Some("Heading1")),
-        citation
-            .bibliography
-            .iter()
-            .map(|value| bibliography_paragraph(value))
-            .collect::<String>()
-    );
+    let previous = remove_existing_bibliography(&document);
+    let block = dynamic_citation_block("bibliography", &style, &source_ids, &citation);
     let body_end = previous
         .rfind("<w:sectPr")
         .or_else(|| previous.rfind("</w:body>"));
@@ -2802,10 +3280,86 @@ fn append_bibliography(
             .unwrap_or("含參考文獻文件.docx")
             .into(),
         message: format!(
-            "已依 {} 產生 {} 筆參考文獻並加入新副本",
+            "已依 {} 產生 {} 筆可更新參考文獻並加入新副本",
             style.to_uppercase(),
             sources.len()
         ),
+    })
+}
+
+#[tauri::command]
+fn insert_dynamic_citation(
+    path: String,
+    destination: String,
+    source_ids: Vec<String>,
+    style: String,
+) -> Result<ActionResult, String> {
+    let source = PathBuf::from(path);
+    if !source.is_file() {
+        return Err("找不到 Word 文件".into());
+    }
+    let _guard = CITATION_SOURCES
+        .get_or_init(|| Mutex::new(()))
+        .lock()
+        .map_err(|_| "引文來源目前無法鎖定")?;
+    let sources = selected_citation_sources(&source_ids)?;
+    let citation = format_citation_values(&sources, &style);
+    let document = read_word_document_xml(&source)?;
+    let block = dynamic_citation_block("inline", &style, &source_ids, &citation);
+    let placeholder =
+        Regex::new(r#"(?s)<w:p(?:\s[^>]*)?>.*?<w:t\b[^>]*>\s*\{\{CITATION\}\}\s*</w:t>.*?</w:p>"#)
+            .unwrap();
+    let (next, at_placeholder) = if placeholder.is_match(&document) {
+        (
+            placeholder.replace(&document, block.as_str()).into_owned(),
+            true,
+        )
+    } else {
+        (insert_before_section_properties(&document, &block)?, false)
+    };
+    let target = PathBuf::from(destination);
+    write_word_document_xml(&source, &target, &next)?;
+    Ok(ActionResult {
+        path: target.to_string_lossy().to_string(),
+        file_name: target
+            .file_name()
+            .and_then(|value| value.to_str())
+            .unwrap_or("含引文文件.docx")
+            .into(),
+        message: if at_placeholder {
+            "已在 {{CITATION}} 位置插入可更新內文引文"
+        } else {
+            "文件沒有 {{CITATION}} 位置，已將可更新內文引文加入文件末端"
+        }
+        .into(),
+    })
+}
+
+#[tauri::command]
+fn update_document_citations(path: String, destination: String) -> Result<ActionResult, String> {
+    let source = PathBuf::from(path);
+    if !source.is_file() {
+        return Err("找不到 Word 文件".into());
+    }
+    let _guard = CITATION_SOURCES
+        .get_or_init(|| Mutex::new(()))
+        .lock()
+        .map_err(|_| "引文來源目前無法鎖定")?;
+    let document = read_word_document_xml(&source)?;
+    let (updated, count) = update_dynamic_citation_xml(&document)?;
+    if count == 0 {
+        return Err("文件中沒有由全能文件建立的動態引文或參考書目".into());
+    }
+    let target = PathBuf::from(destination);
+    write_word_document_xml(&source, &target, &updated)?;
+    Ok(ActionResult {
+        path: target.to_string_lossy().to_string(),
+        file_name: target
+            .file_name()
+            .and_then(|value| value.to_str())
+            .unwrap_or("更新引文文件.docx")
+            .into(),
+        message: format!("已從本機來源庫更新 {count} 個引文／書目區塊"),
     })
 }
 
@@ -3760,6 +4314,179 @@ fn word_reading_content(path: String) -> Result<WordReadingContent, String> {
     build_word_reading_content(&source)
 }
 
+fn paragraph_heading_level(paragraph: &str) -> Option<usize> {
+    Regex::new(r#"<w:pStyle\b[^>]*w:val="(?:Heading|heading)([1-9])"[^>]*/?>"#)
+        .unwrap()
+        .captures(paragraph)
+        .and_then(|capture| capture.get(1))
+        .and_then(|value| value.as_str().parse::<usize>().ok())
+        .or_else(|| heading_prefix(paragraph_text(paragraph).trim()).map(|value| value.level))
+}
+
+fn replace_paragraph_heading_level(paragraph: &str, level: usize) -> String {
+    let style = Regex::new(r#"<w:pStyle\b[^>]*w:val="(?:Heading|heading)[1-9]"[^>]*/?>"#).unwrap();
+    if style.is_match(paragraph) {
+        return style
+            .replace(paragraph, format!(r#"<w:pStyle w:val="Heading{level}"/>"#))
+            .into_owned();
+    }
+    let paragraph_properties = Regex::new(r#"<w:pPr(?:\s[^>]*)?>"#).unwrap();
+    if let Some(opening) = paragraph_properties.find(paragraph) {
+        let mut output = paragraph.to_string();
+        output.insert_str(
+            opening.end(),
+            &format!(r#"<w:pStyle w:val="Heading{level}"/>"#),
+        );
+        return output;
+    }
+    let opening = Regex::new(r#"<w:p(?:\s[^>]*)?>"#).unwrap();
+    if let Some(value) = opening.find(paragraph) {
+        let mut output = paragraph.to_string();
+        output.insert_str(
+            value.end(),
+            &format!(r#"<w:pPr><w:pStyle w:val="Heading{level}"/></w:pPr>"#),
+        );
+        return output;
+    }
+    paragraph.to_string()
+}
+
+fn edit_word_outline_xml(
+    document: &str,
+    paragraph_number: usize,
+    action: &str,
+) -> Result<String, String> {
+    let paragraph_expression = Regex::new(r#"(?s)<w:p(?:\s[^>]*)?>.*?</w:p>"#).unwrap();
+    let paragraphs = paragraph_expression.find_iter(document).collect::<Vec<_>>();
+    let target_index = paragraph_number
+        .checked_sub(1)
+        .filter(|index| *index < paragraphs.len())
+        .ok_or("找不到指定標題段落")?;
+    let target = paragraphs[target_index];
+    let level = paragraph_heading_level(target.as_str()).ok_or("指定段落不是標題")?;
+    if matches!(action, "promote" | "demote") {
+        let next_level = if action == "promote" {
+            level.saturating_sub(1).max(1)
+        } else {
+            (level + 1).min(9)
+        };
+        if next_level == level {
+            return Err(if action == "promote" {
+                "標題已是最高層級".into()
+            } else {
+                "標題已是最深層級".into()
+            });
+        }
+        let replacement = replace_paragraph_heading_level(target.as_str(), next_level);
+        let mut output = document.to_string();
+        output.replace_range(target.start()..target.end(), &replacement);
+        return Ok(output);
+    }
+    let heading_indexes = paragraphs
+        .iter()
+        .enumerate()
+        .filter_map(|(index, paragraph)| {
+            paragraph_heading_level(paragraph.as_str()).map(|heading_level| (index, heading_level))
+        })
+        .collect::<Vec<_>>();
+    let target_heading_position = heading_indexes
+        .iter()
+        .position(|(index, _)| *index == target_index)
+        .ok_or("找不到指定標題")?;
+    let section_end_index = heading_indexes
+        .iter()
+        .skip(target_heading_position + 1)
+        .find(|(_, heading_level)| *heading_level <= level)
+        .map(|(index, _)| *index);
+    let section_start = target.start();
+    let section_end = section_end_index
+        .map(|index| paragraphs[index].start())
+        .unwrap_or_else(|| {
+            document
+                .rfind("<w:sectPr")
+                .or_else(|| document.rfind("</w:body>"))
+                .unwrap_or(document.len())
+        });
+    if action == "move_up" {
+        let previous = heading_indexes[..target_heading_position]
+            .iter()
+            .rev()
+            .find(|(_, heading_level)| *heading_level <= level)
+            .map(|(index, _)| *index)
+            .ok_or("已是同層級的第一個標題")?;
+        let previous_start = paragraphs[previous].start();
+        let previous_section = &document[previous_start..section_start];
+        let current_section = &document[section_start..section_end];
+        let mut output = document.to_string();
+        output.replace_range(
+            previous_start..section_end,
+            &format!("{current_section}{previous_section}"),
+        );
+        return Ok(output);
+    }
+    if action == "move_down" {
+        let next_start_index = section_end_index.ok_or("已是同層級的最後一個標題")?;
+        let next_position = heading_indexes
+            .iter()
+            .position(|(index, _)| *index == next_start_index)
+            .ok_or("找不到下一個標題")?;
+        let next_level = heading_indexes[next_position].1;
+        let next_end = heading_indexes
+            .iter()
+            .skip(next_position + 1)
+            .find(|(_, heading_level)| *heading_level <= next_level)
+            .map(|(index, _)| paragraphs[*index].start())
+            .unwrap_or_else(|| {
+                document
+                    .rfind("<w:sectPr")
+                    .or_else(|| document.rfind("</w:body>"))
+                    .unwrap_or(document.len())
+            });
+        let current_section = &document[section_start..section_end];
+        let next_section = &document[section_end..next_end];
+        let mut output = document.to_string();
+        output.replace_range(
+            section_start..next_end,
+            &format!("{next_section}{current_section}"),
+        );
+        return Ok(output);
+    }
+    Err("未知的大綱編輯操作".into())
+}
+
+#[tauri::command]
+fn edit_word_outline(
+    path: String,
+    destination: String,
+    paragraph: usize,
+    action: String,
+) -> Result<ActionResult, String> {
+    let source = PathBuf::from(path);
+    if !source.is_file() {
+        return Err("找不到 Word 文件".into());
+    }
+    let document = read_word_document_xml(&source)?;
+    let edited = edit_word_outline_xml(&document, paragraph, &action)?;
+    let target = PathBuf::from(destination);
+    write_word_document_xml(&source, &target, &edited)?;
+    Ok(ActionResult {
+        path: target.to_string_lossy().to_string(),
+        file_name: target
+            .file_name()
+            .and_then(|value| value.to_str())
+            .unwrap_or("大綱編輯文件.docx")
+            .into(),
+        message: match action.as_str() {
+            "move_up" => "已將標題與所屬內容上移，並寫入新副本",
+            "move_down" => "已將標題與所屬內容下移，並寫入新副本",
+            "promote" => "已提升標題層級，並寫入新副本",
+            "demote" => "已降低標題層級，並寫入新副本",
+            _ => "已更新大綱並寫入新副本",
+        }
+        .into(),
+    })
+}
+
 fn chinese_number(number: usize, financial: bool) -> String {
     let digits = if financial {
         ["零", "壹", "貳", "參", "肆", "伍", "陸", "柒", "捌", "玖"]
@@ -4483,8 +5210,146 @@ fn replace_case_insensitive(source: &str, pattern: &str, replacement: &str) -> S
         .unwrap_or_else(|_| source.to_string())
 }
 
-fn merge_text_value(source: &str, row: &BTreeMap<String, String>) -> String {
+fn mail_merge_lookup(
+    name: &str,
+    row: &BTreeMap<String, String>,
+    variables: &BTreeMap<String, String>,
+) -> String {
+    let normalized = name.trim();
+    row.iter()
+        .find(|(field, _)| field.eq_ignore_ascii_case(normalized))
+        .map(|(_, value)| value.clone())
+        .or_else(|| {
+            variables
+                .iter()
+                .find(|(field, _)| field.eq_ignore_ascii_case(normalized))
+                .map(|(_, value)| value.clone())
+        })
+        .unwrap_or_else(|| normalized.to_string())
+}
+
+fn mail_merge_condition(left: &str, operator: &str, right: &str) -> bool {
+    let left = left.trim();
+    let right = right.trim();
+    match operator.trim().to_ascii_lowercase().as_str() {
+        "=" | "==" | "eq" | "equals" | "等於" => left.eq_ignore_ascii_case(right),
+        "!=" | "<>" | "ne" | "not" | "不等於" => !left.eq_ignore_ascii_case(right),
+        "contains" | "包含" => left.to_lowercase().contains(&right.to_lowercase()),
+        "notcontains" | "不包含" => !left.to_lowercase().contains(&right.to_lowercase()),
+        "starts" | "startswith" | "開頭" => {
+            left.to_lowercase().starts_with(&right.to_lowercase())
+        }
+        "ends" | "endswith" | "結尾" => left.to_lowercase().ends_with(&right.to_lowercase()),
+        "empty" | "空白" => left.is_empty(),
+        "notempty" | "非空白" => !left.is_empty(),
+        ">" | "gt" | "大於" => left
+            .parse::<f64>()
+            .ok()
+            .zip(right.parse::<f64>().ok())
+            .map(|(left, right)| left > right)
+            .unwrap_or_else(|| left > right),
+        ">=" | "ge" | "大於等於" => left
+            .parse::<f64>()
+            .ok()
+            .zip(right.parse::<f64>().ok())
+            .map(|(left, right)| left >= right)
+            .unwrap_or_else(|| left >= right),
+        "<" | "lt" | "小於" => left
+            .parse::<f64>()
+            .ok()
+            .zip(right.parse::<f64>().ok())
+            .map(|(left, right)| left < right)
+            .unwrap_or_else(|| left < right),
+        "<=" | "le" | "小於等於" => left
+            .parse::<f64>()
+            .ok()
+            .zip(right.parse::<f64>().ok())
+            .map(|(left, right)| left <= right)
+            .unwrap_or_else(|| left <= right),
+        _ => false,
+    }
+}
+
+fn merge_text_value_with_rules(
+    source: &str,
+    row: &BTreeMap<String, String>,
+    record_number: usize,
+    merge_sequence: usize,
+) -> String {
     let mut output = source.to_string();
+    let mut variables = BTreeMap::<String, String>::new();
+    let set_expression =
+        Regex::new(r#"(?i)\{\{SET:([^|{}]+)\|([^{}]*)\}\}"#).expect("valid SET expression");
+    loop {
+        let Some(capture) = set_expression.captures(&output) else {
+            break;
+        };
+        let whole = capture.get(0).unwrap();
+        let name = capture.get(1).unwrap().as_str().trim().to_string();
+        let raw = capture.get(2).unwrap().as_str();
+        let value = mail_merge_lookup(raw, row, &variables);
+        variables.insert(name, value);
+        output.replace_range(whole.start()..whole.end(), "");
+    }
+    let ask_expression = Regex::new(r#"(?i)\{\{ASK:([^|{}]+)\|([^|{}]*)\|([^{}]*)\}\}"#)
+        .expect("valid ASK expression");
+    loop {
+        let Some(capture) = ask_expression.captures(&output) else {
+            break;
+        };
+        let whole = capture.get(0).unwrap();
+        let name = capture.get(1).unwrap().as_str().trim().to_string();
+        let default = merge_text_value_with_rules(
+            capture.get(3).unwrap().as_str(),
+            row,
+            record_number,
+            merge_sequence,
+        );
+        variables.insert(name, default);
+        output.replace_range(whole.start()..whole.end(), "");
+    }
+    let fillin_expression =
+        Regex::new(r#"(?i)\{\{FILLIN:[^|{}]*\|([^{}]*)\}\}"#).expect("valid FILLIN expression");
+    output = fillin_expression
+        .replace_all(&output, |capture: &regex::Captures<'_>| {
+            merge_text_value_with_rules(
+                capture.get(1).map(|value| value.as_str()).unwrap_or(""),
+                row,
+                record_number,
+                merge_sequence,
+            )
+        })
+        .into_owned();
+    for (field, value) in &variables {
+        output = replace_case_insensitive(&output, &format!("{{{{{field}}}}}"), value);
+    }
+    let if_expression =
+        Regex::new(r#"(?i)\{\{IF:([^|{}]+)\|([^|{}]+)\|([^|{}]*)\|([^|{}]*)\|([^{}]*)\}\}"#)
+            .expect("valid IF expression");
+    loop {
+        let Some(capture) = if_expression.captures(&output) else {
+            break;
+        };
+        let whole = capture.get(0).unwrap();
+        let left = mail_merge_lookup(capture.get(1).unwrap().as_str(), row, &variables);
+        let operator = capture.get(2).unwrap().as_str();
+        let right = mail_merge_lookup(capture.get(3).unwrap().as_str(), row, &variables);
+        let branch = if mail_merge_condition(&left, operator, &right) {
+            capture.get(4).unwrap().as_str()
+        } else {
+            capture.get(5).unwrap().as_str()
+        }
+        .to_string();
+        output.replace_range(whole.start()..whole.end(), &branch);
+    }
+    output = Regex::new(r#"(?i)\{\{MERGEREC\}\}"#)
+        .unwrap()
+        .replace_all(&output, record_number.to_string())
+        .into_owned();
+    output = Regex::new(r#"(?i)\{\{MERGESEQ\}\}"#)
+        .unwrap()
+        .replace_all(&output, merge_sequence.to_string())
+        .into_owned();
     for (field, value) in row {
         for placeholder in [
             format!("{{{{{field}}}}}"),
@@ -4494,10 +5359,129 @@ fn merge_text_value(source: &str, row: &BTreeMap<String, String>) -> String {
             output = replace_case_insensitive(&output, &placeholder, value);
         }
     }
+    for (field, value) in variables {
+        output = replace_case_insensitive(&output, &format!("{{{{{field}}}}}"), &value);
+    }
     output
 }
 
-fn merge_paragraph_xml(paragraph: &str, row: &BTreeMap<String, String>) -> String {
+fn mail_merge_row_should_skip(source: &str, row: &BTreeMap<String, String>) -> bool {
+    let expression = Regex::new(r#"(?i)\{\{(?:SKIPIF|NEXTIF):([^|{}]+)\|([^|{}]+)\|([^{}]*)\}\}"#)
+        .expect("valid skip expression");
+    let should_skip = expression.captures_iter(source).any(|capture| {
+        let left = mail_merge_lookup(capture.get(1).unwrap().as_str(), row, &BTreeMap::new());
+        let right = mail_merge_lookup(capture.get(3).unwrap().as_str(), row, &BTreeMap::new());
+        mail_merge_condition(&left, capture.get(2).unwrap().as_str(), &right)
+    });
+    should_skip
+}
+
+fn strip_mail_merge_control_rules(source: &str) -> String {
+    Regex::new(r#"(?i)\{\{(?:SKIPIF|NEXTIF):[^{}]*\}\}"#)
+        .unwrap()
+        .replace_all(source, "")
+        .into_owned()
+}
+
+fn word_field_result(
+    instruction: &str,
+    row: &BTreeMap<String, String>,
+    record_number: usize,
+    merge_sequence: usize,
+) -> Option<String> {
+    let instruction = decode_xml_text(instruction)
+        .replace("&quot;", "\"")
+        .trim()
+        .to_string();
+    let merge_field = Regex::new(r#"(?i)^\s*MERGEFIELD\s+(?:"([^"]+)"|([^\s\\]+))"#).unwrap();
+    if let Some(capture) = merge_field.captures(&instruction) {
+        let name = capture
+            .get(1)
+            .or_else(|| capture.get(2))
+            .map(|value| value.as_str())
+            .unwrap_or("");
+        return Some(mail_merge_lookup(name, row, &BTreeMap::new()));
+    }
+    if Regex::new(r#"(?i)^\s*MERGEREC\b"#)
+        .unwrap()
+        .is_match(&instruction)
+    {
+        return Some(record_number.to_string());
+    }
+    if Regex::new(r#"(?i)^\s*MERGESEQ\b"#)
+        .unwrap()
+        .is_match(&instruction)
+    {
+        return Some(merge_sequence.to_string());
+    }
+    let fillin = Regex::new(r#"(?i)^\s*FILLIN\b.*?\\d\s+"([^"]*)""#).unwrap();
+    if let Some(capture) = fillin.captures(&instruction) {
+        return Some(
+            capture
+                .get(1)
+                .map(|value| value.as_str().to_string())
+                .unwrap_or_default(),
+        );
+    }
+    None
+}
+
+fn materialize_word_mail_merge_fields(
+    xml: &str,
+    row: &BTreeMap<String, String>,
+    record_number: usize,
+    merge_sequence: usize,
+) -> String {
+    let simple = Regex::new(r#"(?s)<w:fldSimple\b([^>]*)>.*?</w:fldSimple>"#).unwrap();
+    let instruction_attribute = Regex::new(r#"\bw:instr="([^"]*)""#).unwrap();
+    let mut output = simple
+        .replace_all(xml, |capture: &regex::Captures<'_>| {
+            let instruction = instruction_attribute
+                .captures(capture.get(1).map(|value| value.as_str()).unwrap_or(""))
+                .and_then(|value| value.get(1))
+                .map(|value| value.as_str())
+                .unwrap_or("");
+            word_field_result(instruction, row, record_number, merge_sequence)
+                .map(|value| {
+                    format!(
+                        r#"<w:r><w:t xml:space="preserve">{}</w:t></w:r>"#,
+                        encode_xml_text(&value)
+                    )
+                })
+                .unwrap_or_else(|| capture.get(0).unwrap().as_str().to_string())
+        })
+        .into_owned();
+    let complex = Regex::new(
+        r#"(?s)<w:r\b[^>]*>.*?<w:fldChar\b[^>]*w:fldCharType="begin"[^>]*/>.*?</w:r>(.*?)<w:r\b[^>]*>.*?<w:fldChar\b[^>]*w:fldCharType="end"[^>]*/>.*?</w:r>"#,
+    )
+    .unwrap();
+    let instruction_text = Regex::new(r#"(?s)<w:instrText\b[^>]*>(.*?)</w:instrText>"#).unwrap();
+    output = complex
+        .replace_all(&output, |capture: &regex::Captures<'_>| {
+            let body = capture.get(1).map(|value| value.as_str()).unwrap_or("");
+            let instruction = instruction_text
+                .captures_iter(body)
+                .filter_map(|value| value.get(1).map(|item| item.as_str()))
+                .collect::<String>();
+            word_field_result(&instruction, row, record_number, merge_sequence)
+                .map(|value| {
+                    format!(
+                        r#"<w:r><w:t xml:space="preserve">{}</w:t></w:r>"#,
+                        encode_xml_text(&value)
+                    )
+                })
+                .unwrap_or_else(|| capture.get(0).unwrap().as_str().to_string())
+        })
+        .into_owned();
+    output
+}
+
+fn merge_paragraph_xml(
+    paragraph: &str,
+    row: &BTreeMap<String, String>,
+    record_number: usize,
+    merge_sequence: usize,
+) -> String {
     let text_expression = Regex::new(r#"(?s)<w:t\b[^>]*>(.*?)</w:t>"#).unwrap();
     let contents = text_expression
         .captures_iter(paragraph)
@@ -4510,7 +5494,12 @@ fn merge_paragraph_xml(paragraph: &str, row: &BTreeMap<String, String>) -> Strin
         .iter()
         .map(|value| decode_xml_text(value.as_str()))
         .collect::<String>();
-    let merged = merge_text_value(&logical, row);
+    let merged = strip_mail_merge_control_rules(&merge_text_value_with_rules(
+        &logical,
+        row,
+        record_number,
+        merge_sequence,
+    ));
     if merged == logical {
         return paragraph.to_string();
     }
@@ -4529,20 +5518,38 @@ fn merge_paragraph_xml(paragraph: &str, row: &BTreeMap<String, String>) -> Strin
     output
 }
 
-fn merge_word_xml(xml: &str, row: &BTreeMap<String, String>) -> String {
+fn merge_word_xml_with_context(
+    xml: &str,
+    row: &BTreeMap<String, String>,
+    record_number: usize,
+    merge_sequence: usize,
+) -> String {
+    let materialized = materialize_word_mail_merge_fields(xml, row, record_number, merge_sequence);
     let paragraph_expression = Regex::new(r#"(?s)<w:p(?:\s[^>]*)?>.*?</w:p>"#).unwrap();
     let mut replacements = paragraph_expression
-        .find_iter(xml)
+        .find_iter(&materialized)
         .filter_map(|value| {
-            let replacement = merge_paragraph_xml(value.as_str(), row);
+            let replacement =
+                merge_paragraph_xml(value.as_str(), row, record_number, merge_sequence);
             (replacement != value.as_str()).then_some((value.start()..value.end(), replacement))
         })
         .collect::<Vec<_>>();
-    let mut output = xml.to_string();
+    let mut output = materialized;
     for (range, replacement) in replacements.drain(..).rev() {
         output.replace_range(range, &replacement);
     }
     output
+}
+
+fn merge_word_xml(xml: &str, row: &BTreeMap<String, String>) -> String {
+    merge_word_xml_with_context(xml, row, 1, 1)
+}
+
+fn mail_merge_filter_matches(value: &str, operator: &str, expected: &str) -> bool {
+    if expected.trim().is_empty() && !matches!(operator, "empty" | "notempty") {
+        return true;
+    }
+    mail_merge_condition(value, operator, expected)
 }
 
 fn rewrite_word_package<F>(
@@ -4628,6 +5635,7 @@ fn mail_merge_generate(
     output_format: String,
     naming_field: String,
     filter_column: String,
+    filter_operator: String,
     filter_value: String,
 ) -> Result<MailMergeResult, String> {
     let template = PathBuf::from(template);
@@ -4646,6 +5654,7 @@ fn mail_merge_generate(
         return Err("輸出格式必須是 DOCX、PDF 或兩者".into());
     }
     let (_, rows) = read_mail_merge_data(Path::new(&data_source))?;
+    let template_document = read_word_document_xml(&template)?;
     if rows.len() > 5_000 {
         return Err("單次最多處理 5,000 筆資料，請先分批以免誤印".into());
     }
@@ -4653,21 +5662,24 @@ fn mail_merge_generate(
     fs::create_dir_all(&root).map_err(|error| error.to_string())?;
     let mut created = Vec::new();
     let mut skipped = 0;
+    let mut merge_sequence = 0usize;
     for (index, row) in rows.iter().enumerate() {
         if !filter_column.trim().is_empty()
             && row
                 .get(filter_column.trim())
                 .map(|value| {
-                    !filter_value.trim().is_empty()
-                        && !value
-                            .to_lowercase()
-                            .contains(&filter_value.trim().to_lowercase())
+                    !mail_merge_filter_matches(value, &filter_operator, filter_value.trim())
                 })
                 .unwrap_or(true)
         {
             skipped += 1;
             continue;
         }
+        if mail_merge_row_should_skip(&paragraph_text(&template_document), row) {
+            skipped += 1;
+            continue;
+        }
+        merge_sequence += 1;
         let default_name = format!("合併文件-{:03}", index + 1);
         let stem = row
             .get(naming_field.trim())
@@ -4675,7 +5687,8 @@ fn mail_merge_generate(
             .unwrap_or(default_name);
         let target = unique_output_path(&root, &stem, &extension, index);
         rewrite_word_package(&template, &target, |name, xml| {
-            (name.starts_with("word/") && name.ends_with(".xml")).then(|| merge_word_xml(xml, row))
+            (name.starts_with("word/") && name.ends_with(".xml"))
+                .then(|| merge_word_xml_with_context(xml, row, index + 1, merge_sequence))
         })?;
         if matches!(output_format.as_str(), "docx" | "both") {
             created.push(target.to_string_lossy().to_string());
@@ -4797,6 +5810,171 @@ fn create_mail_merge_template<R: Runtime>(
             .unwrap_or("合併列印範本.docx")
             .into(),
         message: "已建立可直接使用 {{欄位名稱}} 的合併列印範本".into(),
+    })
+}
+
+#[tauri::command]
+fn create_word_template<R: Runtime>(
+    app: tauri::AppHandle<R>,
+    kind: String,
+    destination: String,
+) -> Result<ActionResult, String> {
+    let source = resource_path(&app, "resources/Templates/Blank-Document.docx")?;
+    let base = read_word_document_xml(&source)?;
+    let date = Local::now().format("%Y 年 %m 月 %d 日").to_string();
+    let field = |name: &str| format!("【{name}】");
+    let body = match kind.as_str() {
+        "official-letter" => [
+            word_paragraph("○○○○○○ 函", Some("Heading1")),
+            word_paragraph(&format!("地址：{}", field("機關地址")), None),
+            word_paragraph(
+                &format!("承辦人：{}　電話：{}", field("姓名"), field("電話")),
+                None,
+            ),
+            word_paragraph(&format!("受文者：{}", field("受文機關")), None),
+            word_paragraph(&format!("發文日期：{date}"), None),
+            word_paragraph(&format!("發文字號：{}", field("字號")), None),
+            word_paragraph(
+                &format!("速別：{}　密等及解密條件：{}", field("普通"), field("普通")),
+                None,
+            ),
+            word_paragraph(&format!("附件：{}", field("如主旨")), None),
+            word_paragraph(
+                &format!("主旨：{}", field("一句話說明目的")),
+                Some("Heading2"),
+            ),
+            word_paragraph(
+                &format!("說明：{}", field("事實、依據與理由")),
+                Some("Heading2"),
+            ),
+            word_paragraph(
+                &format!("辦法：{}", field("具體處理方式與期限")),
+                Some("Heading2"),
+            ),
+            word_paragraph(
+                &format!("正本：{}　副本：{}", field("正本"), field("副本")),
+                None,
+            ),
+        ]
+        .join(""),
+        "legal-pleading" => [
+            word_paragraph(&field("法院全銜"), Some("Heading1")),
+            word_paragraph(&field("書狀名稱"), Some("Heading1")),
+            word_paragraph(
+                &format!("案號：{}　股別：{}", field("年度字號"), field("股別")),
+                None,
+            ),
+            word_paragraph(
+                &format!(
+                    "具狀人：{}　身分：{}",
+                    field("姓名"),
+                    field("原告／被告／聲請人")
+                ),
+                None,
+            ),
+            word_paragraph(&format!("住居所／事務所：{}", field("地址")), None),
+            word_paragraph(&format!("送達代收人：{}", field("姓名及地址")), None),
+            word_paragraph("為上開事件，依法提出本書狀：", None),
+            word_paragraph("聲明／請求事項", Some("Heading1")),
+            word_paragraph(&field("逐項、可執行且明確的聲明"), None),
+            word_paragraph("事實及理由", Some("Heading1")),
+            word_paragraph(&field("依時間順序敘述事實，分段對應證據"), None),
+            word_paragraph("證據及附件", Some("Heading1")),
+            word_paragraph(&field("證物名稱、待證事實與附件編號"), None),
+            word_paragraph(&format!("此致　{}", field("法院")), None),
+            word_paragraph(
+                &format!("具狀人：{}　中華民國　{date}", field("簽章")),
+                None,
+            ),
+        ]
+        .join(""),
+        "meeting-minutes" => [
+            word_paragraph(&field("會議名稱"), Some("Heading1")),
+            word_paragraph(
+                &format!(
+                    "時間：{}　地點：{}",
+                    field("日期時間"),
+                    field("地點／視訊連結")
+                ),
+                None,
+            ),
+            word_paragraph(
+                &format!("主席：{}　紀錄：{}", field("姓名"), field("姓名")),
+                None,
+            ),
+            word_paragraph(
+                &format!(
+                    "出席：{}　請假：{}　列席：{}",
+                    field("名單"),
+                    field("名單"),
+                    field("名單")
+                ),
+                None,
+            ),
+            word_paragraph("議程與討論", Some("Heading1")),
+            word_paragraph(
+                &format!(
+                    "一、{}　說明：{}　討論：{}",
+                    field("案由"),
+                    field("背景"),
+                    field("意見摘要")
+                ),
+                None,
+            ),
+            word_paragraph("決議與待辦", Some("Heading1")),
+            word_paragraph(
+                &format!(
+                    "一、決議：{}　負責人：{}　期限：{}",
+                    field("決議"),
+                    field("姓名"),
+                    field("日期")
+                ),
+                None,
+            ),
+            word_paragraph("下次會議", Some("Heading1")),
+            word_paragraph(
+                &format!("時間：{}　預定議題：{}", field("日期時間"), field("議題")),
+                None,
+            ),
+        ]
+        .join(""),
+        "structured-report" => [
+            word_paragraph(&field("報告名稱"), Some("Heading1")),
+            word_paragraph(
+                &format!(
+                    "作者／機關：{}　日期：{date}　版本：{}",
+                    field("名稱"),
+                    field("1.0")
+                ),
+                None,
+            ),
+            word_paragraph("摘要", Some("Heading1")),
+            word_paragraph(&field("目的、方法、主要發現與結論，建議 200–300 字"), None),
+            word_paragraph("一、背景與目的", Some("Heading1")),
+            word_paragraph(&field("問題、範圍、限制與利害關係人"), None),
+            word_paragraph("二、資料與方法", Some("Heading1")),
+            word_paragraph(&field("資料來源、期間、方法與判斷標準"), None),
+            word_paragraph("三、分析與發現", Some("Heading1")),
+            word_paragraph(&field("逐項分析，圖表均加標號與替代文字"), None),
+            word_paragraph("四、結論與建議", Some("Heading1")),
+            word_paragraph(&field("結論、優先順序、負責人與完成期限"), None),
+            word_paragraph("參考文獻", Some("Heading1")),
+            word_paragraph("{{CITATION}}", None),
+        ]
+        .join(""),
+        _ => return Err("未知的 Word 範本類型".into()),
+    };
+    let document = replace_word_body(&base, &body)?;
+    let target = PathBuf::from(destination);
+    write_word_document_xml(&source, &target, &document)?;
+    Ok(ActionResult {
+        path: target.to_string_lossy().to_string(),
+        file_name: target
+            .file_name()
+            .and_then(|value| value.to_str())
+            .unwrap_or("Word 範本.docx")
+            .into(),
+        message: "已建立可直接編輯、具標題結構與繁體中文欄位提示的 Word 範本".into(),
     })
 }
 
@@ -5593,7 +6771,9 @@ pub fn run() {
             scan_document,
             word_report,
             word_reading_content,
+            edit_word_outline,
             word_accessibility_report,
+            word_quality_report,
             repair_word_accessibility,
             renumber_headings,
             recovery_sessions,
@@ -5602,11 +6782,14 @@ pub fn run() {
             mail_merge_preview,
             mail_merge_generate,
             create_mail_merge_template,
+            create_word_template,
             citation_sources,
             save_citation_source,
             delete_citation_source,
             format_citation,
             append_bibliography,
+            insert_dynamic_citation,
+            update_document_citations,
             insert_word_component,
             acropdf_status,
             pdf_report,
@@ -6009,7 +7192,8 @@ mod tests {
         fs::write(source.join("mingliu.ttc"), b"mingliu-test-font").unwrap();
         fs::write(source.join("mingliub.ttc"), b"mingliub-test-font").unwrap();
 
-        let installed = copy_microsoft_tw_fonts_from_bundles(&[office], &destination).unwrap();
+        let installed =
+            copy_microsoft_tw_fonts_from_bundles(&[office.clone()], &destination).unwrap();
         assert_eq!(installed.len(), 2);
         for path in installed {
             let metadata = path.symlink_metadata().unwrap();
@@ -6021,6 +7205,14 @@ mod tests {
                 .unwrap()
                 .starts_with("OpenDeskTW-Licensed-"));
         }
+
+        fs::remove_dir_all(&office).unwrap();
+        let retained = copy_microsoft_tw_fonts_from_bundles(&[office], &destination).unwrap();
+        assert_eq!(
+            retained.len(),
+            2,
+            "Office 更新移動來源後，已註冊的實體字型仍應保持可用"
+        );
     }
 
     #[cfg(target_os = "macos")]
@@ -6262,6 +7454,111 @@ mod tests {
         assert!(paragraph_text(&merged).contains("王小明"));
         assert!(paragraph_text(&merged).contains("臺北市中正區"));
         assert!(inspect_package(&output).0 > 5);
+    }
+
+    #[test]
+    fn mail_merge_rules_match_word_style_conditions_and_record_numbers() {
+        let mut row = BTreeMap::new();
+        row.insert("姓名".into(), "王小明".into());
+        row.insert("會員".into(), "是".into());
+        row.insert("狀態".into(), "啟用".into());
+        let template = "{{SET:稱謂|姓名}}{{IF:會員|等於|是|會員 {{稱謂}} 您好|您好}}　記錄 {{MERGEREC}}／{{MERGESEQ}}　{{FILLIN:主旨|通知}}";
+        let merged = merge_text_value_with_rules(template, &row, 7, 3);
+        assert_eq!(merged, "會員 王小明 您好　記錄 7／3　通知");
+        assert!(mail_merge_filter_matches(
+            "臺北市中正區",
+            "contains",
+            "中正"
+        ));
+        assert!(mail_merge_filter_matches("120", ">", "99"));
+        assert!(!mail_merge_row_should_skip(
+            "{{SKIPIF:狀態|等於|啟用}}",
+            &BTreeMap::from([("狀態".into(), "停用".into())])
+        ));
+        assert!(mail_merge_row_should_skip(
+            "{{NEXTIF:狀態|等於|停用}}",
+            &BTreeMap::from([("狀態".into(), "停用".into())])
+        ));
+        let xml = r#"<w:p><w:fldSimple w:instr=" MERGEFIELD 姓名 "><w:r><w:t>姓名</w:t></w:r></w:fldSimple></w:p>"#;
+        let materialized = materialize_word_mail_merge_fields(xml, &row, 7, 3);
+        assert!(materialized.contains("王小明"));
+        assert!(!materialized.contains("MERGEFIELD"));
+    }
+
+    #[test]
+    fn outline_editor_moves_sections_and_changes_heading_levels() {
+        let xml = format!(
+            "<w:document><w:body>{}{}{}{}<w:sectPr/></w:body></w:document>",
+            word_paragraph("第一章", Some("Heading1")),
+            word_paragraph("第一章內容", None),
+            word_paragraph("第二章", Some("Heading1")),
+            word_paragraph("第二章內容", None)
+        );
+        let moved = edit_word_outline_xml(&xml, 3, "move_up").unwrap();
+        assert!(moved.find("第二章").unwrap() < moved.find("第一章").unwrap());
+        assert!(moved.find("第二章內容").unwrap() < moved.find("第一章內容").unwrap());
+        let demoted = edit_word_outline_xml(&xml, 1, "demote").unwrap();
+        assert!(demoted.contains(r#"w:val="Heading2""#));
+    }
+
+    #[test]
+    fn dynamic_citation_blocks_keep_source_ids_and_can_be_regenerated() {
+        let source = CitationSource {
+            id: "src-dynamic".into(),
+            source_type: "book".into(),
+            author: "王小明".into(),
+            title: "文件自動化".into(),
+            year: "2026".into(),
+            publisher: "開放出版社".into(),
+            container_title: String::new(),
+            volume: String::new(),
+            issue: String::new(),
+            pages: String::new(),
+            doi: String::new(),
+            url: String::new(),
+            accessed: String::new(),
+        };
+        let citation = format_citation_values(std::slice::from_ref(&source), "apa7");
+        let block = dynamic_citation_block("bibliography", "apa7", &[source.id.clone()], &citation);
+        assert!(block.contains("OpenDeskTW.Citation|bibliography|apa7|src-dynamic"));
+        assert!(block.contains("<w:sdtContent>"));
+        assert!(block.contains("文件自動化"));
+    }
+
+    #[test]
+    fn taiwan_quality_checker_finds_delivery_blockers() {
+        let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("resources/Templates/Blank-Document.docx");
+        let temporary_root = std::env::temp_dir().join(format!(
+            "OpenDeskTW-Quality-Test-{}-{}",
+            std::process::id(),
+            Local::now().timestamp_millis()
+        ));
+        fs::create_dir_all(&temporary_root).unwrap();
+        let _cleanup = TemporaryFolder(temporary_root.clone());
+        let output = temporary_root.join("待校閱.docx");
+        let body = [
+            word_paragraph("待確認：{{姓名}}", None),
+            word_paragraph("這是信息,請確認（尚未閉合", None),
+        ]
+        .join("");
+        let document =
+            replace_word_body(&read_word_document_xml(&fixture).unwrap(), &body).unwrap();
+        write_word_document_xml(&fixture, &output, &document).unwrap();
+        let report = build_word_quality_report(&output).unwrap();
+        assert!(report.score < 100);
+        assert!(report
+            .issues
+            .iter()
+            .any(|issue| issue.category == "未完成欄位"));
+        assert!(report
+            .issues
+            .iter()
+            .any(|issue| issue.category == "標點成對"));
+        assert!(report
+            .issues
+            .iter()
+            .any(|issue| issue.category == "台灣用語"));
     }
 
     #[test]

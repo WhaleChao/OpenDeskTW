@@ -430,7 +430,7 @@ async function main() {
     assert.ok(
       distributedAfterResize?.implementation === "word-layout-ranges-v2" &&
         distributedAfterResize.preclearedRuns >= 1,
-      `沒有載入會先完成清除再量測的 1.9.3 實作：${JSON.stringify(distributedAfterResize)}`,
+      `沒有載入會先完成清除再量測的 2.0.0 實作：${JSON.stringify(distributedAfterResize)}`,
     );
     assert.ok(
       distributedAfterResize.widths?.[0]?.available <

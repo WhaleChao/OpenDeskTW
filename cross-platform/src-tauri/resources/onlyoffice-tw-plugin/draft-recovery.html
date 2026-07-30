@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="zh-TW">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>未存草稿復原</title>
+    <link rel="stylesheet" href="draft-recovery.css" />
+  </head>
+  <body>
+    <header>
+      <div>
+        <span>全能文件</span>
+        <h1>未存草稿復原</h1>
+      </div>
+      <p>外掛每 15 秒從編輯器記憶體擷取一次富文字內容。請先開啟空白文件，再將需要的草稿插入並立即另存。</p>
+    </header>
+    <main id="draft-list" aria-live="polite">
+      <p class="empty">正在讀取草稿…</p>
+    </main>
+    <footer>最多保留 12 份、每份 2.5 MB；復原只會插入目前游標位置，不會覆寫原檔。</footer>
+    <script src="https://onlyoffice.github.io/sdkjs-plugins/v1/plugins.js"></script>
+    <script src="draft-recovery.js"></script>
+  </body>
+</html>

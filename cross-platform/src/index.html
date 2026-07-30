@@ -334,6 +334,7 @@
         <button class="active" data-word-tool-tab="recovery">工作階段復原</button>
         <button data-word-tool-tab="merge">合併列印</button>
         <button data-word-tool-tab="accessibility">無障礙檢查</button>
+        <button data-word-tool-tab="quality">公文校閱與範本</button>
         <button data-word-tool-tab="citations">引文與書目</button>
         <button data-word-tool-tab="view">檢視與註解</button>
         <button data-word-tool-tab="language">語言與聽寫</button>
@@ -348,7 +349,7 @@
       </section>
       <section class="word-tool-panel" data-word-tool-panel="merge">
         <div class="word-tool-heading">
-          <div><h3>整合式合併列印</h3><p>主文件可使用 <code>{{姓名}}</code>、<code>«姓名»</code> 或 Word MERGEFIELD 顯示文字；支援 CSV、TSV 與分號資料。</p></div>
+          <div><h3>整合式合併列印</h3><p>主文件可使用 <code>{{姓名}}</code>、<code>«姓名»</code>、Word MERGEFIELD，以及 IF、Ask、Fill-in、Set、MergeRec／MergeSeq、Skip／Next Record If 規則。</p></div>
         </div>
         <div class="word-tool-actions template-actions">
           <button data-merge-template="letter">建立信件範本</button>
@@ -362,8 +363,13 @@
             <label>輸出檔名欄位<select id="merge-naming-field"><option value="">依序編號</option></select></label>
             <label>輸出格式<select id="merge-output-format"><option value="docx">個別 DOCX</option><option value="pdf">個別 PDF</option><option value="both">DOCX＋PDF</option></select></label>
             <label>篩選欄位<select id="merge-filter-column"><option value="">不篩選</option></select></label>
-            <label>只保留包含文字<input id="merge-filter-value" type="text" placeholder="留白代表不篩選" /></label>
+            <label>篩選條件<select id="merge-filter-operator"><option value="contains">包含</option><option value="notcontains">不包含</option><option value="equals">等於</option><option value="not">不等於</option><option value="starts">開頭是</option><option value="ends">結尾是</option><option value="empty">空白</option><option value="notempty">非空白</option><option value=">">大於</option><option value=">=">大於等於</option><option value="<">小於</option><option value="<=">小於等於</option></select></label>
+            <label>比較文字<input id="merge-filter-value" type="text" placeholder="空白／非空白不需填" /></label>
           </div>
+          <details class="merge-rule-guide">
+            <summary>Word 條件規則寫法</summary>
+            <p><code>{{IF:會員|等於|是|會員您好|您好}}</code>、<code>{{SET:稱謂|姓名}}</code>、<code>{{ASK:主旨|提示|預設主旨}}</code>、<code>{{FILLIN:提示|預設文字}}</code>、<code>{{MERGEREC}}</code>、<code>{{MERGESEQ}}</code>、<code>{{SKIPIF:狀態|等於|停用}}</code>。<code>NEXTIF</code> 在個別文件模式中等同略過符合資料列。</p>
+          </details>
           <div class="word-tool-actions">
             <button id="merge-preview">預覽資料</button>
             <button class="primary" id="merge-generate">選輸出資料夾並產生</button>
@@ -380,6 +386,23 @@
         <div class="word-tool-actions hidden" id="accessibility-actions">
           <button class="primary" id="accessibility-repair">安全自動修復並另存</button>
           <span>只自動處理可確定的項目；圖片替代文字、標題層級與連結名稱保留人工判斷。</span>
+        </div>
+      </section>
+      <section class="word-tool-panel" data-word-tool-panel="quality">
+        <div class="word-tool-heading">
+          <div><h3>台灣文件交付前校閱</h3><p>在本機檢查未完成欄位、括號／引號、中文半形標點、空白排版、長句、待辦註記、重複文字與常見非台灣用語。</p></div>
+          <button class="primary" id="quality-check">檢查目前 Word 文件</button>
+        </div>
+        <div class="word-tool-results" id="quality-results"><p class="empty">尚未檢查文件。</p></div>
+        <div class="template-library">
+          <h4>結構化繁體中文範本</h4>
+          <p>建立後立即可編輯，第一次儲存位置由您決定；標題結構可直接產生目錄與導覽。</p>
+          <div class="word-tool-actions">
+            <button data-word-template="official-letter">機關函稿</button>
+            <button data-word-template="legal-pleading">法律書狀</button>
+            <button data-word-template="meeting-minutes">會議紀錄</button>
+            <button data-word-template="structured-report">結構化報告</button>
+          </div>
         </div>
       </section>
       <section class="word-tool-panel" data-word-tool-panel="citations">
@@ -405,13 +428,16 @@
         <div class="citation-toolbar">
           <label>引用格式<select id="citation-style"><option value="apa7">APA 7</option><option value="mla9">MLA 9</option><option value="chicago">Chicago 作者日期</option><option value="taiwan">台灣中文</option></select></label>
           <button id="citation-copy">複製內文引文</button>
-          <button class="primary" id="citation-append">加入參考書目並另存</button>
+          <button id="citation-insert">插入動態內文引文</button>
+          <button class="primary" id="citation-append">加入動態參考書目</button>
+          <button id="citation-update">更新文件引文／書目</button>
         </div>
+        <p class="citation-preview">若要指定內文引文位置，先在文件放入獨立一段 <code>{{CITATION}}</code>；否則會加入文件末端。動態區塊可在來源資料修改後重新更新。</p>
         <div class="word-tool-results citation-list" id="citation-list"><p class="empty">尚無來源。</p></div>
       </section>
       <section class="word-tool-panel" data-word-tool-panel="view">
         <div class="word-tool-heading">
-          <div><h3>大綱、草稿、Web 與並排同步檢視</h3><p>不更動原檔，以結構化文字提供長文件導覽；可載入第二份文件同步捲動比較。</p></div>
+          <div><h3>可編輯大綱、草稿、Web 與並排同步檢視</h3><p>大綱模式可提升／降低標題層級，或連同所屬內容上下移動並另存；也可載入第二份文件同步捲動比較。</p></div>
           <div class="word-tool-actions"><button class="primary" id="reading-load-current">載入目前文件</button><button id="reading-load-second">選擇並排文件</button></div>
         </div>
         <div class="reading-toolbar">

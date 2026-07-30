@@ -158,11 +158,24 @@ button:focus-visible, input:focus-visible { outline: 3px solid rgba(8, 126, 131,
 .merge-preview-table table { width: 100%; border-collapse: collapse; font-size: 9px; }
 .merge-preview-table th, .merge-preview-table td { padding: 7px 8px; border-bottom: 1px solid #e6edf5; text-align: left; white-space: nowrap; }
 .merge-preview-table th { color: #355275; background: #edf4fc; }
+.merge-rule-guide { margin: 10px 0; padding: 9px 10px; border: 1px solid #d8e3f0; border-radius: 9px; background: #f8fbff; color: #536981; font-size: 9px; line-height: 1.55; }
+.merge-rule-guide summary { color: #355275; font-weight: 850; cursor: pointer; }
+.merge-rule-guide p { margin: 8px 0 0; }
+.merge-rule-guide code { padding: 1px 4px; border-radius: 4px; background: #eaf1f8; color: #294d75; }
 .accessibility-summary { display: flex; align-items: center; gap: 12px; padding: 11px; border: 1px solid #cbdbea; border-radius: 11px; background: #edf7ff; }
 .accessibility-score { display: grid; place-items: center; width: 58px; height: 58px; border-radius: 50%; background: var(--word); color: #fff; font-size: 18px; font-weight: 900; }
 .accessibility-issue.error { border-left: 4px solid #c4433e; }
 .accessibility-issue.warning { border-left: 4px solid #d7a329; }
 .accessibility-issue > span { padding: 4px 7px; border-radius: 999px; background: #eef3f8; color: #526b88; font-size: 8px; font-weight: 900; }
+.quality-issue { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px; padding: 10px 11px; border: 1px solid #d8e3f0; border-left: 4px solid #d7a329; border-radius: 10px; background: #fff; }
+.quality-issue.error { border-left-color: #c4433e; }
+.quality-issue b { display: block; color: #344c69; font-size: 11px; }
+.quality-issue p { margin: 4px 0; color: #536981; font-size: 9px; }
+.quality-issue small { color: var(--muted); font-size: 8px; }
+.quality-issue > span { align-self: start; padding: 4px 7px; border-radius: 999px; background: #eef3f8; color: #526b88; font-size: 8px; font-weight: 900; }
+.template-library { margin-top: 12px; padding: 12px; border: 1px solid #d7e2ef; border-radius: 11px; background: #fff; }
+.template-library h4 { margin: 0; color: #355275; font-size: 12px; }
+.template-library p { margin: 5px 0 10px; color: #63778f; font-size: 9px; }
 .citation-form { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 9px; margin-bottom: 13px; padding: 12px; border: 1px solid #d8e3f0; border-radius: 12px; background: #fff; }
 .citation-form .wide { grid-column: span 2; }
 .citation-toolbar { display: flex; align-items: end; flex-wrap: wrap; gap: 8px; margin-bottom: 10px; }
@@ -179,8 +192,13 @@ button:focus-visible, input:focus-visible { outline: 3px solid rgba(8, 126, 131,
 .reading-pane.mode-draft { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; line-height: 1.5; }
 .reading-pane.mode-web { padding: 24px max(24px, 8%); border-radius: 0; font-family: system-ui, sans-serif; line-height: 1.8; }
 .reading-paragraph { margin: 0 0 10px; }
-.reading-heading { margin: 18px 0 8px; color: #244c7d; font-family: system-ui, sans-serif; font-weight: 850; }
+.reading-heading { display: flex; align-items: center; gap: 7px; margin: 18px 0 8px; color: #244c7d; font-family: system-ui, sans-serif; font-weight: 850; }
 .reading-heading[data-level="1"] { font-size: 21px; }.reading-heading[data-level="2"] { font-size: 18px; }.reading-heading[data-level="3"] { font-size: 16px; }
+.reading-text { min-width: 0; flex: 1; }
+.outline-level { flex: 0 0 auto; padding: 2px 5px; border-radius: 5px; background: #e8f1fb; color: #316292; font-size: 8px; }
+.outline-actions { display: none; flex: 0 0 auto; gap: 3px; }
+.reading-pane.mode-outline .outline-actions { display: flex; }
+.outline-actions button { min-width: 24px; padding: 3px 5px; border-radius: 5px; font-size: 9px; }
 .reading-pane.mode-outline .reading-paragraph:not(.reading-heading) { display: none; }
 .review-comment { padding: 9px 10px; border-left: 4px solid #6f9ed6; border-radius: 8px; background: #f3f7fc; }
 .review-comment b { color: #355478; font-size: 10px; }.review-comment p { margin: 4px 0; color: #465d76; font-size: 10px; }.review-comment small { color: var(--muted); font-size: 8px; }
@@ -394,13 +412,19 @@ footer { display: flex; align-items: center; justify-content: space-between; fle
   .word-recovery-banner span { color: #c9b27d; }
   .word-tools-dialog { color: #e5eef5; border-color: #41566e; background: #18242f; }
   .word-tools-tabs { border-color: #394d63; background: #202f3d; }
-  .word-tools-tabs button.active, .word-tool-form > label, .recovery-item, .accessibility-issue, .citation-item, .citation-form, .merge-preview-table { background: #202c37; }
+  .word-tools-tabs button.active, .word-tool-form > label, .recovery-item, .accessibility-issue, .quality-issue, .citation-item, .citation-form, .merge-preview-table, .template-library { background: #202c37; }
   .word-tool-heading h3, .recovery-item b, .accessibility-issue b, .citation-item b { color: #dce9f8; }
   .word-tool-form > label, .citation-form { border-color: #3b4f63; }
   .word-tool-form-grid input, .word-tool-form-grid select, .citation-form input, .citation-form select, .citation-toolbar select { color: #e5edf5; border-color: #44596f; background: #18222c; }
   .merge-preview-table th { color: #d8e8fb; background: #293b4d; }
+  .merge-rule-guide { color: #c2d0dc; border-color: #3b4f63; background: #202c37; }
+  .merge-rule-guide summary { color: #c7dcf5; }
+  .merge-rule-guide code { color: #d6e7fa; background: #293b4d; }
   .merge-preview-table th, .merge-preview-table td { border-color: #394b5d; }
   .accessibility-summary, .citation-preview { border-color: #3b536b; background: #213447; color: #d2e0ed; }
+  .quality-issue, .template-library { border-color: #3b4f63; }
+  .quality-issue b, .template-library h4 { color: #dce9f8; }
+  .quality-issue p, .template-library p { color: #b6c6d4; }
   .reading-toolbar, .reading-pane, .dictation-guide, .component-grid > section { color: #dce7f1; border-color: #3b4f63; background: #202c37; }
   .reading-toolbar select, .component-grid input, .component-grid textarea, .component-grid select { color: #e5edf5; border-color: #44596f; background: #18222c; }
   .language-tool-grid b, .component-grid h4, .reading-heading { color: #bdd8f7; }
