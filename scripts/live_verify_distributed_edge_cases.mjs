@@ -274,11 +274,13 @@ try {
         paragraph?.AddText?.(${JSON.stringify(tableFixtureText)});
         document.Push?.(table);
         const text = paragraph?.GetText?.() || "";
-        paragraph?.GetRange?.(0, Array.from(text).length)?.Select?.();
+        paragraph
+          ?.GetRange?.(0, Array.from(${JSON.stringify(tableFixtureText)}).length)
+          ?.Select?.();
         document.ForceRecalculate?.();
         return {
           ok: Boolean(paragraph),
-          text,
+          text: text.trim(),
           inTable: Boolean(paragraph?.GetParentTableCell?.())
         };
       }, false, true, resolve);
@@ -315,6 +317,7 @@ try {
           text: paragraph?.GetText?.() || "",
           lines: lines.length,
           nativeAlignment: nativeParagraph?.fa?.ye,
+          leftAlignment: AscCommon?.align_Left,
           inTable: Boolean(paragraph?.GetParentTableCell?.()),
           occupied: firstRange
             ? Number(firstRange.W ?? firstRange.Da)
@@ -342,8 +345,13 @@ try {
   );
   assert.equal(
     tableLayout.nativeAlignment,
-    0,
+    tableLayout.leftAlignment,
     "表格內仍重複套用 ONLYOFFICE 核心 distribute",
+  );
+  assert.notEqual(
+    tableLayout.nativeAlignment,
+    4,
+    "表格內不得使用 ONLYOFFICE 核心 distribute(4)",
   );
   assert.ok(
     tableDiagnostic.spacings?.some((spacing) => spacing > 0),
