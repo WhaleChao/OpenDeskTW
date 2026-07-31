@@ -7080,7 +7080,10 @@ mod tests {
         assert!(code.contains("installDistributedLayoutRefresh"));
         assert!(code.contains("AscCommon?.Ne?.Ug?.(internalId)"));
         assert!(code.contains("Object.values(paragraph).find"));
-        assert!(code.contains("nativeParagraph.Vt?.(nativeDistributed)"));
+        assert!(code.contains("tableParagraphs.has(paragraph)"));
+        assert!(code.contains("nativeLeft"));
+        assert!(code.contains("adaptiveStates"));
+        assert!(code.contains("word-layout-ranges-v3"));
         assert!(code.contains("installDistributedPersistenceHook"));
         assert!(code.contains("DesktopOfflineAppDocumentEndSave"));
         assert!(code.contains("AscDesktopEditor.OnSave"));

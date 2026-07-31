@@ -136,9 +136,12 @@ function makeParagraph(
   initialText,
   initialParaId = 0x1bcdef01,
   simulateQuantizationWrap = false,
+  tableCellWidth = null,
+  wrapThreshold = 370,
 ) {
   let text = initialText;
   let paraId = initialParaId;
+  let localAlignment;
   const run = { Content: Array.from(initialText) };
   const layoutRange = { X: 0, XEnd: 100, W: 20 };
   function contentPosition(position) {
@@ -155,6 +158,7 @@ function makeParagraph(
     Paragraph: {
       Lines: [{ Ranges: [layoutRange] }],
       Vt(value) {
+        localAlignment = value;
         paragraphAlignment = value;
       },
       Get_ParaContentPos() {
@@ -217,7 +221,7 @@ function makeParagraph(
             value === 0 ? 20 : layoutRange.XEnd - layoutRange.X;
           if (simulateQuantizationWrap) {
             paragraph.Paragraph.Lines =
-              value > 370
+              value > wrapThreshold
                 ? [
                     { Ranges: [layoutRange] },
                     { Ranges: [{ X: 0, XEnd: 100, W: 10 }] },
@@ -229,7 +233,22 @@ function makeParagraph(
       };
     },
     SetJc(value) {
+      localAlignment = value;
       paragraphAlignment = value;
+    },
+    GetAlignmentForTest() {
+      return localAlignment;
+    },
+    GetParentTableCell() {
+      if (tableCellWidth === "compressed") {
+        return { Wb: { aa: {} } };
+      }
+      if (!Number.isFinite(tableCellWidth)) return null;
+      return {
+        Wb: {
+          aa: { X: 0, XLimit: tableCellWidth },
+        },
+      };
     },
     SetSpacing(value) {
       if (value === 0) layoutRange.W = 20;
@@ -594,6 +613,91 @@ assert.ok(pluginWindow.__OpenDeskTwDistributedLayout.wrapCorrections >= 1);
 assert.ok(
   !messages.some((message) => message.includes("發生錯誤")),
   "防止末字換行的重排不得產生警告",
+);
+const narrowTableParagraph = makeParagraph(
+  "上訴人即被告",
+  0x12345679,
+  true,
+  40,
+  370,
+);
+activeSelectionParagraph = narrowTableParagraph;
+messages.length = 0;
+toolbarHandlers.get("opendesk-distributed")();
+assert.equal(
+  narrowTableParagraph.Paragraph.Lines.length,
+  1,
+  "窄表格欄位必須按儲存格內寬回縮，不得把末字擠到下一行",
+);
+assert.equal(
+  narrowTableParagraph.GetAlignmentForTest(),
+  0,
+  "表格內不得同時套用核心 distribute 與動態字距",
+);
+assert.equal(pluginWindow.__OpenDeskTwDistributedLayout.tableParagraphs, 1);
+assert.equal(
+  pluginWindow.__OpenDeskTwDistributedLayout.tableConstrainedRanges,
+  1,
+);
+assert.equal(
+  pluginWindow.__OpenDeskTwDistributedLayout.widths[0].available,
+  40,
+);
+assert.ok(
+  pluginWindow.__OpenDeskTwDistributedLayout.widths[0].spacing <= 370,
+  "窄欄最後字距必須是已驗證不換行的最大安全值",
+);
+const narrowTableSpacing =
+  pluginWindow.__OpenDeskTwDistributedLayout.widths[0].spacing;
+const mergedTableParagraph = makeParagraph(
+  "中華民國",
+  0x1234567a,
+  true,
+  70,
+  940,
+);
+activeSelectionParagraph = mergedTableParagraph;
+toolbarHandlers.get("opendesk-distributed")();
+assert.equal(
+  mergedTableParagraph.Paragraph.Lines.length,
+  1,
+  "合併儲存格必須使用合併後的內容寬度",
+);
+assert.equal(
+  pluginWindow.__OpenDeskTwDistributedLayout.widths[0].available,
+  70,
+);
+assert.ok(
+  pluginWindow.__OpenDeskTwDistributedLayout.widths[0].spacing >
+    narrowTableSpacing,
+  "合併儲存格應按較寬內容區域得到較大的動態字距",
+);
+const compressedTableParagraph = makeParagraph(
+  "辯護人（法扶律師）",
+  0x1234567b,
+  true,
+  "compressed",
+  410,
+);
+activeSelectionParagraph = compressedTableParagraph;
+toolbarHandlers.get("opendesk-distributed")();
+assert.equal(
+  compressedTableParagraph.Paragraph.Lines.length,
+  1,
+  "壓縮版 SDK 讀不到 XLimit 時，仍須從實際換行結果反推欄寬",
+);
+assert.equal(pluginWindow.__OpenDeskTwDistributedLayout.tableParagraphs, 1);
+assert.equal(
+  pluginWindow.__OpenDeskTwDistributedLayout.tableConstrainedRanges,
+  0,
+);
+assert.equal(
+  pluginWindow.__OpenDeskTwDistributedLayout.adaptiveSearches,
+  1,
+);
+assert.ok(
+  pluginWindow.__OpenDeskTwDistributedLayout.widths[0].spacing <= 410,
+  "壓縮版表格的動態字距不得越過實際可容納上限",
 );
 activeSelectionParagraph = selectionParagraph;
 

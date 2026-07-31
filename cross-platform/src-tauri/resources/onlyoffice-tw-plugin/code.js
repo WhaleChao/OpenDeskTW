@@ -818,6 +818,71 @@
               );
             });
           }
+          function horizontalFrame(candidate) {
+            if (!candidate) return null;
+            const start = Number(candidate.X);
+            const end = Number(candidate.XLimit);
+            if (
+              !Number.isFinite(start) ||
+              !Number.isFinite(end) ||
+              end <= start
+            ) {
+              return null;
+            }
+            return { start, end, width: end - start };
+          }
+          function tableLayoutFor(paragraph, internal) {
+            let cell = null;
+            try {
+              cell = paragraph.GetParentTableCell?.() || null;
+            } catch (_error) {
+              cell = null;
+            }
+            if (!cell) {
+              return { cell: null, frame: null };
+            }
+
+            // 未壓縮 SDK 可直接從段落或儲存格內容取得 X/XLimit；
+            // 正式桌面版可能會壓縮內部欄位名稱，因此這只是快速、精確
+            // 的第一順位。讀不到時，後面的不換行二分搜尋仍會由排版結果
+            // 反推出儲存格能容納的最大字距。
+            const nativeCell = cell.Wb;
+            let apiContent = null;
+            try {
+              apiContent = cell.GetContent?.() || null;
+            } catch (_error) {
+              apiContent = null;
+            }
+            const nativeContent =
+              nativeCell?.Content ||
+              nativeCell?.aa ||
+              apiContent?.Document ||
+              apiContent?.gd ||
+              null;
+            const frames = [
+              horizontalFrame(internal),
+              horizontalFrame(nativeContent),
+              horizontalFrame(nativeContent?.Pages?.[0]),
+            ].filter(Boolean);
+            if (typeof nativeCell?.GetPageContentFrame === "function") {
+              try {
+                const frame = horizontalFrame(
+                  nativeCell.GetPageContentFrame(0),
+                );
+                if (frame) frames.push(frame);
+              } catch (_error) {
+                // 跨頁表格可能尚未建立第 0 頁框架；交由其他候選或
+                // 排版回縮處理。
+              }
+            }
+            const frame = frames.reduce(function (smallest, candidate) {
+              if (!smallest || candidate.width < smallest.width) {
+                return candidate;
+              }
+              return smallest;
+            }, null);
+            return { cell, frame };
+          }
           function ensureNumericParagraphId(paragraph) {
             let id = paragraph.GetParaId?.();
             if (!id && typeof paragraph.SetParaId === "function") {
@@ -917,10 +982,14 @@
           const jobs = [];
           const spacingByParagraph = new Map();
           const naturalLineCountByParagraph = new Map();
+          const tableParagraphs = new Set();
           let lineCount = 0;
           let skipped = 0;
+          let tableConstrainedRanges = 0;
           paragraphs.forEach(function (paragraph) {
             const internal = nativeParagraphFor(paragraph);
+            const tableLayout = tableLayoutFor(paragraph, internal);
+            if (tableLayout.cell) tableParagraphs.add(paragraph);
             // ONLYOFFICE 的非壓縮 SDK 使用 Lines/Ranges/X/XEnd/W；
             // 9.4 桌面正式版會把同一欄位壓縮為 Xb/Of/ha/tB/Da，
             // 兩種名稱都依實際物件讀取，避免把版本名稱誤當固定版面。
@@ -946,9 +1015,29 @@
                 );
                 const start = apiOffsetForPosition(internal, startPosition);
                 const end = apiOffsetForPosition(internal, endPosition);
-                const availableWidth =
-                  Number(layoutRange.XEnd ?? layoutRange.tB) -
-                  Number(layoutRange.X ?? layoutRange.ha);
+                const rangeStart = Number(
+                  layoutRange.X ?? layoutRange.ha,
+                );
+                const rangeEnd = Number(
+                  layoutRange.XEnd ?? layoutRange.tB,
+                );
+                let availableWidth =
+                  rangeEnd - rangeStart;
+                if (
+                  tableLayout.frame &&
+                  Number.isFinite(rangeStart) &&
+                  tableLayout.frame.end > rangeStart
+                ) {
+                  const cellAvailableWidth =
+                    tableLayout.frame.end - rangeStart;
+                  if (
+                    cellAvailableWidth > 0 &&
+                    cellAvailableWidth < availableWidth
+                  ) {
+                    availableWidth = cellAvailableWidth;
+                    tableConstrainedRanges += 1;
+                  }
+                }
                 const occupiedWidth = Number(
                   layoutRange.W ?? layoutRange.Da,
                 );
@@ -1003,9 +1092,11 @@
                   start,
                   end: end - 1,
                   spacing: spacingTwips,
+                  initialSpacing: spacingTwips,
                   availableWidth,
                   occupiedWidth,
                   glyphCount,
+                  inTable: Boolean(tableLayout.cell),
                 });
               });
             });
@@ -1021,52 +1112,109 @@
             spacingByParagraph.get(key).add(job.spacing);
           });
 
-          const nativeParagraphs = paragraphs
-            .map(nativeParagraphFor)
-            .filter(Boolean);
-          nativeParagraphs.forEach(function (nativeParagraph) {
-            nativeParagraph.Vt?.(nativeDistributed);
+          const nativeLeft =
+            typeof AscCommon !== "undefined" &&
+            Number.isFinite(AscCommon.align_Left)
+              ? AscCommon.align_Left
+              : 0;
+          paragraphs.forEach(function (paragraph) {
+            const nativeParagraph = nativeParagraphFor(paragraph);
+            // 表格內若同時使用核心 distribute(4) 與畫面備援字距，
+            // ONLYOFFICE 9.4 會把同一寬度分配兩次，造成末字突出或整段
+            // 垂直換行。表格畫面保持 left 並只套動態字距；儲存 DOCX
+            // 時橋接仍寫入標準 w:jc="distribute"，Word 會自行依儲存格
+            // 的實際內寬分布。
+            nativeParagraph?.Vt?.(
+              tableParagraphs.has(paragraph)
+                ? nativeLeft
+                : nativeDistributed,
+            );
           });
           document.ForceRecalculate?.();
           logicDocument?.Kc?.();
           logicDocument?.Ue?.();
           logicDocument?.td?.();
 
-          // 字型 fallback 的實際 advance width 可能在第二次排版才確定。
-          // 如果套用後行數比自然排版增加，代表最後一字被擠到下一行；
-          // 每輪只縮回極少量字距並重算，最多四輪，不改用固定值。
+          // 字型 fallback 或壓縮版 SDK 無法提供儲存格 XLimit 時，實際
+          // advance width 只能在第二次排版後確定。若新增了換行，就在
+          // 0..原計算字距間做二分搜尋，找出仍維持自然行數的最大字距。
+          // 這相當於由排版器直接量出目前欄寬，也涵蓋窄欄、合併儲存格、
+          // 儲存格內距與段落縮排，不依賴固定值。
           let wrapCorrections = 0;
-          for (let attempt = 0; attempt < 4; attempt += 1) {
-            const wrappedParagraphs = new Set(
-              paragraphs.filter(function (paragraph) {
-                const internal = nativeParagraphFor(paragraph);
-                const currentLines = internal?.Lines || internal?.Xb || [];
-                return (
-                  currentLines.length >
-                  Number(naturalLineCountByParagraph.get(paragraph) || 0)
-                );
-              }),
+          function hasAddedWrap(paragraph) {
+            const internal = nativeParagraphFor(paragraph);
+            const currentLines = internal?.Lines || internal?.Xb || [];
+            return (
+              currentLines.length >
+              Number(naturalLineCountByParagraph.get(paragraph) || 0)
             );
-            if (!wrappedParagraphs.size) break;
+          }
+          const adaptiveStates = new Map();
+          paragraphs.forEach(function (paragraph) {
+            if (hasAddedWrap(paragraph)) {
+              adaptiveStates.set(paragraph, {
+                low: 0,
+                high: 1,
+                scale: 1,
+              });
+            }
+          });
+          for (let attempt = 0; attempt < 11 && adaptiveStates.size; attempt += 1) {
+            adaptiveStates.forEach(function (state, paragraph) {
+              if (hasAddedWrap(paragraph)) {
+                state.high = state.scale;
+              } else {
+                state.low = state.scale;
+              }
+              state.scale = (state.low + state.high) / 2;
+              jobs
+                .filter(function (job) {
+                  return job.paragraph === paragraph;
+                })
+                .forEach(function (job) {
+                  job.spacing = Math.max(
+                    0,
+                    Math.floor(job.initialSpacing * state.scale),
+                  );
+                  job.paragraph
+                    .GetRange(job.start, job.end)
+                    ?.SetSpacing(job.spacing);
+                });
+              wrapCorrections += 1;
+            });
+            document.ForceRecalculate?.();
+          }
+          adaptiveStates.forEach(function (state, paragraph) {
             jobs
               .filter(function (job) {
-                return wrappedParagraphs.has(job.paragraph);
+                return job.paragraph === paragraph;
               })
               .forEach(function (job) {
-                const reduction = Math.max(
-                  1,
-                  Math.ceil(job.spacing * 0.005),
+                // low 是已驗證不會新增換行的一側；再退 1 twip，避免
+                // 不同縮放倍率下的邊界量化把最後一字推到下一行。
+                job.spacing = Math.max(
+                  0,
+                  Math.floor(job.initialSpacing * state.low) - 1,
                 );
-                job.spacing = Math.max(0, job.spacing - reduction);
                 job.paragraph
                   .GetRange(job.start, job.end)
                   ?.SetSpacing(job.spacing);
-                const key = String(job.paragraph.GetParaId?.() || "");
-                spacingByParagraph.get(key)?.add(job.spacing);
               });
-            wrapCorrections += wrappedParagraphs.size;
-            document.ForceRecalculate?.();
-          }
+          });
+          if (adaptiveStates.size) document.ForceRecalculate?.();
+
+          // 僅記錄最後實際存在於文件中的字距，供儲存橋接移除畫面
+          // 備援格式；二分搜尋的中間值不會寫入 DOCX。
+          spacingByParagraph.clear();
+          jobs.forEach(function (job) {
+            const key = String(job.paragraph.GetParaId?.() || "");
+            if (!spacingByParagraph.has(key)) {
+              spacingByParagraph.set(key, new Set());
+            }
+            if (job.spacing > 0) {
+              spacingByParagraph.get(key).add(job.spacing);
+            }
+          });
 
           // 留下段落 ID 與本次 ONLYOFFICE 畫面備援字距。桌面橋接會在
           // DOCX 中移除這些暫時字距，只保留 Word 標準 distribute，
@@ -1128,9 +1276,12 @@
             markerCount: markers.length,
             dynamic: true,
             method: "word-paragraph-width",
-            implementation: "word-layout-ranges-v2",
+            implementation: "word-layout-ranges-v3",
             clearedRuns,
             wrapCorrections,
+            adaptiveSearches: adaptiveStates.size,
+            tableParagraphs: tableParagraphs.size,
+            tableConstrainedRanges,
             value: nativeDistributed,
             spacings: Array.from(
               new Set(

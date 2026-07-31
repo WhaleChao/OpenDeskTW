@@ -8,6 +8,7 @@ const screenshotDirectory =
 const timeoutMs = Number(process.env.OPENDESK_LIVE_TIMEOUT_MS || 60000);
 const pluginGuid = "asc.{5CBF7C74-7021-4E8C-93F3-5A6C20260722}";
 const fixtureText = "中華民國114年7月25日";
+const tableFixtureText = "上訴人即被告";
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 async function waitForTarget() {
@@ -117,7 +118,7 @@ try {
     }
     if (!pluginContextId || !editorContextId) await delay(250);
   }
-  assert.ok(pluginContextId, "找不到 2.0.0 繁中工具執行環境");
+  assert.ok(pluginContextId, "找不到 2.0.1 繁中工具執行環境");
   assert.ok(editorContextId, "找不到 Word 相容快捷鍵監聽器");
 
   const blankBefore = await evaluate(
@@ -258,11 +259,113 @@ try {
   const screenshotPath = `${screenshotDirectory}/mixed-date-single-line.png`;
   await writeFile(screenshotPath, Buffer.from(capture.data, "base64"));
 
+  const tableCreated = await evaluate(
+    `new Promise((resolve) => {
+      Asc.plugin.callCommand(function () {
+        const document = Api.GetDocument();
+        const table = document.CreateTable?.(1, 2);
+        if (!table) return { ok: false, reason: "CreateTable unavailable" };
+        table.SetWidth?.("twips", 6000);
+        const labelCell = table.GetCell?.(0, 0);
+        const valueCell = table.GetCell?.(0, 1);
+        labelCell?.SetWidth?.("twips", 2200);
+        valueCell?.SetWidth?.("twips", 3800);
+        const paragraph = labelCell?.GetContent?.().GetElement?.(0);
+        paragraph?.AddText?.(${JSON.stringify(tableFixtureText)});
+        document.Push?.(table);
+        const text = paragraph?.GetText?.() || "";
+        paragraph?.GetRange?.(0, Array.from(text).length)?.Select?.();
+        document.ForceRecalculate?.();
+        return {
+          ok: Boolean(paragraph),
+          text,
+          inTable: Boolean(paragraph?.GetParentTableCell?.())
+        };
+      }, false, true, resolve);
+    })`,
+    pluginContextId,
+  );
+  assert.deepEqual(
+    tableCreated,
+    { ok: true, text: tableFixtureText, inTable: true },
+    `無法建立窄欄 LIVE 表格：${JSON.stringify(tableCreated)}`,
+  );
+
+  await evaluate(
+    `window.__OpenDeskTwWordShortcuts.applyDistributedAlignment()`,
+    editorContextId,
+  );
+  await delay(1000);
+  const tableDiagnostic = await evaluate(
+    `window.__OpenDeskTwDistributedLayout || null`,
+    pluginContextId,
+  );
+  const tableLayout = await evaluate(
+    `new Promise((resolve) => {
+      Asc.plugin.callCommand(function () {
+        const document = Api.GetDocument();
+        const paragraph = document.GetAllParagraphs().find(function (item) {
+          return item.GetText().trim() === ${JSON.stringify(tableFixtureText)};
+        });
+        document.ForceRecalculate?.();
+        const nativeParagraph = AscCommon?.Ne?.Ug?.(paragraph.GetInternalId?.());
+        const lines = nativeParagraph?.Lines || nativeParagraph?.Xb || [];
+        const firstRange = (lines[0]?.Ranges || lines[0]?.Of || [])[0];
+        return {
+          text: paragraph?.GetText?.() || "",
+          lines: lines.length,
+          nativeAlignment: nativeParagraph?.fa?.ye,
+          inTable: Boolean(paragraph?.GetParentTableCell?.()),
+          occupied: firstRange
+            ? Number(firstRange.W ?? firstRange.Da)
+            : null
+        };
+      }, false, false, resolve);
+    })`,
+    pluginContextId,
+  );
+  assert.ok(
+    !tableDiagnostic?.error,
+    `窄欄表格分散對齊失敗：${JSON.stringify(tableDiagnostic)}`,
+  );
+  assert.equal(tableDiagnostic?.implementation, "word-layout-ranges-v3");
+  assert.equal(tableDiagnostic?.tableParagraphs, 1);
+  assert.equal(tableLayout.text.trim(), tableFixtureText);
+  assert.equal(tableLayout.inTable, true);
+  assert.equal(
+    tableLayout.lines,
+    1,
+    `表格文字仍被推出下一行：${JSON.stringify({
+      tableLayout,
+      tableDiagnostic,
+    })}`,
+  );
+  assert.equal(
+    tableLayout.nativeAlignment,
+    0,
+    "表格內仍重複套用 ONLYOFFICE 核心 distribute",
+  );
+  assert.ok(
+    tableDiagnostic.spacings?.some((spacing) => spacing > 0),
+    `表格未產生依欄寬計算的動態字距：${JSON.stringify(tableDiagnostic)}`,
+  );
+
+  const tableCapture = await cdp.call("Page.captureScreenshot", {
+    format: "png",
+    captureBeyondViewport: false,
+  });
+  const tableScreenshotPath =
+    `${screenshotDirectory}/table-cell-distributed-single-line.png`;
+  await writeFile(
+    tableScreenshotPath,
+    Buffer.from(tableCapture.data, "base64"),
+  );
+
   console.log(
     JSON.stringify(
       {
         ok: true,
-        version: "2.8.0 / plugin 2.0.0",
+        version: "2.8.1 / plugin 2.0.1",
         blank: {
           before: blankBefore,
           after: blankAfter,
@@ -272,7 +375,14 @@ try {
           layout: mixedLayout,
           diagnostic: mixedDiagnostic,
         },
-        screenshot: screenshotPath,
+        tableCell: {
+          layout: tableLayout,
+          diagnostic: tableDiagnostic,
+        },
+        screenshots: {
+          mixedDate: screenshotPath,
+          tableCell: tableScreenshotPath,
+        },
       },
       null,
       2,
