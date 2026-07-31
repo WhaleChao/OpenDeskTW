@@ -67,6 +67,45 @@ function connect(url) {
   });
 }
 
+async function ensureBlankWordTarget() {
+  const deadline = Date.now() + Math.min(timeoutMs, 30000);
+  while (Date.now() < deadline) {
+    const response = await fetch(`http://127.0.0.1:${port}/json/list`);
+    const targets = await response.json();
+    if (
+      targets.some(
+        (item) => item.type === "page" && /doctype=word/.test(item.url || ""),
+      )
+    ) {
+      return;
+    }
+    const startCenter = targets.find(
+      (item) =>
+        item.type === "page" &&
+        /\/login\/index\.html/.test(item.url || "") &&
+        item.webSocketDebuggerUrl,
+    );
+    if (startCenter) {
+      const startCenterCdp = await connect(startCenter.webSocketDebuggerUrl);
+      try {
+        await startCenterCdp.call("Runtime.enable");
+        const readiness = await startCenterCdp.call("Runtime.evaluate", {
+          expression:
+            'typeof window.sdk?.command === "function" ? (window.sdk.command("create:new", "word"), "opened") : "waiting"',
+          returnByValue: true,
+          userGesture: true,
+        });
+        if (readiness.result?.value === "opened") return;
+      } finally {
+        startCenterCdp.close();
+      }
+    }
+    await delay(250);
+  }
+  throw new Error("ONLYOFFICE 起始中心無法建立空白 Word 測試文件");
+}
+
+await ensureBlankWordTarget();
 const target = await waitForTarget();
 const cdp = await connect(target.webSocketDebuggerUrl);
 const contexts = new Map();
@@ -118,7 +157,7 @@ try {
     }
     if (!pluginContextId || !editorContextId) await delay(250);
   }
-  assert.ok(pluginContextId, "找不到 2.0.1 繁中工具執行環境");
+  assert.ok(pluginContextId, "找不到 2.0.2 繁中工具執行環境");
   assert.ok(editorContextId, "找不到 Word 相容快捷鍵監聽器");
 
   const blankBefore = await evaluate(
@@ -358,6 +397,112 @@ try {
     `表格未產生依欄寬計算的動態字距：${JSON.stringify(tableDiagnostic)}`,
   );
 
+  const stableToken = `stable-${Date.now()}`;
+  await evaluate(
+    `(() => {
+      window.__OpenDeskTwDistributedLayout.liveStableToken =
+        ${JSON.stringify(stableToken)};
+      return true;
+    })()`,
+    pluginContextId,
+  );
+  const refreshHook = await evaluate(
+    `({
+      mode: window.__OpenDeskTwDistributedLayoutHook?.mode || "",
+      keyupMode:
+        window.__OpenDeskTwDistributedLayoutHook?.keyupMode || "",
+      legacyFullRefreshInstalled: Boolean(
+        window.__OpenDeskTwDistributedLayoutHook?.keyup
+      )
+    })`,
+    editorContextId,
+  );
+  assert.equal(refreshHook.mode, "resize-and-layout-drag-only");
+  assert.equal(refreshHook.keyupMode, "in-place-current-paragraph");
+  assert.equal(refreshHook.legacyFullRefreshInstalled, false);
+
+  const typedLayoutBeforeKeyup = await evaluate(
+    `new Promise((resolve) => {
+      Asc.plugin.callCommand(function () {
+        const document = Api.GetDocument();
+        const paragraph = document.GetAllParagraphs().find(function (item) {
+          return item.GetText().trim().startsWith(
+            ${JSON.stringify(tableFixtureText)}
+          );
+        });
+        paragraph?.AddText?.("甲");
+        document.ForceRecalculate?.();
+        const nativeParagraph = AscCommon?.Ne?.Ug?.(paragraph.GetInternalId?.());
+        return {
+          text: paragraph?.GetText?.().trim() || "",
+          lines: (nativeParagraph?.Lines || nativeParagraph?.Xb || []).length
+        };
+      }, false, true, resolve);
+    })`,
+    pluginContextId,
+  );
+  await evaluate(
+    `(() => {
+      document.dispatchEvent(new KeyboardEvent("keyup", {
+        key: "甲",
+        code: "KeyA",
+        bubbles: true
+      }));
+      document.dispatchEvent(new PointerEvent("pointerup", {
+        clientX: 10,
+        clientY: 10,
+        bubbles: true
+      }));
+      return true;
+    })()`,
+    editorContextId,
+  );
+  await delay(750);
+  const typedLayoutAfterKeyup = await evaluate(
+    `new Promise((resolve) => {
+      Asc.plugin.callCommand(function () {
+        const document = Api.GetDocument();
+        const paragraph = document.GetAllParagraphs().find(function (item) {
+          return item.GetText().trim().startsWith(
+            ${JSON.stringify(tableFixtureText)}
+          );
+        });
+        const nativeParagraph = AscCommon?.Ne?.Ug?.(paragraph.GetInternalId?.());
+        return {
+          text: paragraph?.GetText?.().trim() || "",
+          lines: (nativeParagraph?.Lines || nativeParagraph?.Xb || []).length
+        };
+      }, false, true, resolve);
+    })`,
+    pluginContextId,
+  );
+  const typingStability = await evaluate(
+    `({
+      token:
+        window.__OpenDeskTwDistributedLayout?.liveStableToken || "",
+      implementation:
+        window.__OpenDeskTwDistributedLayout?.implementation || "",
+      typing:
+        window.__OpenDeskTwDistributedTyping || null
+    })`,
+    pluginContextId,
+  );
+  assert.equal(
+    typingStability.token,
+    stableToken,
+    "普通打字或點擊後仍重新建立排版結果，會造成畫面抖動",
+  );
+  assert.equal(
+    typedLayoutAfterKeyup.lines,
+    1,
+    "分散段落輸入新字後必須原地重算字距並維持單行",
+  );
+  assert.equal(typingStability.typing?.applied, true);
+  assert.equal(
+    typingStability.typing?.method,
+    "in-place-current-paragraph",
+  );
+
   const tableCapture = await cdp.call("Page.captureScreenshot", {
     format: "png",
     captureBeyondViewport: false,
@@ -373,7 +518,7 @@ try {
     JSON.stringify(
       {
         ok: true,
-        version: "2.8.1 / plugin 2.0.1",
+        version: "2.8.2 / plugin 2.0.2",
         blank: {
           before: blankBefore,
           after: blankAfter,
@@ -386,6 +531,10 @@ try {
         tableCell: {
           layout: tableLayout,
           diagnostic: tableDiagnostic,
+          refreshHook,
+          typedLayoutBeforeKeyup,
+          typedLayoutAfterKeyup,
+          typingStability,
         },
         screenshots: {
           mixedDate: screenshotPath,

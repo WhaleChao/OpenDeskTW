@@ -7077,6 +7077,7 @@ mod tests {
         assert!(code.contains("availableWidth - occupiedWidth"));
         assert!(code.contains("SetSpacing(job.spacing)"));
         assert!(code.contains("marker.dynamicSpacings"));
+        assert!(code.contains("marker.renderedRanges"));
         assert!(code.contains("installDistributedLayoutRefresh"));
         assert!(code.contains("AscCommon?.Ne?.Ug?.(internalId)"));
         assert!(code.contains("Object.values(paragraph).find"));
@@ -7084,6 +7085,12 @@ mod tests {
         assert!(code.contains("nativeLeft"));
         assert!(code.contains("adaptiveStates"));
         assert!(code.contains("word-layout-ranges-v3"));
+        assert!(code.contains("resize-and-layout-drag-only"));
+        assert!(code.contains("in-place-current-paragraph"));
+        assert!(code.contains("distributedLayoutBusy"));
+        assert!(!code.contains(
+            "hostWindow.document?.addEventListener?.(\"keyup\", refresh"
+        ));
         assert!(code.contains("installDistributedPersistenceHook"));
         assert!(code.contains("DesktopOfflineAppDocumentEndSave"));
         assert!(code.contains("AscDesktopEditor.OnSave"));

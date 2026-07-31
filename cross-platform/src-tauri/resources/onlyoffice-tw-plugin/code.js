@@ -11,6 +11,9 @@
   let lastWordAction = null;
   let distributedPersistenceTimer = null;
   let distributedLayoutTimer = null;
+  let distributedTypingTimer = null;
+  let distributedLayoutBusy = false;
+  let distributedLayoutRefreshQueued = false;
   const draftStorageKey = "opendesk-tw-rich-drafts-v2";
   const draftSnapshotIntervalMs = 15000;
   const maxDraftSnapshots = 12;
@@ -1249,9 +1252,23 @@
                     .map(Number)
                     .concat(
                       Array.from(spacingByParagraph.get(key) || []),
-                    ),
+                  ),
                 ),
               ).slice(-64);
+              marker.renderedRanges = jobs
+                .filter(function (job) {
+                  return job.paragraph === paragraph;
+                })
+                .map(function (job) {
+                  return {
+                    start: job.start,
+                    end: job.end,
+                    available: job.availableWidth,
+                    occupiedNatural: job.occupiedWidth,
+                    glyphs: job.glyphCount,
+                    spacing: job.spacing,
+                  };
+                });
               markerById.set(key, marker);
             });
             const nextMarkers = Array.from(markerById.values()).slice(-500);
@@ -1314,9 +1331,17 @@
   }
 
   function applyDistributedAlignment() {
+    if (distributedLayoutTimer) {
+      window.clearTimeout(distributedLayoutTimer);
+      distributedLayoutTimer = null;
+    }
+    distributedLayoutRefreshQueued = false;
+    if (distributedLayoutBusy) return;
+    distributedLayoutBusy = true;
     runDistributedLayout(
       "selection",
       function (result) {
+        distributedLayoutBusy = false;
         window.__OpenDeskTwDistributedLayout = result;
         if (result?.error) {
           showMessage(`分散對齊發生錯誤：${result.error}`);
@@ -1326,12 +1351,22 @@
           );
         }
         focusEditor();
+        if (distributedLayoutRefreshQueued) {
+          distributedLayoutRefreshQueued = false;
+          scheduleDistributedLayoutRefresh(500);
+        }
       },
     );
   }
 
   function restoreDistributedAlignment(focusAfter, attempt) {
+    if (distributedLayoutBusy) {
+      distributedLayoutRefreshQueued = true;
+      return;
+    }
+    distributedLayoutBusy = true;
     runDistributedLayout("markers", function (result) {
+      distributedLayoutBusy = false;
       window.__OpenDeskTwDistributedLayout = result;
       if (
         result?.markerCount &&
@@ -1342,6 +1377,9 @@
         window.setTimeout(function () {
           restoreDistributedAlignment(false, nextAttempt);
         }, 250 * 2 ** Number(attempt || 0));
+      } else if (distributedLayoutRefreshQueued) {
+        distributedLayoutRefreshQueued = false;
+        scheduleDistributedLayoutRefresh(500);
       }
       if (focusAfter !== false) focusEditor();
     });
@@ -1351,8 +1389,238 @@
     if (distributedLayoutTimer) window.clearTimeout(distributedLayoutTimer);
     distributedLayoutTimer = window.setTimeout(function () {
       distributedLayoutTimer = null;
+      if (distributedLayoutBusy) {
+        distributedLayoutRefreshQueued = true;
+        return;
+      }
       restoreDistributedAlignment(false, 0);
     }, Number(delay || 250));
+  }
+
+  function refreshDistributedParagraphAfterTyping() {
+    if (distributedLayoutBusy) return;
+    distributedLayoutBusy = true;
+    plugin.callCommand(
+      function () {
+        try {
+          const document = Api.GetDocument();
+          const paragraph = document.GetCurrentParagraph?.();
+          const customProperties = document.GetCustomProperties?.();
+          if (!paragraph || !customProperties) {
+            return { applied: false, reason: "no-current-paragraph" };
+          }
+          let markers = [];
+          try {
+            const stored = customProperties.Get(
+              "OpenDeskTW.DistributedParagraphs",
+            );
+            markers = stored ? JSON.parse(stored) : [];
+            if (!Array.isArray(markers)) markers = [];
+          } catch (_error) {
+            markers = [];
+          }
+          const paragraphId = String(paragraph.GetParaId?.() || "");
+          const marker = markers.find(function (candidate) {
+            return String(candidate?.id ?? "") === paragraphId;
+          });
+          if (!marker) return { applied: false, reason: "not-distributed" };
+
+          const currentText = paragraph.GetText?.() || "";
+          const normalizedText = currentText.trim();
+          if (normalizedText === String(marker.text || "")) {
+            return { applied: false, reason: "text-unchanged" };
+          }
+          const renderedRanges = Array.isArray(marker.renderedRanges)
+            ? marker.renderedRanges
+            : [];
+          // 跨多行段落的每行寬度可能不同，仍交由版面尺寸變動時的完整
+          // 重排處理。打字中的即時修正專注於 Word 最常見的單行與表格欄位。
+          if (renderedRanges.length !== 1) {
+            return { applied: false, reason: "multiple-layout-ranges" };
+          }
+          const previousRange = renderedRanges[0];
+          const previousSpacing = Number(previousRange.spacing || 0);
+          const previousGlyphs = Number(previousRange.glyphs || 0);
+          const availableWidth = Number(previousRange.available);
+          if (
+            !Number.isFinite(previousSpacing) ||
+            previousSpacing < 0 ||
+            !Number.isFinite(previousGlyphs) ||
+            previousGlyphs < 2 ||
+            !Number.isFinite(availableWidth) ||
+            availableWidth <= 0
+          ) {
+            return { applied: false, reason: "invalid-layout-marker" };
+          }
+
+          const characters = Array.from(currentText);
+          const visiblePositions = [];
+          characters.forEach(function (character, index) {
+            if (
+              character !== "\r" &&
+              character !== "\n" &&
+              character !== "\t"
+            ) {
+              visiblePositions.push(index);
+            }
+          });
+          const glyphCount = visiblePositions.length;
+          if (glyphCount < 2) {
+            return { applied: false, reason: "not-enough-glyphs" };
+          }
+
+          const internalId = paragraph.GetInternalId?.();
+          const internal =
+            (internalId ? AscCommon?.Ne?.Ug?.(internalId) : null) ||
+            paragraph.Paragraph ||
+            Object.values(paragraph).find(function (candidate) {
+              return (
+                candidate &&
+                (Array.isArray(candidate.Lines) ||
+                  Array.isArray(candidate.Xb))
+              );
+            });
+          const lines = internal?.Lines || internal?.Xb || [];
+          let occupiedWidth = 0;
+          lines.forEach(function (line) {
+            (line.Ranges || line.Of || []).forEach(function (layoutRange) {
+              const width = Number(layoutRange.W ?? layoutRange.Da);
+              if (Number.isFinite(width) && width > 0) {
+                occupiedWidth += width;
+              }
+            });
+          });
+          if (!Number.isFinite(occupiedWidth) || occupiedWidth <= 0) {
+            return { applied: false, reason: "layout-not-ready" };
+          }
+
+          // 目前排版寬度仍包含上一版直接字距。先從量測結果扣掉舊的
+          // gap 總寬，就能得到新增／刪除文字後的自然字寬；接著一次把
+          // 新字距覆寫到目前段落。過程不清零、不做中間重排，因此不會
+          // 出現整行先縮回再展開的抖動。
+          const previousSpacingMm = (previousSpacing * 25.4) / 1440;
+          const previousGapWidth =
+            previousSpacingMm * Math.max(0, previousGlyphs - 1);
+          const occupiedNatural = Math.max(
+            0,
+            occupiedWidth - previousGapWidth,
+          );
+          const distributableWidth = availableWidth - occupiedNatural;
+          if (distributableWidth <= 0) {
+            return { applied: false, reason: "text-exceeds-width" };
+          }
+          const layoutSafetyMm = Math.min(
+            0.8,
+            Math.max(0.25, availableWidth * 0.004),
+            distributableWidth * 0.25,
+          );
+          const spacingMm =
+            (distributableWidth - layoutSafetyMm) / (glyphCount - 1);
+          const spacingTwips = Math.max(
+            0,
+            Math.floor((spacingMm * 1440) / 25.4),
+          );
+          if (!spacingTwips) {
+            return { applied: false, reason: "no-distributable-spacing" };
+          }
+
+          const lastVisiblePosition =
+            visiblePositions[visiblePositions.length - 1];
+          paragraph
+            .GetRange(0, lastVisiblePosition)
+            ?.SetSpacing(spacingTwips);
+          document.ForceRecalculate?.();
+
+          marker.text = normalizedText;
+          marker.renderedRanges = [
+            {
+              start: 0,
+              end: lastVisiblePosition,
+              available: availableWidth,
+              occupiedNatural,
+              glyphs: glyphCount,
+              spacing: spacingTwips,
+            },
+          ];
+          marker.dynamicSpacings = Array.from(
+            new Set(
+              (Array.isArray(marker.dynamicSpacings)
+                ? marker.dynamicSpacings
+                : []
+              )
+                .filter(function (value) {
+                  return Number.isFinite(Number(value)) && Number(value) > 0;
+                })
+                .map(Number)
+                .concat([spacingTwips]),
+            ),
+          ).slice(-64);
+          customProperties.Add(
+            "OpenDeskTW.DistributedParagraphs",
+            JSON.stringify(markers.slice(-500)),
+          );
+          const linesAfter =
+            internal?.Lines || internal?.Xb || [];
+          return {
+            applied: true,
+            method: "in-place-current-paragraph",
+            glyphs: glyphCount,
+            spacing: spacingTwips,
+            occupiedNatural,
+            available: availableWidth,
+            linesBefore: lines.length,
+            linesAfter: linesAfter.length,
+          };
+        } catch (error) {
+          return {
+            applied: false,
+            error: `${error?.name || "Error"}: ${error?.message || error}`,
+          };
+        }
+      },
+      false,
+      true,
+      function (result) {
+        distributedLayoutBusy = false;
+        window.__OpenDeskTwDistributedTyping = result;
+        if (distributedLayoutRefreshQueued) {
+          distributedLayoutRefreshQueued = false;
+          scheduleDistributedLayoutRefresh(500);
+        }
+      },
+    );
+  }
+
+  function scheduleDistributedTypingRefresh(event) {
+    if (event?.isComposing) return;
+    const key = String(event?.key || "");
+    if (
+      [
+        "Shift",
+        "Control",
+        "Meta",
+        "Alt",
+        "CapsLock",
+        "ArrowLeft",
+        "ArrowRight",
+        "ArrowUp",
+        "ArrowDown",
+        "PageUp",
+        "PageDown",
+        "Home",
+        "End",
+        "Escape",
+      ].includes(key)
+    ) {
+      return;
+    }
+    if (distributedTypingTimer) {
+      window.clearTimeout(distributedTypingTimer);
+    }
+    distributedTypingTimer = window.setTimeout(function () {
+      distributedTypingTimer = null;
+      refreshDistributedParagraphAfterTyping();
+    }, 0);
   }
 
   function installDistributedLayoutRefresh(hostWindow) {
@@ -1362,6 +1630,8 @@
       const previous = hostWindow[stateKey];
       if (previous) {
         hostWindow.removeEventListener?.("resize", previous.refresh);
+        // 清除 2.0.1 曾經在每次打字與普通點擊後觸發全文件重排的
+        // 舊監聽器。它會先把字距清零再套回，正是持續抖動的來源。
         hostWindow.document?.removeEventListener?.(
           "pointerup",
           previous.refresh,
@@ -1372,14 +1642,102 @@
           previous.refresh,
           true,
         );
+        hostWindow.document?.removeEventListener?.(
+          "keyup",
+          previous.typingKeyup,
+          true,
+        );
+        hostWindow.document?.removeEventListener?.(
+          "pointerdown",
+          previous.pointerDown,
+          true,
+        );
+        hostWindow.document?.removeEventListener?.(
+          "pointermove",
+          previous.pointerMove,
+          true,
+        );
+        hostWindow.document?.removeEventListener?.(
+          "pointerup",
+          previous.pointerUp,
+          true,
+        );
       }
       const refresh = function () {
-        scheduleDistributedLayoutRefresh(250);
+        scheduleDistributedLayoutRefresh(500);
+      };
+      let dragState = null;
+      function isLayoutResizeTarget(event) {
+        const target = event?.target;
+        if (!target) return false;
+        let cursor = "";
+        try {
+          cursor = String(hostWindow.getComputedStyle?.(target)?.cursor || "");
+        } catch (_error) {
+          cursor = "";
+        }
+        if (/resize|col-resize|row-resize/i.test(cursor)) return true;
+        const className = String(
+          typeof target.className === "string"
+            ? target.className
+            : target.className?.baseVal || "",
+        );
+        return /ruler|resize|resizer|splitter/i.test(className);
+      }
+      const pointerDown = function (event) {
+        dragState = {
+          x: Number(event?.clientX || 0),
+          y: Number(event?.clientY || 0),
+          layoutResize: isLayoutResizeTarget(event),
+          moved: false,
+        };
+      };
+      const pointerMove = function (event) {
+        if (!dragState) return;
+        const x = Number(event?.clientX || 0);
+        const y = Number(event?.clientY || 0);
+        if (
+          Math.abs(x - dragState.x) >= 5 ||
+          Math.abs(y - dragState.y) >= 5
+        ) {
+          dragState.moved = true;
+        }
+        if (isLayoutResizeTarget(event)) {
+          dragState.layoutResize = true;
+        }
+      };
+      const pointerUp = function () {
+        const shouldRefresh =
+          Boolean(dragState?.layoutResize) && Boolean(dragState?.moved);
+        dragState = null;
+        if (shouldRefresh) scheduleDistributedLayoutRefresh(500);
+      };
+      const typingKeyup = function (event) {
+        scheduleDistributedTypingRefresh(event);
       };
       hostWindow.addEventListener?.("resize", refresh);
-      hostWindow.document?.addEventListener?.("pointerup", refresh, true);
-      hostWindow.document?.addEventListener?.("keyup", refresh, true);
-      hostWindow[stateKey] = { guid: plugin.guid, refresh };
+      hostWindow.document?.addEventListener?.("keyup", typingKeyup, true);
+      hostWindow.document?.addEventListener?.(
+        "pointerdown",
+        pointerDown,
+        true,
+      );
+      hostWindow.document?.addEventListener?.(
+        "pointermove",
+        pointerMove,
+        true,
+      );
+      hostWindow.document?.addEventListener?.("pointerup", pointerUp, true);
+      hostWindow[stateKey] = {
+        guid: plugin.guid,
+        refresh,
+        pointerDown,
+        pointerMove,
+        pointerUp,
+        typingKeyup,
+        mode: "resize-and-layout-drag-only",
+        keyupMode: "in-place-current-paragraph",
+      };
       return true;
     } catch (_error) {
       return false;

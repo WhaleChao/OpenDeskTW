@@ -72,6 +72,8 @@ assert.match(pluginCode, /Math\.floor\(\(spacingMm \* 1440\) \/ 25\.4\)/);
 assert.match(pluginCode, /wrapCorrections/);
 assert.match(pluginCode, /SetSpacing\(job\.spacing\)/);
 assert.match(pluginCode, /marker\.dynamicSpacings/);
+assert.match(pluginCode, /marker\.renderedRanges/);
+assert.match(pluginCode, /in-place-current-paragraph/);
 assert.match(pluginCode, /installDistributedLayoutRefresh\(window\.parent\)/);
 assert.match(pluginCode, /AscCommon\?\.Ne\?\.Ug\?\.\(internalId\)/);
 assert.match(pluginCode, /Object\.values\(paragraph\)\.find/);
@@ -126,6 +128,7 @@ let replacedSelection = "";
 let pageNumberFields = 0;
 let updatedFields = 0;
 let wentToPage = null;
+let forceRecalculateCount = 0;
 let magiFetchMode = "success";
 const magiFetches = [];
 const magiPayloads = [];
@@ -360,7 +363,9 @@ const apiDocument = {
     tracked = value;
   },
   SelectCurrentWord() {},
-  ForceRecalculate() {},
+  ForceRecalculate() {
+    forceRecalculateCount += 1;
+  },
   UpdateAllFields() {
     updatedFields += 1;
   },
@@ -371,11 +376,32 @@ selectionParagraph.AddPageNumber = function () {
   pageNumberFields += 1;
   return {};
 };
+const hostDocumentListeners = new Map();
+const hostWindowListeners = new Map();
+function addTestListener(registry, type, handler) {
+  if (!registry.has(type)) registry.set(type, []);
+  registry.get(type).push(handler);
+}
+function removeTestListener(registry, type, handler) {
+  if (!registry.has(type)) return;
+  registry.set(
+    type,
+    registry.get(type).filter((candidate) => candidate !== handler),
+  );
+}
 const hostDocument = {
   addEventListener(type, handler, capture) {
     if (type === "keydown" && capture === true) keydownHandler = handler;
+    addTestListener(hostDocumentListeners, type, handler);
   },
-  removeEventListener() {},
+  removeEventListener(type, handler) {
+    removeTestListener(hostDocumentListeners, type, handler);
+  },
+  dispatchForTest(type, event) {
+    for (const handler of hostDocumentListeners.get(type) || []) {
+      handler(event);
+    }
+  },
 };
 const plugin = {
   guid: "asc.{TEST}",
@@ -478,6 +504,15 @@ const pluginWindow = {
     Asc: asc,
     AscCommon: { align_Distributed: 4 },
     document: hostDocument,
+    addEventListener(type, handler) {
+      addTestListener(hostWindowListeners, type, handler);
+    },
+    removeEventListener(type, handler) {
+      removeTestListener(hostWindowListeners, type, handler);
+    },
+    getComputedStyle(target) {
+      return { cursor: target?.cursor || "default" };
+    },
     prompt() {
       return "2";
     },
@@ -531,6 +566,50 @@ assert.equal(
   "文件摘要、校對檢查、結構分析、完整檢查",
 );
 assert.equal(typeof keydownHandler, "function");
+assert.equal(
+  (hostDocumentListeners.get("keyup") || []).length,
+  1,
+  "一般打字只保留目前段落的原地字距更新",
+);
+assert.equal(
+  (hostDocumentListeners.get("pointerup") || []).length,
+  1,
+  "pointerup 只保留拖曳欄寬的判斷器",
+);
+assert.equal(
+  (hostDocumentListeners.get("pointerdown") || []).length,
+  1,
+);
+assert.equal(
+  (hostDocumentListeners.get("pointermove") || []).length,
+  1,
+);
+assert.equal((hostWindowListeners.get("resize") || []).length, 1);
+assert.equal(
+  pluginWindow.parent.__OpenDeskTwDistributedLayoutHook.mode,
+  "resize-and-layout-drag-only",
+);
+assert.equal(
+  pluginWindow.parent.__OpenDeskTwDistributedLayoutHook.keyupMode,
+  "in-place-current-paragraph",
+);
+const recalculateBeforeOrdinaryClick = forceRecalculateCount;
+const ordinaryTarget = { className: "toolbar-button", cursor: "default" };
+hostDocument.dispatchForTest("pointerdown", {
+  clientX: 10,
+  clientY: 10,
+  target: ordinaryTarget,
+});
+hostDocument.dispatchForTest("pointerup", {
+  clientX: 10,
+  clientY: 10,
+  target: ordinaryTarget,
+});
+assert.equal(
+  forceRecalculateCount,
+  recalculateBeforeOrdinaryClick,
+  "普通點擊不得再次清除並套回字距",
+);
 let prevented = false;
 keydownHandler({
   key: "J",
@@ -649,6 +728,39 @@ assert.ok(
 );
 const narrowTableSpacing =
   pluginWindow.__OpenDeskTwDistributedLayout.widths[0].spacing;
+const stableLayoutResult = pluginWindow.__OpenDeskTwDistributedLayout;
+narrowTableParagraph.SetTextForTest("上訴人即被告甲");
+narrowTableParagraph.Paragraph.Lines = [
+  { Ranges: [{ X: 0, XEnd: 40, W: 39 }] },
+  { Ranges: [{ X: 0, XEnd: 40, W: 5 }] },
+];
+const recalculateBeforeTypingRefresh = forceRecalculateCount;
+hostDocument.dispatchForTest("keyup", {
+  key: "甲",
+  code: "KeyA",
+  isComposing: false,
+});
+await new Promise((resolve) => setTimeout(resolve, 20));
+assert.equal(
+  pluginWindow.__OpenDeskTwDistributedLayout,
+  stableLayoutResult,
+  "輸入文字不得再啟動會先清零字距的完整排版",
+);
+assert.equal(
+  narrowTableParagraph.Paragraph.Lines.length,
+  1,
+  "輸入新字後應原地縮小目前段落字距，不得把新字留在下一行",
+);
+assert.equal(
+  forceRecalculateCount,
+  recalculateBeforeTypingRefresh + 1,
+  "單次輸入只應有一次看不見中間狀態的最終重排",
+);
+assert.equal(pluginWindow.__OpenDeskTwDistributedTyping.applied, true);
+assert.equal(
+  pluginWindow.__OpenDeskTwDistributedTyping.method,
+  "in-place-current-paragraph",
+);
 const mergedTableParagraph = makeParagraph(
   "中華民國",
   0x1234567a,
