@@ -157,7 +157,7 @@ try {
     }
     if (!pluginContextId || !editorContextId) await delay(250);
   }
-  assert.ok(pluginContextId, "找不到 2.0.2 繁中工具執行環境");
+  assert.ok(pluginContextId, "找不到 2.0.3 繁中工具執行環境");
   assert.ok(editorContextId, "找不到 Word 相容快捷鍵監聽器");
 
   const blankBefore = await evaluate(
@@ -518,7 +518,7 @@ try {
     JSON.stringify(
       {
         ok: true,
-        version: "2.8.2 / plugin 2.0.2",
+        version: "2.8.3 / plugin 2.0.3",
         blank: {
           before: blankBefore,
           after: blankAfter,

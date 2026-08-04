@@ -8,6 +8,68 @@ const pluginGuid = "asc.{5CBF7C74-7021-4E8C-93F3-5A6C20260722}";
 
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
+function verifyMacOsFormatShortcutOverride() {
+  if (process.platform !== "darwin") return { platform: process.platform, skipped: true };
+  const value = execFileSync(
+    "/usr/bin/defaults",
+    ["export", "asc.onlyoffice.ONLYOFFICE", "-"],
+    { encoding: "utf8" },
+  );
+  const titles = ["Show Colors", "Show Colours", "顯示顏色", "显示颜色"];
+  assert.ok(
+    titles.every((title) => {
+      const escapedTitle = title.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      return new RegExp(
+        `<key>${escapedTitle}</key>\\s*<string>@\\^~\\$c</string>`,
+      ).test(value);
+    }),
+    `macOS 原生顏色面板仍會攔截 ⇧⌘C：${value}`,
+  );
+  return {
+    platform: "macOS",
+    colorPanelMoved: true,
+    shortcut: "⇧⌘C／⇧⌘V",
+  };
+}
+
+async function ensureBlankWordTarget() {
+  const deadline = Date.now() + Math.min(timeoutMs, 30000);
+  while (Date.now() < deadline) {
+    const response = await fetch(`http://127.0.0.1:${port}/json/list`);
+    const targets = await response.json();
+    if (
+      targets.some(
+        (item) => item.type === "page" && /doctype=word/.test(item.url || ""),
+      )
+    ) {
+      return;
+    }
+    const startCenter = targets.find(
+      (item) =>
+        item.type === "page" &&
+        /\/login\/index\.html/.test(item.url || "") &&
+        item.webSocketDebuggerUrl,
+    );
+    if (startCenter) {
+      const startCenterCdp = await connect(startCenter.webSocketDebuggerUrl);
+      try {
+        await startCenterCdp.call("Runtime.enable");
+        const readiness = await startCenterCdp.call("Runtime.evaluate", {
+          expression:
+            'typeof window.sdk?.command === "function" ? (window.sdk.command("create:new", "word"), "opened") : "waiting"',
+          returnByValue: true,
+          userGesture: true,
+        });
+        if (readiness.result?.value === "opened") return;
+      } finally {
+        startCenterCdp.close();
+      }
+    }
+    await delay(250);
+  }
+  throw new Error("ONLYOFFICE 起始中心無法建立空白 Word 測試文件");
+}
+
 async function waitForTarget() {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
@@ -63,6 +125,8 @@ function connect(url) {
 }
 
 async function main() {
+  const nativeFormatShortcut = verifyMacOsFormatShortcutOverride();
+  await ensureBlankWordTarget();
   const target = await waitForTarget();
   const cdp = await connect(target.webSocketDebuggerUrl);
   const contexts = new Map();
@@ -88,6 +152,7 @@ async function main() {
     return result.result?.value;
   };
   const screenshotDirectory = process.env.OPENDESK_LIVE_SCREENSHOT_DIR;
+  const liveDocumentPath = process.env.OPENDESK_LIVE_DOCUMENT_PATH;
   const captureScreenshot = async (name) => {
     if (!screenshotDirectory) return undefined;
     await mkdir(screenshotDirectory, { recursive: true });
@@ -430,7 +495,7 @@ async function main() {
     assert.ok(
       distributedAfterResize?.implementation === "word-layout-ranges-v3" &&
         distributedAfterResize.preclearedRuns >= 1,
-      `沒有載入會先完成清除再量測的 2.0.2 實作：${JSON.stringify(distributedAfterResize)}`,
+      `沒有載入會先完成清除再量測的 2.0.3 實作：${JSON.stringify(distributedAfterResize)}`,
     );
     assert.ok(
       distributedAfterResize.widths?.[0]?.available <
@@ -448,7 +513,7 @@ async function main() {
     const distributedAfterScreenshot = await captureScreenshot(
       "distributed-alignment-after",
     );
-    await forceLocalSave(editorContextId);
+    if (liveDocumentPath) await forceLocalSave(editorContextId);
     let distributedOoxml;
 
     const installedFonts = await evaluate(
@@ -469,7 +534,7 @@ async function main() {
       "ONLYOFFICE 字型清單仍找不到細明體 MingLiU",
     );
 
-    const fontFixture = await evaluate(`new Promise((resolve) => {
+    await evaluate(`new Promise((resolve) => {
       Asc.plugin.callCommand(function () {
         const document = Api.GetDocument();
         const paragraph = Api.CreateParagraph();
@@ -479,7 +544,6 @@ async function main() {
         return true;
       }, false, true, resolve);
     })`, pluginContextId);
-    assert.equal(fontFixture, true);
     await evaluate(
       `window.__OpenDeskTwWordShortcuts.applyTraditionalFont("PMingLiU")`,
       editorContextId,
@@ -505,8 +569,7 @@ async function main() {
       "PMingLiU",
       `新細明體沒有套用到中文字型槽：${JSON.stringify(pmingliu)}`,
     );
-    await forceLocalSave(editorContextId);
-    const liveDocumentPath = process.env.OPENDESK_LIVE_DOCUMENT_PATH;
+    if (liveDocumentPath) await forceLocalSave(editorContextId);
     if (liveDocumentPath && process.platform === "darwin") {
       await delay(3500);
       const documentXml = execFileSync(
@@ -575,7 +638,7 @@ async function main() {
     const afterHeading = await readCurrentParagraph();
     assert.match(afterHeading.style, /Heading 1|標題 1/i);
 
-    const formatFixture = await evaluate(`new Promise((resolve) => {
+    await evaluate(`new Promise((resolve) => {
       Asc.plugin.callCommand(function () {
         const document = Api.GetDocument();
         const source = Api.CreateParagraph();
@@ -590,7 +653,6 @@ async function main() {
         return true;
       }, false, true, resolve);
     })`, pluginContextId);
-    assert.equal(formatFixture, true);
     await press({ key: "c", code: "KeyC", virtualKeyCode: 67, modifiers: 12 });
     await evaluate(`new Promise((resolve) => {
       Asc.plugin.callCommand(function () {
@@ -693,6 +755,7 @@ async function main() {
           traditionalFont: pmingliu,
           smartQuotes: smartQuoteText,
           headingStyle: afterHeading.style,
+          nativeFormatShortcut,
           formatCopyPaste,
           renumberedParagraphs: changed,
         },

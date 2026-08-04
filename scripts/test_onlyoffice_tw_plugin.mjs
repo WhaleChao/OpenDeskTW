@@ -586,6 +586,15 @@ assert.equal(
 );
 assert.equal((hostWindowListeners.get("resize") || []).length, 1);
 assert.equal(
+  (hostWindowListeners.get("keydown") || []).length,
+  1,
+  "macOS 快捷鍵必須在 window capture 階段先於編輯器色彩命令接管",
+);
+assert.equal(
+  pluginWindow.parent.__OpenDeskTwWordShortcuts.windowCapture,
+  true,
+);
+assert.equal(
   pluginWindow.parent.__OpenDeskTwDistributedLayoutHook.mode,
   "resize-and-layout-drag-only",
 );
@@ -889,6 +898,20 @@ assert.equal(
   }),
   true,
   "即使 ONLYOFFICE 先標記事件，macOS ⇧⌘V 仍必須套用格式",
+);
+assert.equal(pastedFormatting, true);
+copiedFormatting = false;
+pastedFormatting = false;
+assert.equal(
+  press({ key: "色", code: "KeyC", metaKey: true, shiftKey: true }),
+  true,
+  "繁中輸入法下也必須依實體 KeyC 複製格式",
+);
+assert.equal(copiedFormatting, true);
+assert.equal(
+  press({ key: "貼", code: "KeyV", metaKey: true, shiftKey: true }),
+  true,
+  "繁中輸入法下也必須依實體 KeyV 套用格式",
 );
 assert.equal(pastedFormatting, true);
 

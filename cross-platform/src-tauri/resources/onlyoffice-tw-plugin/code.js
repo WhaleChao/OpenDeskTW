@@ -2365,6 +2365,7 @@
       const previous = hostWindow[stateKey];
       if (previous?.handler) {
         hostWindow.document.removeEventListener("keydown", previous.handler, true);
+        hostWindow.removeEventListener?.("keydown", previous.handler, true);
       }
       const handler = function (event) {
         if (!event || event.repeat || event.isComposing) return;
@@ -2456,12 +2457,12 @@
             runRepeatableWordAction(renumberHeadingsInDocument);
           };
         } else if (
-          key === "c" &&
+          (key === "c" || event.code === "KeyC") &&
           wordFormatShortcut
         ) {
           action = copyFormatting;
         } else if (
-          key === "v" &&
+          (key === "v" || event.code === "KeyV") &&
           wordFormatShortcut &&
           (event.altKey || wordFormatClipboardReady)
         ) {
@@ -2567,10 +2568,15 @@
         event.stopImmediatePropagation?.();
         action();
       };
+      // macOS 的原生選單與 ONLYOFFICE 編輯器會在 document 之前處理
+      // 快捷鍵；同時掛在 window capture，讓解除 AppKit 顏色面板衝突後
+      // 的 ⇧⌘C／⇧⌘V 能在編輯器自己的色彩命令之前被接管。
+      hostWindow.addEventListener?.("keydown", handler, true);
       hostWindow.document.addEventListener("keydown", handler, true);
       hostWindow[stateKey] = {
         guid: plugin.guid,
         handler: handler,
+        windowCapture: true,
         applyDistributedAlignment: applyDistributedAlignment,
         applyTraditionalFont: applyTraditionalFont,
         insertContextualQuote: insertContextualQuote,

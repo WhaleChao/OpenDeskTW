@@ -1,6 +1,6 @@
 # ONLYOFFICE 繁體中文與全能文件寫作工具
 
-全能文件工作台 2.8.2 不修改 `/Applications/ONLYOFFICE.app` 或 Windows 的已簽署程式檔，而是在使用者自己的設定與外掛資料夾完成修復，方便更新、回復與熱修。
+全能文件工作台 2.8.3 不修改 `/Applications/ONLYOFFICE.app` 或 Windows 的已簽署程式檔，而是在使用者自己的設定與外掛資料夾完成修復，方便更新、回復與熱修。macOS 另只在 ONLYOFFICE 自己的 `NSUserKeyEquivalents` 中移開系統「顯示顏色」的 `⇧⌘C`，避免它攔截 Word 格式複製熱鍵；原設定會先備份。
 
 ## 問題原因
 

@@ -1183,6 +1183,85 @@ fn macos_defaults_read(key: &str) -> Option<String> {
         .filter(|value| !value.is_empty())
 }
 
+#[cfg(target_os = "macos")]
+const ONLYOFFICE_COLOR_PANEL_FALLBACK_SHORTCUT: &str = "@^~$c";
+
+#[cfg(target_os = "macos")]
+const ONLYOFFICE_COLOR_PANEL_MENU_TITLES: [&str; 4] =
+    ["Show Colors", "Show Colours", "顯示顏色", "显示颜色"];
+
+#[cfg(target_os = "macos")]
+fn macos_onlyoffice_user_key_equivalents() -> Option<plist::Dictionary> {
+    let output = Command::new("/usr/bin/defaults")
+        .args(["export", "asc.onlyoffice.ONLYOFFICE", "-"])
+        .output()
+        .ok()
+        .filter(|output| output.status.success())?;
+    let preferences = plist::Value::from_reader_xml(output.stdout.as_slice()).ok()?;
+    preferences
+        .as_dictionary()?
+        .get("NSUserKeyEquivalents")?
+        .as_dictionary()
+        .cloned()
+}
+
+#[cfg(target_os = "macos")]
+fn onlyoffice_word_shortcut_overrides_current(value: &plist::Dictionary) -> bool {
+    ONLYOFFICE_COLOR_PANEL_MENU_TITLES.iter().all(|title| {
+        value.get(*title).and_then(plist::Value::as_string)
+            == Some(ONLYOFFICE_COLOR_PANEL_FALLBACK_SHORTCUT)
+    })
+}
+
+#[cfg(target_os = "macos")]
+fn configure_macos_onlyoffice_word_shortcuts() -> Result<Option<PathBuf>, String> {
+    let current = macos_onlyoffice_user_key_equivalents().unwrap_or_default();
+    if onlyoffice_word_shortcut_overrides_current(&current) {
+        return Ok(None);
+    }
+
+    // AppKit 的系統「顯示顏色」使用 ⇧⌘C，會在 WebView 收到 keydown
+    // 之前吃掉 Word 的格式複製快捷鍵。只在 ONLYOFFICE 自己的偏好設定
+    // 中把該選單改到幾乎不會誤按的四修飾鍵組合，保留使用者其他自訂
+    // 快捷鍵，讓 ⇧⌘C／⇧⌘V 可以交給繁中工具處理。
+    let backup_root = data_root()?
+        .join("OnlyOfficeShortcutBackups")
+        .join(Local::now().format("%Y%m%d-%H%M%S-%3f").to_string());
+    fs::create_dir_all(&backup_root).map_err(|error| error.to_string())?;
+    let backup = backup_root.join("NSUserKeyEquivalents.txt");
+    fs::write(
+        &backup,
+        if current.is_empty() {
+            "（原先未設定）".into()
+        } else {
+            format!("{current:#?}")
+        },
+    )
+    .map_err(|error| error.to_string())?;
+
+    for title in ONLYOFFICE_COLOR_PANEL_MENU_TITLES {
+        let status = Command::new("/usr/bin/defaults")
+            .args([
+                "write",
+                "asc.onlyoffice.ONLYOFFICE",
+                "NSUserKeyEquivalents",
+                "-dict-add",
+                title,
+                ONLYOFFICE_COLOR_PANEL_FALLBACK_SHORTCUT,
+            ])
+            .status()
+            .map_err(|error| error.to_string())?;
+        if !status.success() {
+            return Err("無法解除 ONLYOFFICE 的 macOS 顏色面板快捷鍵衝突".into());
+        }
+    }
+    let updated = macos_onlyoffice_user_key_equivalents().unwrap_or_default();
+    if !onlyoffice_word_shortcut_overrides_current(&updated) {
+        return Err("macOS 格式複製快捷鍵設定後驗證失敗".into());
+    }
+    Ok(Some(backup))
+}
+
 fn onlyoffice_current_language() -> String {
     #[cfg(target_os = "macos")]
     {
@@ -1667,6 +1746,7 @@ fn prepare_onlyoffice_locale_for_launch() -> Result<(), String> {
     #[cfg(target_os = "macos")]
     {
         repair_macos_onlyoffice_locale()?;
+        configure_macos_onlyoffice_word_shortcuts()?;
         let installed_fonts = install_microsoft_tw_fonts()?;
         refresh_onlyoffice_font_cache_if_needed(&installed_fonts)?;
     }
@@ -1849,6 +1929,10 @@ fn repair_onlyoffice_traditional_chinese<R: Runtime>(
     #[cfg(not(target_os = "macos"))]
     let locale_backup: Option<PathBuf> = None;
     #[cfg(target_os = "macos")]
+    let shortcut_backup = configure_macos_onlyoffice_word_shortcuts()?;
+    #[cfg(not(target_os = "macos"))]
+    let shortcut_backup: Option<PathBuf> = None;
+    #[cfg(target_os = "macos")]
     let registered_fonts = install_microsoft_tw_fonts()?;
     #[cfg(not(target_os = "macos"))]
     let registered_fonts: Vec<PathBuf> = Vec::new();
@@ -1881,6 +1965,14 @@ fn repair_onlyoffice_traditional_chinese<R: Runtime>(
     let backup_message = locale_backup
         .map(|path| format!("；原設定與簡體範本快取備份於 {}", path.display()))
         .unwrap_or_default();
+    let shortcut_message = shortcut_backup
+        .map(|path| {
+            format!(
+                "；已解除 macOS 顏色面板對 ⇧⌘C 的攔截，原快捷鍵設定備份於 {}",
+                path.display()
+            )
+        })
+        .unwrap_or_else(|| "；macOS ⇧⌘C／⇧⌘V 格式複製快捷鍵已就緒".into());
     let font_message = if registered_fonts.len() == MICROSOFT_WORD_TW_FONT_FILES.len() {
         "；已從本機已授權的 Microsoft Office 註冊新細明體、細明體"
     } else if cfg!(target_os = "macos") {
@@ -1895,7 +1987,7 @@ fn repair_onlyoffice_traditional_chinese<R: Runtime>(
         path: plugin_destination.to_string_lossy().to_string(),
         file_name: "繁中寫作工具（全能文件）".into(),
         message: format!(
-            "已固定 ONLYOFFICE 為 zh-TW、補齊繁中介面、安裝台灣繁中 AI 相容副本（{}）並鎖定數字字級{font_message}{font_cache_message}{backup_message}。重新開啟 ONLYOFFICE 後，可在「常用」使用 Word 式文字等距分布（Ctrl+Shift+J／⇧⌘J），以 Ctrl+Shift+C／V 或 macOS ⌘⌥C／V 複製與套用格式，在「全能文件」選新細明體／細明體並使用即時智慧引號，另可從「MAGI」頁籤呼叫本機 MAGI。",
+            "已固定 ONLYOFFICE 為 zh-TW、補齊繁中介面、安裝台灣繁中 AI 相容副本（{}）並鎖定數字字級{font_message}{font_cache_message}{backup_message}{shortcut_message}。重新開啟 ONLYOFFICE 後，可在「常用」使用 Word 式文字等距分布（Ctrl+Shift+J／⇧⌘J），以 Ctrl+Shift+C／V 或 macOS ⇧⌘C／⇧⌘V 複製與套用格式，在「全能文件」選新細明體／細明體並使用即時智慧引號，另可從「MAGI」頁籤呼叫本機 MAGI。",
             ai_destination.display()
         ),
     })
@@ -6881,6 +6973,28 @@ mod tests {
         assert!(!is_traditional_onlyoffice_locale("zh"));
     }
 
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn detects_onlyoffice_color_panel_shortcut_override() {
+        let configured = ONLYOFFICE_COLOR_PANEL_MENU_TITLES
+            .iter()
+            .map(|title| {
+                (
+                    (*title).to_string(),
+                    plist::Value::String(ONLYOFFICE_COLOR_PANEL_FALLBACK_SHORTCUT.into()),
+                )
+            })
+            .collect::<plist::Dictionary>();
+        assert!(onlyoffice_word_shortcut_overrides_current(&configured));
+        let incomplete = [(
+            String::from("Show Colors"),
+            plist::Value::String("@$c".into()),
+        )]
+        .into_iter()
+        .collect::<plist::Dictionary>();
+        assert!(!onlyoffice_word_shortcut_overrides_current(&incomplete));
+    }
+
     #[test]
     fn rejects_stale_onlyoffice_plugin_versions() {
         assert!(!plugin_version_is_current("1.5.0", "1.6.1"));
@@ -7088,9 +7202,7 @@ mod tests {
         assert!(code.contains("resize-and-layout-drag-only"));
         assert!(code.contains("in-place-current-paragraph"));
         assert!(code.contains("distributedLayoutBusy"));
-        assert!(!code.contains(
-            "hostWindow.document?.addEventListener?.(\"keyup\", refresh"
-        ));
+        assert!(!code.contains("hostWindow.document?.addEventListener?.(\"keyup\", refresh"));
         assert!(code.contains("installDistributedPersistenceHook"));
         assert!(code.contains("DesktopOfflineAppDocumentEndSave"));
         assert!(code.contains("AscDesktopEditor.OnSave"));
@@ -7120,6 +7232,10 @@ mod tests {
         assert!(code.contains("MingLiU"));
         assert!(code.contains("put_TextPrFontName"));
         assert!(code.contains("wordFormatShortcut"));
+        assert!(code.contains("event.code === \"KeyC\""));
+        assert!(code.contains("event.code === \"KeyV\""));
+        assert!(code.contains("hostWindow.addEventListener?.(\"keydown\", handler, true)"));
+        assert!(code.contains("windowCapture: true"));
         assert!(code.contains("event.stopImmediatePropagation?.()"));
         assert!(code.contains("__OpenDeskTwFormatClipboard"));
         assert!(code.contains("__OpenDeskTwFormatPaste"));
