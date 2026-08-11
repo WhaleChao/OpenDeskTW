@@ -518,7 +518,7 @@ try {
     JSON.stringify(
       {
         ok: true,
-        version: "2.8.3 / plugin 2.0.3",
+        version: "2.8.4 / plugin 2.0.3",
         blank: {
           before: blankBefore,
           after: blankAfter,

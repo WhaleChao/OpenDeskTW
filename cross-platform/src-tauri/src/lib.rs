@@ -6,6 +6,7 @@ use regex::Regex;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::ffi::OsString;
 use std::fs::{self, File, OpenOptions};
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
@@ -6452,6 +6453,59 @@ fn require_local_office_process(action: &str) -> Result<(), String> {
     ))
 }
 
+fn libreoffice_conversion_command(
+    executable: &Path,
+    profile: &Path,
+    output: &Path,
+    source: &Path,
+    format: &str,
+) -> Result<(PathBuf, Vec<OsString>), String> {
+    let mut office_args = vec![
+        OsString::from(format!(
+            "-env:UserInstallation=file://{}",
+            profile.to_string_lossy()
+        )),
+        OsString::from("--headless"),
+        OsString::from("--nologo"),
+        OsString::from("--nodefault"),
+        OsString::from("--norestore"),
+        OsString::from("--nolockcheck"),
+        OsString::from("--convert-to"),
+        OsString::from(format),
+        OsString::from("--outdir"),
+        output.as_os_str().to_owned(),
+        source.as_os_str().to_owned(),
+    ];
+
+    #[cfg(target_os = "macos")]
+    {
+        // macOS 26 會在直接執行 App bundle 內的 soffice 時，於
+        // HIServices::_RegisterApplication 初始化 AppKit 前中止。即使是
+        // --headless，LibreOffice 仍會載入 macOS VCL 外掛，因此必須經由
+        // LaunchServices 建立已註冊且隱藏的新 instance，再等待它完成轉檔。
+        let app = executable
+            .ancestors()
+            .find(|path| path.extension().and_then(|value| value.to_str()) == Some("app"))
+            .ok_or("LibreOffice 執行檔不在有效的 macOS App bundle 內")?;
+        let mut launch_args = vec![
+            OsString::from("-W"),
+            OsString::from("-n"),
+            OsString::from("-j"),
+            OsString::from("-g"),
+            OsString::from("-a"),
+            app.as_os_str().to_owned(),
+            OsString::from("--args"),
+        ];
+        launch_args.append(&mut office_args);
+        return Ok((PathBuf::from("/usr/bin/open"), launch_args));
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        Ok((executable.to_path_buf(), office_args))
+    }
+}
+
 #[tauri::command]
 fn convert_pdf(path: String) -> Result<String, String> {
     let source = PathBuf::from(path);
@@ -6473,33 +6527,53 @@ fn convert_pdf_at(source: &Path, output: &Path) -> Result<PathBuf, String> {
     require_local_office_process("PDF 轉換")?;
     let executable = engine_executable("LibreOffice").ok_or("找不到 LibreOffice")?;
     fs::create_dir_all(output).map_err(|error| error.to_string())?;
-    let profile = std::env::temp_dir().join(format!(
+    let working_root = std::env::temp_dir().join(format!(
         "OpenDeskTW-LO-{}-{}",
         std::process::id(),
         Local::now().timestamp_millis()
     ));
-    fs::create_dir_all(&profile).map_err(|error| error.to_string())?;
-    let status = Command::new(executable)
-        .arg(format!(
-            "-env:UserInstallation=file://{}",
-            profile.to_string_lossy()
-        ))
-        .args(["--headless", "--convert-to", "pdf", "--outdir"])
-        .arg(output)
-        .arg(source)
-        .status()
-        .map_err(|error| error.to_string())?;
-    let _ = fs::remove_dir_all(profile);
-    if !status.success() {
-        return Err("LibreOffice PDF 轉換失敗".into());
-    }
-    let expected = output
-        .join(source.file_stem().ok_or("無效檔名")?)
-        .with_extension("pdf");
-    expected
-        .exists()
-        .then_some(expected)
-        .ok_or_else(|| "轉換完成但找不到 PDF".into())
+    let result = (|| -> Result<PathBuf, String> {
+        let profile = working_root.join("profile");
+        let staged_output = working_root.join("output");
+        fs::create_dir_all(&profile).map_err(|error| error.to_string())?;
+        fs::create_dir_all(&staged_output).map_err(|error| error.to_string())?;
+
+        // LaunchServices 啟動的獨立 App 不繼承呼叫端對 Documents／Codex
+        // 工作區的檔案授權。由工作台先把輸入搬進暫存區，轉檔完成後再由
+        // 工作台寫回目的地，避免隱藏的權限提示讓 headless 程序永久等待。
+        let mut staged_source = working_root.join("input");
+        if let Some(extension) = source.extension() {
+            staged_source.set_extension(extension);
+        }
+        fs::copy(source, &staged_source).map_err(|error| error.to_string())?;
+
+        let (launcher, arguments) = libreoffice_conversion_command(
+            &executable,
+            &profile,
+            &staged_output,
+            &staged_source,
+            "pdf",
+        )?;
+        let status = Command::new(launcher)
+            .args(arguments)
+            .status()
+            .map_err(|error| error.to_string())?;
+        if !status.success() {
+            return Err("LibreOffice PDF 轉換失敗".into());
+        }
+
+        let generated = staged_output.join("input.pdf");
+        if !generated.is_file() {
+            return Err("LibreOffice 已結束，但暫存區找不到 PDF 成品".into());
+        }
+        let expected = output
+            .join(source.file_stem().ok_or("無效檔名")?)
+            .with_extension("pdf");
+        fs::copy(&generated, &expected).map_err(|error| error.to_string())?;
+        Ok(expected)
+    })();
+    let _ = fs::remove_dir_all(&working_root);
+    result
 }
 
 #[tauri::command]
@@ -6935,6 +7009,41 @@ mod tests {
         assert!(!local_office_process_policy(true, Some("0")));
         assert!(local_office_process_policy(true, Some("1")));
         assert!(local_office_process_policy(false, None));
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_libreoffice_conversion_uses_hidden_launchservices_instance() {
+        let executable = Path::new("/Applications/LibreOffice.app/Contents/MacOS/soffice");
+        let profile = Path::new("/private/tmp/OpenDeskTW-LO-Test");
+        let output = Path::new("/private/tmp/OpenDeskTW Output");
+        let source = Path::new("/private/tmp/測試文件.docx");
+        let (launcher, arguments) =
+            libreoffice_conversion_command(executable, profile, output, source, "pdf").unwrap();
+        let arguments = arguments
+            .iter()
+            .map(|value| value.to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+
+        assert_eq!(launcher, PathBuf::from("/usr/bin/open"));
+        assert_eq!(
+            &arguments[..7],
+            [
+                "-W",
+                "-n",
+                "-j",
+                "-g",
+                "-a",
+                "/Applications/LibreOffice.app",
+                "--args"
+            ]
+        );
+        assert!(arguments.contains(&"--headless".into()));
+        assert!(arguments.contains(&"--norestore".into()));
+        assert!(arguments.contains(&"--convert-to".into()));
+        assert!(arguments.contains(&"pdf".into()));
+        assert!(arguments.contains(&source.to_string_lossy().into_owned()));
+        assert!(!arguments.contains(&executable.to_string_lossy().into_owned()));
     }
 
     #[cfg(target_os = "macos")]
@@ -7998,5 +8107,26 @@ mod tests {
             .unwrap()
             .text
             .is_empty());
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    #[ignore = "會以 LaunchServices 隱藏啟動獨立 LibreOffice instance 並實際轉換測試 DOCX"]
+    fn live_libreoffice_launchservices_conversion() {
+        require_local_office_process("LibreOffice LaunchServices LIVE 測試")
+            .expect("必須先取得使用者明確允許，並設定 OPENDESK_ALLOW_LOCAL_OFFICE_LIVE=1");
+        let source = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("resources/Verification/OpenDeskTW_完整文字功能.docx");
+        assert!(source.is_file());
+        let output = std::env::temp_dir().join(format!(
+            "OpenDeskTW-LO-Live-{}-{}",
+            std::process::id(),
+            Local::now().timestamp_millis()
+        ));
+        let _cleanup = TemporaryFolder(output.clone());
+        let pdf = convert_pdf_at(&source, &output).expect("LaunchServices 隔離轉檔應成功");
+        let bytes = fs::read(&pdf).expect("應能讀取轉換後 PDF");
+        assert!(bytes.starts_with(b"%PDF-"));
+        assert!(bytes.len() > 1_000);
     }
 }

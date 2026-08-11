@@ -19,7 +19,36 @@ NODE_MODULES="/Users/ai/.cache/codex-runtimes/codex-primary-runtime/dependencies
 PYTHON_BIN="/Users/ai/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/bin/python3"
 VALIDATE_DOCX="/Users/ai/.codex/skills/docx/scripts/office/validate.py"
 VALIDATE_PPTX="/Users/ai/.codex/skills/pptx/scripts/office/validate.py"
-SOFFICE="/Applications/LibreOffice.app/Contents/MacOS/soffice"
+LIBREOFFICE_APP="/Applications/LibreOffice.app"
+
+run_libreoffice_headless() {
+    # macOS 26 不允許受限背景父程序直接執行 App bundle 內的 soffice 後
+    # 再初始化 AppKit；交給 LaunchServices 註冊、隱藏並等待獨立 instance。
+    local format="$1"
+    local destination="$2"
+    local source="$3"
+    local working_root
+    working_root="$(/usr/bin/mktemp -d "/private/tmp/OpenDeskTW-Live-${RUN_ID}-${format}.XXXXXX")"
+    [[ "$working_root" == /private/tmp/OpenDeskTW-Live-* ]] || return 1
+    local staged_output="$working_root/output"
+    local staged_source="$working_root/input.${source:e}"
+    /bin/mkdir -p "$staged_output" "$working_root/profile"
+    /bin/cp "$source" "$staged_source"
+
+    local exit_code=0
+    /usr/bin/open -W -n -j -g -a "$LIBREOFFICE_APP" --args \
+        "-env:UserInstallation=file://$working_root/profile" \
+        --headless --nologo --nodefault --norestore --nolockcheck \
+        --convert-to "$format" --outdir "$staged_output" "$staged_source" || exit_code=$?
+    local generated="$staged_output/input.$format"
+    if (( exit_code == 0 )) && [[ -s "$generated" ]]; then
+        /bin/cp "$generated" "$destination/${source:t:r}.$format"
+    else
+        exit_code=1
+    fi
+    /bin/rm -rf -- "$working_root"
+    return "$exit_code"
+}
 
 /bin/mkdir -p "$FIXTURES" "$ROUNDTRIP" "$PDF_ROOT" "$NEW_DOCUMENTS"
 
@@ -69,9 +98,9 @@ HEADING_OUTPUT="$("$CLI" --headings "$FIXTURES/OpenDeskTW_LIVE_Writer-重新編�
 [[ "$HEADING_OUTPUT" == *"壹、"* ]]
 [[ "$HEADING_OUTPUT" == *"貳、"* ]]
 
-"$SOFFICE" "-env:UserInstallation=file:///tmp/OpenDeskTW-Live-$RUN_ID-PPTX" --headless --convert-to pptx --outdir "$ROUNDTRIP" "$FIXTURES/OpenDeskTW_LIVE_Slides.pptx"
+run_libreoffice_headless pptx "$ROUNDTRIP" "$FIXTURES/OpenDeskTW_LIVE_Slides.pptx"
 python3 "$VALIDATE_PPTX" "$ROUNDTRIP/OpenDeskTW_LIVE_Slides.pptx"
-"$SOFFICE" "-env:UserInstallation=file:///tmp/OpenDeskTW-Live-$RUN_ID-XLSX" --headless --convert-to xlsx --outdir "$ROUNDTRIP" "$FIXTURES/OpenDeskTW_LIVE_Sheets.xlsx"
+run_libreoffice_headless xlsx "$ROUNDTRIP" "$FIXTURES/OpenDeskTW_LIVE_Sheets.xlsx"
 "$PYTHON_BIN" "$PROJECT_ROOT/scripts/verify_spreadsheet.py" "$ROUNDTRIP/OpenDeskTW_LIVE_Sheets.xlsx"
 
 "$CLI" --convert-pdf "$FIXTURES/OpenDeskTW_LIVE_Writer.docx" "$PDF_ROOT"

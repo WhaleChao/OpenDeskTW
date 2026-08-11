@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "suite": "OpenDesk TW Office 完整功能矩陣",
-  "generatedForVersion": "2.8.3",
+  "generatedForVersion": "2.8.4",
   "passed": true,
   "summary": "37/37 項通過",
   "passedCount": 37,

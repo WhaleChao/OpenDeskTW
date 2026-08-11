@@ -19,6 +19,8 @@
 
 2.8.3 修正 macOS 實機格式複製：ONLYOFFICE 的 AppKit 系統顏色面板原先會在 WebView 收到按鍵前攔截 `⇧⌘C`。工作台現在於啟動前只替 ONLYOFFICE 移開該原生選單快捷鍵並保留備份，外掛則在 window capture 階段依實體 `KeyC／KeyV` 接管 `⇧⌘C／⇧⌘V`，繁中輸入法亦可使用。
 
+2.8.4 修正 macOS 26 的 LibreOffice 背景轉檔崩潰：即使使用 `--headless`，LibreOffice 仍會載入 macOS VCL／AppKit；由受限背景程序直接執行 App bundle 內的 `soffice` 會在 `HIServices::_RegisterApplication` 中止。工作台現在只透過 LaunchServices 建立隱藏的新 instance，並先把來源複製到隔離暫存區、完成後再由工作台寫回目的地，避免 AppKit 註冊失敗、資料夾權限提示與既有 LibreOffice 工作階段互相干擾。
+
 原 P0 缺口已都有可操作流程及自動測試。仍需誠實區分的是：富文字草稿復原不是完整 DOCX 二進位快照；單份上限 2.5 MB，複雜內嵌物件、頁面設定與巨集仍以已儲存檔案／編輯引擎自己的復原為準。完整音訊轉錄、雲端註解反應／通知、Microsoft 365 即時共同編輯與專有安全服務也沒有純單機等價介面。
 
 ## 逐類盤點
