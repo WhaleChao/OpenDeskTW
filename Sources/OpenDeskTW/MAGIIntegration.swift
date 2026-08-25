@@ -162,18 +162,32 @@ struct MAGIIntegration: Sendable {
         let v2Lines = snapshot.filter {
             isActiveRuntimeProcess($0, runtimeRoot: v2RuntimeRoot)
         }
-        let v3Lines = snapshot.filter {
-            isActiveRuntimeProcess($0, runtimeRoot: v3RuntimeRoot)
+        let activeV3ReleaseRoot = activeReleaseRoot(for: .v3)
+        let v3Roots = [v3RuntimeRoot, activeV3ReleaseRoot].compactMap { $0 }
+        let v3Lines = snapshot.filter { line in
+            v3Roots.contains { isActiveRuntimeProcess(line, runtimeRoot: $0) }
         }
+        let endpoints = [
+            probe(id: "main", name: "MAGI 主服務", url: "http://127.0.0.1:5002/livez"),
+            probe(id: "ready", name: "MAGI 就緒狀態", url: "http://127.0.0.1:5002/readyz"),
+            probe(id: "tools", name: "MAGI 工具服務", url: "http://127.0.0.1:5003/health"),
+            probe(id: "share", name: "本機分享閘道", url: "http://127.0.0.1:5014/health"),
+            probe(id: "admin", name: "MAGI 管理服務", url: "http://127.0.0.1:8088/health")
+        ]
+        let mainHealthy = endpoints.first(where: { $0.id == "main" })?.healthy == true
+        let toolsHealthy = endpoints.first(where: { $0.id == "tools" })?.healthy == true
+        // 新版 MAGI 以 immutable releases/v3-* 執行，命令列不一定含 runtime/MAGI_v3。
+        // active-release 交易標記加上兩個健康端點可確認它確實是目前啟用的 V3。
+        let activeV3ReleaseHealthy = activeV3ReleaseRoot != nil && mainHealthy && toolsHealthy
 
         let activeVersion: MAGIRuntimeVersion
         let activePath: String?
-        if !v2Lines.isEmpty && !v3Lines.isEmpty {
+        if !v2Lines.isEmpty && (!v3Lines.isEmpty || activeV3ReleaseHealthy) {
             activeVersion = .conflict
             activePath = nil
-        } else if !v3Lines.isEmpty {
+        } else if !v3Lines.isEmpty || activeV3ReleaseHealthy {
             activeVersion = .v3
-            activePath = v3RuntimeRoot.path
+            activePath = activeV3ReleaseRoot?.path ?? v3RuntimeRoot.path
         } else if !v2Lines.isEmpty {
             activeVersion = .v2
             activePath = v2RuntimeRoot.path
@@ -182,17 +196,8 @@ struct MAGIIntegration: Sendable {
             activePath = nil
         }
 
-        let endpoints = [
-            probe(id: "main", name: "MAGI 主服務", url: "http://127.0.0.1:5002/livez"),
-            probe(id: "ready", name: "MAGI 就緒狀態", url: "http://127.0.0.1:5002/readyz"),
-            probe(id: "tools", name: "MAGI 工具服務", url: "http://127.0.0.1:5003/health"),
-            probe(id: "share", name: "本機分享閘道", url: "http://127.0.0.1:5014/health"),
-            probe(id: "admin", name: "MAGI 管理服務", url: "http://127.0.0.1:8088/health")
-        ]
         let compatibility = inspectV3Compatibility()
         let singleActiveSafe = activeVersion != .conflict
-        let mainHealthy = endpoints.first(where: { $0.id == "main" })?.healthy == true
-        let toolsHealthy = endpoints.first(where: { $0.id == "tools" })?.healthy == true
 
         let summary: String
         switch activeVersion {
@@ -211,7 +216,10 @@ struct MAGIIntegration: Sendable {
         return MAGIStatusReport(
             activeVersion: activeVersion,
             activeRuntimePath: activePath,
-            runningProcessCount: v2Lines.count + v3Lines.count,
+            runningProcessCount: max(
+                v2Lines.count + v3Lines.count,
+                activeV3ReleaseHealthy ? 1 : 0
+            ),
             singleActiveSafe: singleActiveSafe,
             endpoints: endpoints,
             v3Compatibility: compatibility,
@@ -357,6 +365,10 @@ struct MAGIIntegration: Sendable {
         let version = activeVersion ?? detectedVersionForCredentials()
         var candidates: [URL] = []
         if version == .v3 {
+            if let releaseRoot = activeReleaseRoot(for: .v3) {
+                candidates.append(releaseRoot.appendingPathComponent("shared/external/.env"))
+                candidates.append(releaseRoot.appendingPathComponent(".env"))
+            }
             candidates.append(v3RuntimeRoot.appendingPathComponent("shared/external/.env"))
             candidates.append(v3RuntimeRoot.appendingPathComponent(".env"))
             candidates.append(v2RuntimeRoot.appendingPathComponent(".env"))
@@ -382,6 +394,9 @@ struct MAGIIntegration: Sendable {
     }
 
     private func detectedVersionForCredentials() -> MAGIRuntimeVersion {
+        if activeReleaseRoot(for: .v3) != nil {
+            return .v3
+        }
         let snapshot = processSnapshot()
         if snapshot.contains(where: { isActiveRuntimeProcess($0, runtimeRoot: v3RuntimeRoot) }) {
             return .v3
@@ -394,6 +409,27 @@ struct MAGIIntegration: Sendable {
         let normalizedLine = line.lowercased()
         let normalizedRoot = runtimeRoot.standardizedFileURL.path.lowercased() + "/"
         return normalizedLine.contains(normalizedRoot)
+    }
+
+    private func activeReleaseRoot(for version: MAGIRuntimeVersion) -> URL? {
+        let marker = applicationSupportRoot
+            .appendingPathComponent("runtime/active-release.json")
+        guard let data = try? Data(contentsOf: marker),
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let release = object["release"] as? String,
+              release.caseInsensitiveCompare(version.rawValue) == .orderedSame,
+              let root = object["release_root"] as? String else {
+            return nil
+        }
+        let url = URL(fileURLWithPath: root, isDirectory: true).standardizedFileURL
+        let releasesRoot = applicationSupportRoot
+            .appendingPathComponent("releases", isDirectory: true)
+            .standardizedFileURL.path + "/"
+        guard url.path.hasPrefix(releasesRoot),
+              fileManager.fileExists(atPath: url.path) else {
+            return nil
+        }
+        return url
     }
 
     private func parseEnvironment(_ content: String) -> [String: String] {

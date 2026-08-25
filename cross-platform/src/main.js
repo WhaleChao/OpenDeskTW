@@ -11,8 +11,8 @@ const featureItems = [
   ["word", "標題與自動編號", "段落開頭的「壹、」、「一、」、「（一）」等層級、重新編號、目錄、書籤與交互參照。", "工作台＋編輯引擎"],
   ["word", "頁面與印刷", "紙張、邊界、分節、欄、浮水印、頁碼、頁首、頁尾與列印。", "編輯引擎＋文件檢查"],
   ["word", "內容物件", "表格、圖片、圖表、形狀、方程式、文字方塊與超連結；複雜 SmartArt 需逐檔確認。", "編輯引擎"],
-  ["word", "參照與審閱", "目錄、圖表目錄、註腳、尾註、註解、比較、追蹤修訂與保護。", "編輯引擎＋文件檢查"],
-  ["word", "表單與郵件合併", "欄位、核取方塊、可填表單、郵件合併與標籤。", "依格式相容"],
+  ["word", "參照與審閱", "目錄、圖表目錄、註腳、尾註、引文來源、參考書目、註解、比較、追蹤修訂與保護。", "工作台＋編輯引擎"],
+  ["word", "表單與郵件合併", "欄位、核取方塊、可填表單，以及整合式 CSV 合併列印、信封與標籤範本。", "工作台直接完成"],
   ["excel", "公式與函數", "數學、統計、邏輯、日期、查閱、陣列、跨表公式與命名範圍。", "編輯引擎"],
   ["excel", "資料整理", "格式化表格、排序、篩選、群組、移除重複值、分欄與凍結窗格。", "編輯引擎"],
   ["excel", "資料品質", "資料驗證、下拉選單、條件格式、註解、保護與共用檢視。", "編輯引擎"],
@@ -41,7 +41,7 @@ const wordTabs = {
       ["openfile", "開啟與最近文件", "開啟 DOCX／DOCM、舊版 DOC、ODT 或 RTF；先檢查格式風險再編輯。", "檔案 → 開啟", "open"],
       ["saveprint", "儲存、另存新檔與列印", "使用 DOCX 保留編輯能力，另存副本、預覽頁面、選擇印表機與列印範圍。", "檔案 → 儲存／另存新檔／列印", "editor"],
       ["documentinfo", "文件資訊與交付檢查", "查看標題地圖、字型、註解、修訂、隱藏欄位、頁碼與無障礙提醒。", "工作台直接完成", "report"],
-      ["recover", "備份、復原與版本副本", "每次由工作台開啟前都保留時間戳記副本；可直接開啟安全備份資料夾。", "工作台版本保護", "backups"],
+      ["recover", "備份、未存草稿復原與版本副本", "每 45 秒保存已寫入檔案；ONLYOFFICE 另每 15 秒保存記憶體富文字草稿，當機後可插入空白文件復原。", "工作台＋常用 → 未存草稿復原", "recovery"],
       ["filepdf", "匯出可搜尋 PDF", "使用隔離的本機轉檔程序，不上傳內容，也不改寫原始 DOCX。", "工作台直接完成", "pdf"],
     ],
   },
@@ -49,15 +49,15 @@ const wordTabs = {
     title: "常用：寫作與每天最常用的排版",
     detail: "先處理文字、段落、樣式與清單；一致的樣式是目錄與文件導覽的基礎。",
     tasks: [
-      ["font", "字型與文字", "字型、大小、粗體、斜體、底線、色彩、醒目提示、上下標與清除格式。", "常用 → 字型", "editor"],
+      ["font", "字型與文字", "字型、大小、粗體、斜體、底線、色彩、醒目提示、上下標與清除格式；新細明體／細明體可由「台灣字型」精確套用。", "常用 → 字型／全能文件 → 台灣字型", "editor"],
       ["paragraph", "段落與定位點", "左右／分散對齊、縮排、行距、段前段後、框線、底紋、尺規與定位點。", "常用 → 段落", "editor"],
-      ["distributed", "分散對齊（選取段落）", "補上 ONLYOFFICE 未顯示的繁中公文功能；先選取一個或多個段落，再按常用工具列，或使用 Ctrl+Shift+J／⇧⌘J。", "常用 → 分散對齊", "twtools"],
-      ["paired-punctuation", "智慧成對標點", "依巢狀順序判斷要補上）、」、】、〕、》或其他正確結尾，支援選取文字與目前句子。", "全能文件 → 智慧補齊／台灣標點", "twtools"],
+      ["distributed", "文字等距分布（選取段落）", "像 Word 一樣，把所選段落在目前頁面或儲存格的可用寬度內平均攤開；使用 Ctrl+Shift+J／⇧⌘J。", "常用 → 文字等距分布", "twtools"],
+      ["paired-punctuation", "智慧成對標點", "依巢狀順序補上）、」、】、〕、》等正確結尾；直接輸入引號時也會依前文逐層選擇』或」。", "全能文件 → 智慧補齊／台灣標點", "twtools"],
       ["styles", "樣式與標題", "用標題 1–4 建立一致結構，之後才能自動產生目錄與導覽。", "常用 → 樣式", "editor"],
       ["lists", "項目符號與多層清單", "建立項目符號、數字編號、多層清單，並調整縮排與重新開始編號。", "常用 → 段落 → 清單", "editor"],
-      ["format", "格式刷與貼上選項", "複製格式、選擇性貼上、保留來源格式或只保留文字；⌘⌥C／V 或 Ctrl+Alt+C／V 可直接複製與套用格式。", "常用 → 複製樣式／貼上", "editor"],
+      ["format", "格式刷與貼上選項", "複製格式、選擇性貼上、保留來源格式或只保留文字；Ctrl+Shift+C／V、Ctrl+Alt+C／V 或 macOS ⌘⌥C／V 可直接複製與套用格式。", "常用 → 複製樣式／貼上", "editor"],
       ["find", "尋找、取代與選取", "依文字或格式尋找，全部取代，快速選取相同格式內容。", "常用 → 尋找與取代", "editor"],
-      ["voice", "聽寫、朗讀與輔助輸入", "可用 Windows／macOS 系統聽寫輸入繁體中文；朗讀與沉浸閱讀依本機編輯器支援。", "系統聽寫＋檢視 → 閱讀模式", "editor"],
+      ["voice", "聽寫、朗讀與輔助輸入", "集中顯示 macOS／Windows 繁中聽寫按法，並提供本機 MAGI 翻譯、改寫、同義詞及相似度工具。", "工作台直接完成", "language"],
       ["renumber", "中文標題安全重編", "只辨識段落開頭的「壹、」、「一、」、「（一）」與「1.」；內文中出現不會誤判。先備份，再建立套用標題樣式的新副本。", "工作台直接完成", "renumber"],
     ],
   },
@@ -114,7 +114,7 @@ const wordTabs = {
     tasks: [
       ["toc", "自動目錄", "依標題樣式產生可點擊目錄，更新頁碼或整份目錄。", "參考資料 → 目錄", "editor"],
       ["notes", "註腳與尾註", "插入註腳／尾註、切換位置、設定編號格式與重新開始方式。", "參考資料 → 註腳", "editor"],
-      ["citations", "引文、來源與書目", "管理來源，插入引文並依 APA、MLA 等樣式產生書目。", "參考資料 → 引文與書目", "editor", "LibreOffice"],
+      ["citations", "動態引文、來源與書目", "在本機管理來源，插入含來源 ID 的內文引文與書目，依 APA 7、MLA 9、Chicago 或台灣格式重新更新。", "工作台直接完成", "citations"],
       ["captions", "標號與圖表目錄", "為圖、表、方程式加自動標號，再產生圖表目錄。", "參考資料 → 標號", "editor"],
       ["crossref", "交互參照", "引用標題、圖表、註腳或書籤，內容與頁碼可更新。", "參考資料 → 交互參照", "editor"],
       ["index", "索引與引證目錄", "標記索引項目並建立索引；法律文件可建立引證目錄。", "參考資料 → 索引", "editor", "LibreOffice"],
@@ -125,11 +125,11 @@ const wordTabs = {
     title: "郵件：大量產生姓名、地址或編號不同的文件",
     detail: "依序選主文件、資料來源、欄位、預覽，最後再產生個別文件。",
     tasks: [
-      ["envelopes", "信封與標籤", "設定收件與寄件地址、標籤廠牌、尺寸與整頁版面。", "郵件 → 建立", "editor", "LibreOffice"],
-      ["startmerge", "啟動合併列印", "選擇信件、電子郵件、信封、標籤或目錄類型。", "工具 → 合併列印精靈", "editor", "LibreOffice"],
-      ["recipients", "選取收件者", "連接試算表／CSV，排序、篩選並勾選需要的資料列。", "合併列印 → 選取資料來源", "editor", "LibreOffice"],
-      ["mergefields", "插入合併欄位與規則", "插入姓名、地址、自訂欄位，以及條件式文字與下一筆記錄規則。", "合併列印 → 插入欄位", "editor", "LibreOffice"],
-      ["previewmerge", "預覽與完成合併", "逐筆預覽、檢查錯誤，再輸出個別文件、列印或 PDF。", "合併列印 → 預覽／完成", "editor", "LibreOffice"],
+      ["envelopes", "信封與標籤", "建立含實際合併欄位的信封、標籤或信件範本。", "工作台直接完成", "merge"],
+      ["startmerge", "啟動合併列印", "選取 DOCX 主文件及 CSV／TSV 收件人資料，所有內容留在本機。", "工作台直接完成", "merge"],
+      ["recipients", "選取與篩選收件者", "預覽欄位及前五筆資料，可用包含、不包含、等於、開頭、結尾、空白與數字比較篩選。", "工作台直接完成", "merge"],
+      ["mergefields", "合併欄位與條件規則", "支援 {{姓名}}、«姓名»、Word MERGEFIELD、IF、Ask、Fill-in、Set、記錄編號及略過規則。", "工作台直接完成", "merge"],
+      ["previewmerge", "預覽與完成合併", "輸出個別 DOCX、PDF 或兩者；檔名可指定資料欄位並避免覆寫既有檔案。", "工作台直接完成", "merge"],
     ],
   },
   review: {
@@ -137,24 +137,25 @@ const wordTabs = {
     detail: "修訂與註解是交付前最容易遺漏的內容，全能文件工作台會在列印前主動提醒。",
     tasks: [
       ["editorcheck", "拼字、文法與字數統計", "設定繁體中文校訂語言、逐項檢查建議，查看字元與段落統計。", "校閱 → 拼字與文法／字數統計", "editor"],
-      ["language", "翻譯與校訂語言", "翻譯選取範圍或文件，設定語言並控制自動偵測。", "校閱 → 語言", "editor"],
+      ["language", "翻譯、改寫與校訂語言", "整份文件翻譯、正式改寫、台灣用語同義詞與內部相似段落檢查；結果留在工作台供確認。", "工作台＋MAGI", "language"],
       ["comments", "註解、回覆與解決", "新增討論、回覆、標示完成，並依序跳到上一則／下一則。", "校閱 → 註解", "editor"],
       ["track", "追蹤修訂", "記錄每位作者的插入、刪除與格式變更，選擇顯示方式。", "校閱 → 追蹤", "editor"],
       ["accept", "接受或拒絕修訂", "逐項或全部接受／拒絕；定稿前務必再次檢查隱藏標記。", "校閱 → 變更", "editor"],
       ["compare", "比較與合併兩個版本", "保留原檔，把差異產生為修訂標記；也能合併多人修改。", "編輯 → 追蹤修訂 → 比較文件", "editor", "LibreOffice"],
       ["protect", "限制編輯與文件保護", "限制格式、唯讀或允許填表；IRM 權限屬 Microsoft 專有能力。", "校閱 → 保護", "editor"],
-      ["accessibility", "無障礙與列印前檢查", "檢查圖片替代文字、表格標題列、校訂語言、註解與修訂。", "工作台直接完成", "report"],
+      ["accessibility", "無障礙檢查與安全修復", "逐項定位替代文字、表格標題列、文件語言、標題跳級、含糊連結與文件標題；確定項目可另存修復。", "工作台直接完成", "accessibility"],
+      ["quality", "台灣文件交付前校閱", "檢查未完成欄位、成對標點、半形標點、空白排版、長句、待辦註記、重複文字與台灣常用詞。", "工作台直接完成", "quality"],
     ],
   },
   view: {
     title: "檢視：用最適合目前工作的方式看文件",
     detail: "閱讀、編輯、導覽與並排比較各有不同的最佳畫面。",
     tasks: [
-      ["modes", "閱讀、整頁與草稿模式", "切換閱讀模式、整頁／列印版面、Web 版面、大綱與草稿。", "檢視 → 檢視模式", "editor"],
+      ["modes", "可編輯大綱、草稿與 Web 模式", "大綱可提升／降低標題層級，或連同所屬內容上下移動並另存；草稿與 Web 模式不改寫原檔。", "工作台直接完成", "view"],
       ["navigation", "文件地圖與導覽窗格", "依標題瀏覽長文件，檢查層級與快速跳到章節。", "工作台直接顯示", "report"],
       ["ruler", "尺規、格線與格式標記", "顯示尺規、格線、段落符號、分頁與分節符號。", "檢視／常用 → 顯示", "editor"],
       ["zoom", "縮放與多頁檢視", "單頁、多頁、頁寬與自訂縮放比例。", "檢視 → 縮放", "editor"],
-      ["windows", "分割、並排與同步捲動", "同一文件分割視窗，或兩份文件並排、同步捲動。", "檢視 → 視窗", "editor"],
+      ["windows", "並排與同步捲動", "載入第二份 DOCX，依兩邊捲動比例同步比較；原檔保持不變。", "工作台直接完成", "view"],
       ["focus", "專注與沉浸式閱讀", "隱藏不需要的工具，把畫面留給閱讀或寫作。", "檢視 → 專注／閱讀", "editor"],
     ],
   },
@@ -164,6 +165,7 @@ const wordTabs = {
     tasks: [
       ["controls", "內容控制項與可填表單", "加入純文字、日期、核取方塊、下拉選單及重複區段。", "表單／開發人員 → 控制項", "editor"],
       ["fields", "欄位與自動內容", "頁碼、日期、檔名、公式、文件屬性、條件與合併欄位。", "插入 → 欄位", "editor"],
+      ["quickparts", "封面、Quick Parts／AutoText 與圖解", "建立封面、保存常用文字片段，並插入可編輯的流程、階層或矩陣圖解。", "工作台直接完成", "quickparts"],
       ["macros", "巨集與 VBA", "可保留 DOCM 與 VBA 專案並警示；不宣稱可等價執行 Microsoft VBA。", "僅保留與安全掃描", "report"],
       ["addins", "增益集、ActiveX 與 COM", "Microsoft 專有擴充無法等價重現；開啟前掃描並保留原檔。", "工作台相容性界線", "report"],
       ["signatures", "簽章、限制與文件屬性", "插入簽名欄、檢查屬性與隱藏資訊；數位憑證需由作業系統提供。", "檔案 → 資訊／插入 → 簽名欄", "editor"],
@@ -264,12 +266,14 @@ const wordShortcuts = [
   ["文件", "下一個文件頁籤", "Ctrl+Tab", "Control+Tab"],
   ["文件", "上一個文件頁籤", "Ctrl+Shift+Tab", "Control+Shift+Tab"],
   ["文件", "更新目錄與欄位", "F9", "Fn+F9"],
+  ["文件", "重複上一個全能文件格式操作", "F4", "Fn+F4", "Word 相容"],
+  ["文件", "移至頁碼或書籤", "F5", "Fn+F5", "Word 相容"],
   ["編輯", "復原", "Ctrl+Z", "⌘Z"],
   ["編輯", "取消復原／重做", "Ctrl+Y", "⌘Y／⇧⌘Z"],
   ["編輯", "剪下", "Ctrl+X", "⌘X"],
   ["編輯", "複製", "Ctrl+C", "⌘C"],
   ["編輯", "貼上", "Ctrl+V", "⌘V"],
-  ["編輯", "只貼上文字", "Ctrl+Shift+V", "⇧⌘V"],
+  ["編輯", "只貼上文字", "Ctrl+Alt+Shift+V", "⌥⇧⌘V"],
   ["編輯", "全選", "Ctrl+A", "⌘A"],
   ["編輯", "尋找", "Ctrl+F", "⌘F"],
   ["編輯", "尋找與取代", "Ctrl+H", "Control+H"],
@@ -280,12 +284,14 @@ const wordShortcuts = [
   ["文字格式", "刪除線", "Alt+H，再按 4", "⇧⌘X", "Word 功能區"],
   ["文字格式", "上標", "Ctrl+Shift++", "⇧⌘+", "Word 相容"],
   ["文字格式", "下標", "Ctrl+Shift+-", "⇧⌘-", "Word 相容"],
-  ["文字格式", "複製格式", "Ctrl+Alt+C", "⌘⌥C", "Word 同鍵"],
-  ["文字格式", "套用格式", "Ctrl+Alt+V", "⌘⌥V", "Word 同鍵"],
+  ["文字格式", "複製格式", "Ctrl+Shift+C／Ctrl+Alt+C", "⇧⌘C／⌘⌥C", "Word 相容"],
+  ["文字格式", "套用格式", "Ctrl+Shift+V／Ctrl+Alt+V", "⇧⌘V／⌘⌥V", "Word 相容"],
   ["文字格式", "清除格式", "Ctrl+Space", "⌘+Fn+Space"],
   ["文字格式", "放大字型一級", "Ctrl+]", "⌘]"],
   ["文字格式", "縮小字型一級", "Ctrl+[", "⌘["],
   ["文字格式", "開啟字型對話框", "Ctrl+D", "⌘D", "Word 標準"],
+  ["文字格式", "選擇字型", "Ctrl+Shift+F", "⇧⌘F", "Word 相容"],
+  ["文字格式", "選擇字級", "Ctrl+Shift+P", "⇧⌘P", "Word 相容"],
   ["文字格式", "切換英文大小寫", "Shift+F3", "Fn+Shift+F3", "Word 標準"],
   ["樣式", "套用標題 1", "Ctrl+Alt+1", "⌘⌥1", "Word 相容"],
   ["樣式", "套用標題 2", "Ctrl+Alt+2", "⌘⌥2", "Word 相容"],
@@ -296,7 +302,7 @@ const wordShortcuts = [
   ["段落", "置中對齊", "Ctrl+E", "⌘E"],
   ["段落", "靠右對齊", "Ctrl+R", "⌘R"],
   ["段落", "左右對齊", "Ctrl+J", "⌘J"],
-  ["段落", "分散對齊", "Ctrl+Shift+J", "⇧⌘J", "全能文件"],
+  ["段落", "文字等距分布", "Ctrl+Shift+J", "⇧⌘J", "全能文件"],
   ["段落", "項目符號", "Ctrl+Shift+L", "⇧⌘L"],
   ["段落", "增加縮排", "Ctrl+M", "Control+Shift+M"],
   ["段落", "減少縮排", "Ctrl+Shift+M", "⇧⌘M"],
@@ -308,7 +314,9 @@ const wordShortcuts = [
   ["段落", "減少凸排", "Ctrl+Shift+T", "⇧⌘T", "Word 相容"],
   ["插入", "分頁符號", "Ctrl+Enter", "⌘Return"],
   ["插入", "分欄符號", "Ctrl+Shift+Enter", "⇧⌘Return"],
-  ["插入", "插入頁碼（PAGE 欄位）", "Alt+Shift+P", "Control+Shift+P", "Word 標準"],
+  ["插入", "插入頁碼（PAGE 欄位）", "Alt+Shift+P", "⌥⇧P", "Word 相容"],
+  ["插入", "插入目前日期", "Alt+Shift+D", "⌥⇧D", "Word 相容"],
+  ["插入", "插入目前時間", "Alt+Shift+T", "⌥⇧T", "Word 相容"],
   ["檢視", "顯示／隱藏格式標記", "Ctrl+Shift+8", "⇧⌘8"],
   ["檢視", "回到 100% 縮放", "Ctrl+0", "⌘0"],
   ["校閱", "新增註解", "Ctrl+Alt+M", "⌘⌥A", "Word 相容"],
@@ -393,6 +401,16 @@ const state = {
   selectedAnalysis: null,
   wordReport: null,
   wordTab: "home",
+  wordToolTab: "recovery",
+  recoveryOverview: null,
+  mergeTemplate: null,
+  mergeDataSource: null,
+  mergePreview: null,
+  accessibilityReport: null,
+  qualityReport: null,
+  citationSources: [],
+  readingPrimary: null,
+  readingSecondary: null,
   onlyofficeTw: null,
   pdfReport: null,
   pdfTab: "home",
@@ -441,6 +459,609 @@ function openShortcutCatalog() {
   $("#shortcut-search").focus();
 }
 
+function selectWordToolTab(name) {
+  state.wordToolTab = name;
+  $$("[data-word-tool-tab]").forEach((button) => button.classList.toggle("active", button.dataset.wordToolTab === name));
+  $$("[data-word-tool-panel]").forEach((panel) => panel.classList.toggle("active", panel.dataset.wordToolPanel === name));
+}
+
+async function openWordTools(tab = "recovery") {
+  selectWordToolTab(tab);
+  const dialog = $("#word-tools-dialog");
+  if (!dialog.open) dialog.showModal();
+  if (tab === "recovery") await refreshRecoveryOverview();
+  if (tab === "citations") await loadCitationSources();
+  if (tab === "accessibility" && isWordPath(state.selectedPath)) await runAccessibilityCheck(false);
+  if (tab === "quality" && isWordPath(state.selectedPath)) await runQualityCheck(false);
+  if (tab === "view" && isWordPath(state.selectedPath)) await loadCurrentReadingContent();
+  if (tab === "quickparts") renderAutoText();
+}
+
+function renderRecoveryOverview() {
+  const sessions = state.recoveryOverview?.sessions || [];
+  const banner = $("#word-recovery-banner");
+  banner.classList.toggle("hidden", sessions.length === 0);
+  if (sessions.length) {
+    $("#word-recovery-title").textContent = `${sessions.length} 個工作階段有自動快照`;
+    $("#word-recovery-detail").textContent = "可另存復原，不會覆寫目前文件。";
+  }
+  $("#recovery-list").innerHTML = sessions.length
+    ? sessions.map((session) => `
+      <article class="recovery-item">
+        <div><b>${escapeHtml(session.file_name)}</b><small>${escapeHtml(session.path)}<br>最後快照：${escapeHtml(new Date(session.snapshot_at).toLocaleString("zh-TW"))}・共 ${session.snapshots} 份</small></div>
+        <div class="recovery-item-actions"><button data-recovery-restore="${escapeHtml(session.id)}">另存復原</button><button data-recovery-dismiss="${escapeHtml(session.id)}">標示已完成</button></div>
+      </article>`).join("")
+    : '<p class="empty">目前沒有待處理的工作階段快照。工作台開啟的文件會自動加入這裡。</p>';
+  $$("[data-recovery-restore]").forEach((button) => button.addEventListener("click", () => restoreRecoverySession(button.dataset.recoveryRestore)));
+  $$("[data-recovery-dismiss]").forEach((button) => button.addEventListener("click", () => dismissRecoverySession(button.dataset.recoveryDismiss)));
+}
+
+async function refreshRecoveryOverview(showError = true) {
+  if (!window.__TAURI_INTERNALS__) return;
+  try {
+    state.recoveryOverview = await invoke("recovery_sessions");
+    renderRecoveryOverview();
+  } catch (error) {
+    if (showError) toast(`無法讀取工作階段：${error}`, 8000);
+  }
+}
+
+async function restoreRecoverySession(id) {
+  const session = state.recoveryOverview?.sessions?.find((value) => value.id === id);
+  if (!session) return;
+  const extension = session.file_name.split(".").pop() || "docx";
+  const base = session.file_name.replace(/\.[^.]+$/, "");
+  const destination = await save({
+    defaultPath: `${base}-復原.${extension}`,
+    filters: [{ name: "復原文件", extensions: [extension] }],
+  });
+  if (!destination) return;
+  try {
+    const result = await invoke("restore_recovery_session", { id, destination });
+    toast(result.message, 9000);
+    await refreshRecoveryOverview();
+    await selectDocument(result.path);
+  } catch (error) {
+    toast(`工作階段復原失敗：${error}`, 9000);
+  }
+}
+
+async function dismissRecoverySession(id) {
+  try {
+    await invoke("dismiss_recovery_session", { id });
+    await refreshRecoveryOverview();
+    toast("已從待復原清單移除；原始文件沒有被刪除。");
+  } catch (error) {
+    toast(`無法更新復原清單：${error}`, 8000);
+  }
+}
+
+async function chooseMergeTemplate() {
+  const result = await open({ multiple: false, directory: false, filters: [{ name: "Word 主文件", extensions: ["docx", "docm"] }] });
+  if (typeof result !== "string") return;
+  state.mergeTemplate = result;
+  $("#merge-template-path").textContent = result;
+}
+
+async function chooseMergeDataSource() {
+  const result = await open({ multiple: false, directory: false, filters: [{ name: "收件人資料", extensions: ["csv", "tsv", "txt"] }] });
+  if (typeof result !== "string") return;
+  state.mergeDataSource = result;
+  $("#merge-data-path").textContent = result;
+  await previewMailMerge();
+}
+
+function renderMailMergePreview() {
+  const preview = state.mergePreview;
+  if (!preview) return;
+  const options = preview.headers.map((header) => `<option value="${escapeHtml(header)}">${escapeHtml(header)}</option>`).join("");
+  $("#merge-naming-field").innerHTML = `<option value="">依序編號</option>${options}`;
+  $("#merge-filter-column").innerHTML = `<option value="">不篩選</option>${options}`;
+  const rows = preview.sample_rows.map((row) => `<tr>${preview.headers.map((header) => `<td>${escapeHtml(String(row[header] || ""))}</td>`).join("")}</tr>`).join("");
+  $("#merge-preview-result").innerHTML = `
+    <div class="merge-preview-table"><table><thead><tr>${preview.headers.map((header) => `<th>${escapeHtml(header)}</th>`).join("")}</tr></thead><tbody>${rows}</tbody></table></div>
+    <p class="empty">共 ${preview.row_count.toLocaleString("zh-TW")} 筆；上方顯示前 ${preview.sample_rows.length} 筆。</p>`;
+}
+
+async function previewMailMerge() {
+  if (!state.mergeDataSource) {
+    toast("請先選擇 CSV／TSV 收件人資料。");
+    return;
+  }
+  try {
+    state.mergePreview = await invoke("mail_merge_preview", { dataSource: state.mergeDataSource });
+    renderMailMergePreview();
+  } catch (error) {
+    state.mergePreview = null;
+    $("#merge-preview-result").innerHTML = `<p class="empty">資料預覽失敗：${escapeHtml(String(error))}</p>`;
+  }
+}
+
+async function createMergeTemplate(kind) {
+  const names = { letter: "合併列印-信件範本.docx", envelope: "合併列印-信封範本.docx", labels: "合併列印-標籤範本.docx" };
+  const destination = await save({ defaultPath: names[kind], filters: [{ name: "Word 文件", extensions: ["docx"] }] });
+  if (!destination) return;
+  const fieldText = window.prompt("請輸入欄位名稱，以逗號分隔：", "姓名,地址,郵遞區號") || "姓名,地址,郵遞區號";
+  const fields = fieldText.split(/[,，]/).map((value) => value.trim()).filter(Boolean);
+  try {
+    const result = await invoke("create_mail_merge_template", { kind, destination, fields });
+    state.mergeTemplate = result.path;
+    $("#merge-template-path").textContent = result.path;
+    toast(result.message, 8000);
+  } catch (error) {
+    toast(`建立範本失敗：${error}`, 9000);
+  }
+}
+
+async function generateMailMerge() {
+  if (!state.mergeTemplate || !state.mergeDataSource) {
+    toast("請先選擇主文件及收件人資料。");
+    return;
+  }
+  if (!state.mergePreview) await previewMailMerge();
+  if (!state.mergePreview) return;
+  const outputDirectory = await open({ directory: true, multiple: false, title: "選擇合併列印輸出資料夾" });
+  if (typeof outputDirectory !== "string") return;
+  const button = $("#merge-generate");
+  button.disabled = true;
+  button.textContent = "正在產生…";
+  try {
+    const result = await invoke("mail_merge_generate", {
+      template: state.mergeTemplate,
+      dataSource: state.mergeDataSource,
+      outputDirectory,
+      outputFormat: $("#merge-output-format").value,
+      namingField: $("#merge-naming-field").value,
+      filterColumn: $("#merge-filter-column").value,
+      filterOperator: $("#merge-filter-operator").value,
+      filterValue: $("#merge-filter-value").value,
+    });
+    $("#merge-preview-result").innerHTML = `<p class="citation-preview"><b>${escapeHtml(result.message)}</b><br>${result.created.slice(0, 12).map(escapeHtml).join("<br>")}${result.created.length > 12 ? `<br>…另有 ${result.created.length - 12} 個檔案` : ""}</p>`;
+    toast(result.message, 10000);
+  } catch (error) {
+    toast(`合併列印失敗：${error}`, 10000);
+  } finally {
+    button.disabled = false;
+    button.textContent = "選輸出資料夾並產生";
+  }
+}
+
+function renderAccessibilityReport() {
+  const report = state.accessibilityReport;
+  if (!report) return;
+  const issues = report.issues.map((issue) => `
+    <article class="accessibility-issue ${escapeHtml(issue.severity)}">
+      <div><b>${escapeHtml(issue.category)}：${escapeHtml(issue.message)}</b><small>${escapeHtml(issue.location)}${issue.repairable ? "・可安全自動修復" : "・需人工判斷"}</small></div>
+      <span>${issue.severity === "error" ? "錯誤" : "提醒"}</span>
+    </article>`).join("");
+  $("#accessibility-results").innerHTML = `
+    <div class="accessibility-summary"><div class="accessibility-score">${report.score}</div><div><b>${escapeHtml(report.file_name)}</b><p>${report.issues.length ? `發現 ${report.issues.length} 項問題` : "全部檢查通過"}・${report.passed_checks.map(escapeHtml).join("、")}</p></div></div>
+    ${issues || '<p class="citation-preview">未發現可由文件結構判定的無障礙問題。</p>'}`;
+  $("#accessibility-actions").classList.toggle("hidden", !report.issues.some((issue) => issue.repairable));
+}
+
+async function runAccessibilityCheck(showToast = true) {
+  const path = await ensureWordDocument();
+  if (!path) return;
+  try {
+    state.accessibilityReport = await invoke("word_accessibility_report", { path });
+    renderAccessibilityReport();
+    if (showToast) toast(`無障礙檢查完成：${state.accessibilityReport.score} 分。`);
+  } catch (error) {
+    toast(`無障礙檢查失敗：${error}`, 9000);
+  }
+}
+
+async function repairAccessibility() {
+  const path = await ensureWordDocument();
+  if (!path) return;
+  const stem = path.split(/[\\/]/).pop().replace(/\.[^.]+$/, "");
+  const destination = await save({ defaultPath: `${stem}-無障礙修復.docx`, filters: [{ name: "Word 文件", extensions: ["docx"] }] });
+  if (!destination) return;
+  try {
+    const result = await invoke("repair_word_accessibility", { path, destination });
+    toast(result.message, 10000);
+    await selectDocument(result.path);
+    await runAccessibilityCheck(false);
+  } catch (error) {
+    toast(`無障礙修復未完成：${error}`, 9000);
+  }
+}
+
+function renderQualityReport() {
+  const report = state.qualityReport;
+  if (!report) return;
+  const issues = report.issues.map((issue) => `
+    <article class="quality-issue ${escapeHtml(issue.severity)}">
+      <div><b>${escapeHtml(issue.category)}：${escapeHtml(issue.message)}</b><p>${escapeHtml(issue.suggestion)}</p><small>${escapeHtml(issue.location)}</small></div>
+      <span>${issue.severity === "error" ? "交付前處理" : "建議確認"}</span>
+    </article>`).join("");
+  $("#quality-results").innerHTML = `
+    <div class="accessibility-summary"><div class="accessibility-score">${report.score}</div><div><b>${escapeHtml(report.file_name)}</b><p>${report.characters.toLocaleString("zh-TW")} 字・${report.sentences.toLocaleString("zh-TW")} 句・${report.issues.length ? `發現 ${report.issues.length} 項` : "檢查通過"}</p><small>${report.passed_checks.map(escapeHtml).join("、")}</small></div></div>
+    ${issues || '<p class="citation-preview">未發現台灣標點、未完成欄位或交付前註記問題。</p>'}`;
+}
+
+async function runQualityCheck(showToast = true) {
+  const path = await ensureWordDocument();
+  if (!path) return;
+  try {
+    state.qualityReport = await invoke("word_quality_report", { path });
+    renderQualityReport();
+    if (showToast) toast(`台灣文件校閱完成：${state.qualityReport.score} 分。`);
+  } catch (error) {
+    toast(`文件校閱失敗：${error}`, 9000);
+  }
+}
+
+async function createStructuredWordTemplate(kind) {
+  const names = {
+    "official-letter": "機關函稿.docx",
+    "legal-pleading": "法律書狀.docx",
+    "meeting-minutes": "會議紀錄.docx",
+    "structured-report": "結構化報告.docx",
+  };
+  const destination = await save({
+    defaultPath: names[kind] || "Word範本.docx",
+    filters: [{ name: "Word 文件", extensions: ["docx"] }],
+  });
+  if (!destination) return;
+  try {
+    const result = await invoke("create_word_template", { kind, destination });
+    toast(result.message, 9000);
+    await selectDocument(result.path);
+  } catch (error) {
+    toast(`無法建立範本：${error}`, 9000);
+  }
+}
+
+function citationFormValue(id) {
+  return $(id).value.trim();
+}
+
+function citationFromForm() {
+  return {
+    id: citationFormValue("#citation-id"),
+    source_type: citationFormValue("#citation-type"),
+    author: citationFormValue("#citation-author"),
+    title: citationFormValue("#citation-title"),
+    year: citationFormValue("#citation-year"),
+    publisher: citationFormValue("#citation-publisher"),
+    container_title: citationFormValue("#citation-container"),
+    volume: citationFormValue("#citation-volume"),
+    issue: citationFormValue("#citation-issue"),
+    pages: citationFormValue("#citation-pages"),
+    doi: citationFormValue("#citation-doi"),
+    url: citationFormValue("#citation-url"),
+    accessed: citationFormValue("#citation-accessed"),
+  };
+}
+
+function fillCitationForm(source = null) {
+  const value = source || { id: "", source_type: "book", author: "", title: "", year: "", publisher: "", container_title: "", volume: "", issue: "", pages: "", doi: "", url: "", accessed: "" };
+  $("#citation-id").value = value.id;
+  $("#citation-type").value = value.source_type || "book";
+  $("#citation-author").value = value.author;
+  $("#citation-title").value = value.title;
+  $("#citation-year").value = value.year;
+  $("#citation-publisher").value = value.publisher;
+  $("#citation-container").value = value.container_title;
+  $("#citation-volume").value = value.volume;
+  $("#citation-issue").value = value.issue;
+  $("#citation-pages").value = value.pages;
+  $("#citation-doi").value = value.doi;
+  $("#citation-url").value = value.url;
+  $("#citation-accessed").value = value.accessed;
+}
+
+function selectedCitationIds() {
+  return $$("[data-citation-select]:checked").map((input) => input.dataset.citationSelect);
+}
+
+function renderCitationSources() {
+  $("#citation-list").innerHTML = state.citationSources.length
+    ? state.citationSources.map((source) => `
+      <article class="citation-item">
+        <input type="checkbox" data-citation-select="${escapeHtml(source.id)}" aria-label="選取 ${escapeHtml(source.title)}" />
+        <div><b>${escapeHtml(source.author)}（${escapeHtml(source.year || "無年份")}）${escapeHtml(source.title)}</b><small>${escapeHtml(source.container_title || source.publisher || source.url || source.source_type)}</small></div>
+        <div class="citation-item-actions"><button data-citation-edit="${escapeHtml(source.id)}">編輯</button><button data-citation-delete="${escapeHtml(source.id)}">刪除</button></div>
+      </article>`).join("")
+    : '<p class="empty">尚無來源；請先填寫上方表單。</p>';
+  $$("[data-citation-edit]").forEach((button) => button.addEventListener("click", () => fillCitationForm(state.citationSources.find((source) => source.id === button.dataset.citationEdit))));
+  $$("[data-citation-delete]").forEach((button) => button.addEventListener("click", () => deleteCitationSource(button.dataset.citationDelete)));
+}
+
+async function loadCitationSources() {
+  if (!window.__TAURI_INTERNALS__) return;
+  try {
+    state.citationSources = await invoke("citation_sources");
+    renderCitationSources();
+  } catch (error) {
+    toast(`無法讀取引文來源：${error}`, 8000);
+  }
+}
+
+async function saveCitationSource(event) {
+  event.preventDefault();
+  try {
+    await invoke("save_citation_source", { source: citationFromForm() });
+    fillCitationForm();
+    await loadCitationSources();
+    toast("引文來源已儲存在本機。");
+  } catch (error) {
+    toast(`無法儲存來源：${error}`, 8000);
+  }
+}
+
+async function deleteCitationSource(id) {
+  try {
+    await invoke("delete_citation_source", { id });
+    await loadCitationSources();
+    toast("引文來源已刪除。");
+  } catch (error) {
+    toast(`無法刪除來源：${error}`, 8000);
+  }
+}
+
+async function copyInlineCitation() {
+  const sourceIds = selectedCitationIds();
+  if (!sourceIds.length) {
+    toast("請先勾選至少一筆來源。");
+    return;
+  }
+  try {
+    const result = await invoke("format_citation", { sourceIds, style: $("#citation-style").value });
+    await navigator.clipboard.writeText(result.inline);
+    toast(`已複製內文引文：${result.inline}`, 7000);
+  } catch (error) {
+    toast(`無法產生引文：${error}`, 8000);
+  }
+}
+
+async function appendBibliography() {
+  const path = await ensureWordDocument();
+  if (!path) return;
+  const sourceIds = selectedCitationIds();
+  if (!sourceIds.length) {
+    toast("請先勾選要加入書目的來源。");
+    return;
+  }
+  const stem = path.split(/[\\/]/).pop().replace(/\.[^.]+$/, "");
+  const destination = await save({ defaultPath: `${stem}-含參考文獻.docx`, filters: [{ name: "Word 文件", extensions: ["docx"] }] });
+  if (!destination) return;
+  try {
+    const result = await invoke("append_bibliography", { path, destination, sourceIds, style: $("#citation-style").value });
+    toast(result.message, 9000);
+    await selectDocument(result.path);
+  } catch (error) {
+    toast(`無法加入參考書目：${error}`, 9000);
+  }
+}
+
+async function insertDynamicCitation() {
+  const path = await ensureWordDocument();
+  if (!path) return;
+  const sourceIds = selectedCitationIds();
+  if (!sourceIds.length) {
+    toast("請先勾選要插入的引文來源。");
+    return;
+  }
+  const stem = path.split(/[\\/]/).pop().replace(/\.[^.]+$/, "");
+  const destination = await save({ defaultPath: `${stem}-含動態引文.docx`, filters: [{ name: "Word 文件", extensions: ["docx"] }] });
+  if (!destination) return;
+  try {
+    const result = await invoke("insert_dynamic_citation", { path, destination, sourceIds, style: $("#citation-style").value });
+    toast(result.message, 9000);
+    await selectDocument(result.path);
+  } catch (error) {
+    toast(`無法插入動態引文：${error}`, 9000);
+  }
+}
+
+async function updateDocumentCitations() {
+  const path = await ensureWordDocument();
+  if (!path) return;
+  const stem = path.split(/[\\/]/).pop().replace(/\.[^.]+$/, "");
+  const destination = await save({ defaultPath: `${stem}-引文已更新.docx`, filters: [{ name: "Word 文件", extensions: ["docx"] }] });
+  if (!destination) return;
+  try {
+    const result = await invoke("update_document_citations", { path, destination });
+    toast(result.message, 9000);
+    await selectDocument(result.path);
+  } catch (error) {
+    toast(`無法更新文件引文：${error}`, 9000);
+  }
+}
+
+function readingParagraphHtml(paragraph, editable = false) {
+  const level = paragraph.heading_level;
+  const actions = level && editable
+    ? `<span class="outline-actions" aria-label="編輯「${escapeHtml(paragraph.text)}」">
+        <button data-outline-action="move_up" data-outline-paragraph="${paragraph.index}" title="連同所屬內容上移">↑</button>
+        <button data-outline-action="move_down" data-outline-paragraph="${paragraph.index}" title="連同所屬內容下移">↓</button>
+        <button data-outline-action="promote" data-outline-paragraph="${paragraph.index}" title="提升標題層級">←</button>
+        <button data-outline-action="demote" data-outline-paragraph="${paragraph.index}" title="降低標題層級">→</button>
+      </span>`
+    : "";
+  return `<p class="reading-paragraph${level ? " reading-heading" : ""}"${level ? ` data-level="${level}"` : ""} data-paragraph="${paragraph.index}">${level ? `<span class="outline-level">H${level}</span>` : ""}<span class="reading-text">${escapeHtml(paragraph.text)}</span>${actions}</p>`;
+}
+
+function renderReadingPane(target, content, editable = false) {
+  target.classList.remove("mode-outline", "mode-draft", "mode-web");
+  target.classList.add(`mode-${$("#reading-mode").value}`);
+  target.innerHTML = content?.paragraphs?.length
+    ? content.paragraphs.map((paragraph) => readingParagraphHtml(paragraph, editable)).join("")
+    : '<p class="empty">文件沒有可顯示的文字段落。</p>';
+  if (editable) {
+    target.querySelectorAll("[data-outline-action]").forEach((button) => {
+      button.addEventListener("click", () => editReadingOutline(
+        Number(button.dataset.outlineParagraph),
+        button.dataset.outlineAction,
+      ));
+    });
+  }
+}
+
+function renderReadingWorkspace() {
+  if (state.readingPrimary) renderReadingPane($("#reading-primary"), state.readingPrimary, true);
+  const secondary = $("#reading-secondary");
+  secondary.classList.toggle("hidden", !state.readingSecondary);
+  if (state.readingSecondary) renderReadingPane(secondary, state.readingSecondary, false);
+  $("#reading-status").textContent = state.readingPrimary
+    ? `${state.readingPrimary.file_name}・${state.readingPrimary.paragraphs.length} 段${state.readingSecondary ? `　並排：${state.readingSecondary.file_name}` : ""}`
+    : "尚未載入文件";
+  const comments = state.readingPrimary?.comments || [];
+  $("#review-comments").innerHTML = comments.length
+    ? `<div class="word-tool-heading"><div><h3>本機註解工作清單</h3><p>顯示作者、日期及 @指派；回覆、圖片與雲端通知仍由編輯器／協作平台處理。</p></div><b>${comments.length} 則</b></div>` + comments.map((comment) => `
+      <article class="review-comment"><b>${escapeHtml(comment.author || "未署名")}${comment.mentions.length ? `　指派：${comment.mentions.map((value) => `@${escapeHtml(value)}`).join("、")}` : ""}</b><p>${escapeHtml(comment.text)}</p><small>${escapeHtml(comment.date || "未記錄日期")}</small></article>`).join("")
+    : '<p class="empty">目前文件沒有註解。</p>';
+}
+
+async function editReadingOutline(paragraph, action) {
+  const path = await ensureWordDocument();
+  if (!path) return;
+  const stem = path.split(/[\\/]/).pop().replace(/\.[^.]+$/, "");
+  const destination = await save({
+    defaultPath: `${stem}-大綱編輯.docx`,
+    filters: [{ name: "Word 文件", extensions: ["docx"] }],
+  });
+  if (!destination) return;
+  try {
+    const result = await invoke("edit_word_outline", { path, destination, paragraph, action });
+    toast(result.message, 9000);
+    await selectDocument(result.path);
+    await loadReadingContent(result.path);
+  } catch (error) {
+    toast(`大綱編輯失敗：${error}`, 9000);
+  }
+}
+
+async function loadReadingContent(path, secondary = false) {
+  try {
+    const content = await invoke("word_reading_content", { path });
+    if (secondary) state.readingSecondary = content;
+    else state.readingPrimary = content;
+    renderReadingWorkspace();
+  } catch (error) {
+    toast(`無法建立文件檢視：${error}`, 8000);
+  }
+}
+
+async function loadCurrentReadingContent() {
+  const path = await ensureWordDocument();
+  if (path) await loadReadingContent(path);
+}
+
+async function loadSecondReadingContent() {
+  const path = await open({ multiple: false, directory: false, filters: [{ name: "Word 文件", extensions: ["docx", "docm"] }] });
+  if (typeof path === "string") await loadReadingContent(path, true);
+}
+
+let readingSyncing = false;
+function synchronizeReadingScroll(source, target) {
+  if (readingSyncing || !$("#reading-sync").checked || target.classList.contains("hidden")) return;
+  const available = source.scrollHeight - source.clientHeight;
+  const targetAvailable = target.scrollHeight - target.clientHeight;
+  if (available <= 0 || targetAvailable <= 0) return;
+  readingSyncing = true;
+  target.scrollTop = (source.scrollTop / available) * targetAvailable;
+  requestAnimationFrame(() => { readingSyncing = false; });
+}
+
+async function runLanguageTool(button) {
+  const path = await ensureWordDocument();
+  if (!path) return;
+  $("#magi-mode").value = button.dataset.languageTool;
+  $("#magi-instruction").value = button.dataset.languageInstruction || "";
+  $("#magi-panel").classList.remove("hidden");
+  $("#word-tools-dialog").close();
+  $("#magi-panel").scrollIntoView({ behavior: "smooth", block: "center" });
+  await runMagiAnalysis();
+}
+
+function autoTextItems() {
+  try {
+    return JSON.parse(localStorage.getItem("opendesk-autotext-v1") || "[]");
+  } catch {
+    return [];
+  }
+}
+
+function renderAutoText() {
+  const items = autoTextItems();
+  $("#autotext-list").innerHTML = items.length
+    ? items.map((item, index) => `<label class="autotext-item"><input type="radio" name="autotext-selected" value="${index}" ${index === 0 ? "checked" : ""} /><b title="${escapeHtml(item.content)}">${escapeHtml(item.name)}</b><button type="button" data-autotext-delete="${index}">刪除</button></label>`).join("")
+    : '<p class="empty">尚無片段。</p>';
+  $$("[data-autotext-delete]").forEach((button) => button.addEventListener("click", () => {
+    const next = autoTextItems();
+    next.splice(Number(button.dataset.autotextDelete), 1);
+    localStorage.setItem("opendesk-autotext-v1", JSON.stringify(next));
+    renderAutoText();
+  }));
+}
+
+function saveAutoText() {
+  const name = $("#autotext-name").value.trim();
+  const content = $("#autotext-content").value.trim();
+  if (!name || !content) {
+    toast("AutoText 名稱與內容都不能留白。");
+    return;
+  }
+  const items = autoTextItems();
+  const existing = items.find((item) => item.name === name);
+  if (existing) existing.content = content;
+  else items.push({ name, content });
+  localStorage.setItem("opendesk-autotext-v1", JSON.stringify(items));
+  $("#autotext-name").value = "";
+  $("#autotext-content").value = "";
+  renderAutoText();
+  toast("AutoText 已儲存在本機。");
+}
+
+async function insertWordComponent(kind, title, subtitle = "", items = []) {
+  const path = await ensureWordDocument();
+  if (!path) return;
+  const name = path.split(/[\\/]/).pop();
+  const extension = name.split(".").pop() || "docx";
+  const stem = name.replace(/\.[^.]+$/, "");
+  const destination = await save({ defaultPath: `${stem}-${kind === "cover" ? "封面" : kind === "autotext" ? "AutoText" : "圖解"}.${extension}`, filters: [{ name: "Word 文件", extensions: [extension] }] });
+  if (!destination) return;
+  try {
+    const result = await invoke("insert_word_component", { path, destination, kind, title, subtitle, items });
+    toast(result.message, 9000);
+    await selectDocument(result.path);
+  } catch (error) {
+    toast(`無法插入 Word 元件：${error}`, 9000);
+  }
+}
+
+async function insertSelectedAutoText() {
+  const selected = document.querySelector('input[name="autotext-selected"]:checked');
+  const item = selected ? autoTextItems()[Number(selected.value)] : null;
+  if (!item) {
+    toast("請先選擇一個 AutoText 片段。");
+    return;
+  }
+  await insertWordComponent("autotext", item.content);
+}
+
+async function insertCoverPage() {
+  const title = $("#cover-title").value.trim();
+  if (!title) {
+    toast("請輸入封面標題。");
+    return;
+  }
+  await insertWordComponent("cover", title, $("#cover-subtitle").value.trim(), [$("#cover-author").value.trim()].filter(Boolean));
+}
+
+async function insertDiagram() {
+  const items = $("#diagram-items").value.split(/\r?\n/).map((value) => value.trim()).filter(Boolean);
+  if (!items.length) {
+    toast("請輸入至少一個圖解項目。");
+    return;
+  }
+  await insertWordComponent($("#diagram-kind").value, $("#diagram-title").value.trim(), "", items);
+}
+
 async function loadStatus() {
   if (!window.__TAURI_INTERNALS__) {
     $("#system-summary").textContent = "介面預覽模式・本機文件功能會在桌面 App 啟用";
@@ -453,7 +1074,7 @@ async function loadStatus() {
     const engines = state.status.engines.map((item) => `${item.installed ? "●" : "○"} ${item.name}${item.version ? ` ${item.version}` : ""}`).join("　");
     $("#system-summary").textContent = `${state.status.platform}・${engines}・${state.status.magi.summary}`;
     $("#app-version").textContent = `全能文件工作台 ${state.status.app_version}`;
-    await Promise.all([loadPdfEngineStatus(), loadOnlyOfficeTwStatus()]);
+    await Promise.all([loadPdfEngineStatus(), loadOnlyOfficeTwStatus(), refreshRecoveryOverview(false)]);
   } catch (error) {
     $("#system-summary").textContent = `環境檢查失敗：${error}`;
   }
@@ -464,12 +1085,20 @@ async function loadOnlyOfficeTwStatus() {
     const status = await invoke("onlyoffice_tw_status");
     state.onlyofficeTw = status;
     const banner = $("#onlyoffice-tw-banner");
-    const ready = status.installed && status.traditional_chinese && status.plugin_installed;
+    const ready = status.installed && status.traditional_chinese && status.plugin_installed && status.plugin_current;
     banner.classList.toggle("ready", ready);
     banner.classList.toggle("warning", !ready);
-    $("#onlyoffice-tw-title").textContent = ready ? "● ONLYOFFICE 完整繁中與數字字級已就緒" : "○ ONLYOFFICE 繁中介面需要處理";
+    $("#onlyoffice-tw-title").textContent = ready
+      ? "● ONLYOFFICE 完整繁中與數字字級已就緒"
+      : status.plugin_installed && !status.plugin_current
+        ? "○ ONLYOFFICE 繁中寫作工具需要更新"
+        : "○ ONLYOFFICE 繁中介面需要處理";
     $("#onlyoffice-tw-detail").textContent = `${status.message}・目前語系：${status.current_language}${status.running ? "・ONLYOFFICE 正在運作" : ""}`;
-    $("#repair-onlyoffice-tw").textContent = ready ? "重新驗證／修復" : "一鍵補齊繁中＋數字字級";
+    $("#repair-onlyoffice-tw").textContent = ready
+      ? "重新驗證／修復"
+      : status.running && !status.plugin_current
+        ? "關閉 ONLYOFFICE 後更新"
+        : "一鍵補齊繁中＋數字字級";
   } catch (error) {
     $("#onlyoffice-tw-title").textContent = "無法檢查 ONLYOFFICE 繁中狀態";
     $("#onlyoffice-tw-detail").textContent = String(error);
@@ -493,7 +1122,7 @@ async function repairOnlyOfficeTraditionalChinese() {
     toast(`ONLYOFFICE 繁中修復未完成：${error}`, 10000);
   } finally {
     button.disabled = false;
-    if (!state.onlyofficeTw?.traditional_chinese || !state.onlyofficeTw?.plugin_installed) button.textContent = original;
+    if (!state.onlyofficeTw?.traditional_chinese || !state.onlyofficeTw?.plugin_installed || !state.onlyofficeTw?.plugin_current) button.textContent = original;
   }
 }
 
@@ -559,15 +1188,9 @@ async function selectDocument(path) {
 }
 
 async function createDocument(kind) {
-  const map = { text: ["未命名文字文件.docx", "docx"], spreadsheet: ["未命名試算表.xlsx", "xlsx"], presentation: ["未命名簡報.pptx", "pptx"] };
-  const [defaultPath, extension] = map[kind];
-  const destination = await save({ defaultPath, filters: [{ name: "Office 文件", extensions: [extension] }] });
-  if (!destination) return;
   try {
-    const result = await invoke("create_document", { kind, destination });
-    recordRecent(result.path);
-    toast(`已建立 ${result.file_name}，正在開啟編輯器…`);
-    await selectDocument(result.path);
+    const result = await invoke("create_document", { kind });
+    toast(result.message, 7000);
   } catch (error) { toast(`新增失敗：${error}`); }
 }
 
@@ -613,9 +1236,9 @@ function renderWordTab() {
   $("#word-tab-intro").innerHTML = `<b>${escapeHtml(tab.title)}</b><span>${escapeHtml(tab.detail)}</span>`;
   $("#word-task-grid").innerHTML = tab.tasks.map(([id, title, detail, location, action]) => `
     <article class="word-task-card">
-      <div class="word-task-icon" aria-hidden="true">${action === "report" ? "✓" : action === "renumber" ? "↻" : action === "pdf" ? "PDF" : action === "magi" ? "AI" : action === "twtools" ? "繁" : action === "new" ? "+" : action === "open" ? "↗" : action === "backups" ? "⌕" : "→"}</div>
+      <div class="word-task-icon" aria-hidden="true">${action === "report" || action === "accessibility" || action === "quality" ? "✓" : action === "renumber" ? "↻" : action === "pdf" ? "PDF" : action === "magi" ? "AI" : action === "twtools" ? "繁" : action === "new" ? "+" : action === "open" ? "↗" : action === "recovery" ? "↺" : action === "merge" ? "✉" : action === "citations" ? "§" : action === "view" ? "👁" : action === "language" ? "譯" : action === "quickparts" ? "▦" : "→"}</div>
       <div class="word-task-copy"><h3>${escapeHtml(title)}</h3><p>${escapeHtml(detail)}</p><small>${escapeHtml(location)}</small></div>
-      <button class="word-task-action" data-word-task="${id}">${action === "report" ? "立即檢查" : action === "renumber" ? "安全重編" : action === "pdf" ? "轉成 PDF" : action === "magi" ? "交給 MAGI" : action === "twtools" ? "啟用工具" : action === "new" ? "新增文件" : action === "open" ? "選擇文件" : action === "backups" ? "開啟備份" : "開啟使用"}</button>
+      <button class="word-task-action" data-word-task="${id}">${action === "report" || action === "accessibility" || action === "quality" ? "立即檢查" : action === "renumber" ? "安全重編" : action === "pdf" ? "轉成 PDF" : action === "magi" ? "交給 MAGI" : action === "twtools" ? "啟用工具" : action === "new" ? "新增文件" : action === "open" ? "選擇文件" : action === "recovery" ? "查看復原" : action === "merge" ? "開啟精靈" : action === "citations" ? "管理來源" : action === "view" ? "開啟檢視" : action === "language" ? "開啟語言工具" : action === "quickparts" ? "建立元件" : "開啟使用"}</button>
     </article>`).join("");
   $$('[data-word-task]').forEach((button) => button.addEventListener("click", () => runWordTask(button.dataset.wordTask)));
 }
@@ -640,13 +1263,8 @@ async function runWordTask(id) {
     await chooseWordDocument();
     return;
   }
-  if (action === "backups") {
-    try {
-      const backupRoot = await invoke("open_backup_folder");
-      toast(`已開啟安全備份資料夾：${backupRoot}`, 8000);
-    } catch (error) {
-      toast(`無法開啟備份資料夾：${error}`, 8000);
-    }
+  if (["recovery", "merge", "accessibility", "quality", "citations", "view", "language", "quickparts"].includes(action)) {
+    await openWordTools(action);
     return;
   }
   if (action === "twtools") {
@@ -678,6 +1296,7 @@ async function runWordTask(id) {
     }
     const engine = requestedEngine || state.selectedAnalysis?.preferred_engine || "ONLYOFFICE";
     const result = await invoke("backup_and_open", { path, engine });
+    await refreshRecoveryOverview(false);
     toast(`${result.message}。開啟後請使用：${location}`, 9000);
   } catch (error) {
     toast(`${title}無法執行：${error}`, 8000);
@@ -1829,12 +2448,52 @@ function openLegalDialog() {
 
 $$('[data-create]').forEach((button) => button.addEventListener("click", () => createDocument(button.dataset.create)));
 $("#open-word-document").addEventListener("click", chooseWordDocument);
+$("#word-complete-tools").addEventListener("click", () => openWordTools("recovery"));
 $("#word-shortcuts").addEventListener("click", openShortcutCatalog);
 $("#shortcut-search").addEventListener("input", renderShortcutCatalog);
 $("#shortcut-close").addEventListener("click", () => $("#shortcut-dialog").close());
 $("#shortcut-dialog").addEventListener("click", (event) => {
   if (event.target === $("#shortcut-dialog")) $("#shortcut-dialog").close();
 });
+$("#word-tools-close").addEventListener("click", () => $("#word-tools-dialog").close());
+$("#word-tools-dialog").addEventListener("click", (event) => {
+  if (event.target === $("#word-tools-dialog")) $("#word-tools-dialog").close();
+});
+$$("[data-word-tool-tab]").forEach((button) => button.addEventListener("click", async () => {
+  selectWordToolTab(button.dataset.wordToolTab);
+  if (button.dataset.wordToolTab === "recovery") await refreshRecoveryOverview();
+  if (button.dataset.wordToolTab === "citations") await loadCitationSources();
+  if (button.dataset.wordToolTab === "quality" && isWordPath(state.selectedPath)) await runQualityCheck(false);
+  if (button.dataset.wordToolTab === "view" && isWordPath(state.selectedPath)) await loadCurrentReadingContent();
+  if (button.dataset.wordToolTab === "quickparts") renderAutoText();
+}));
+$("#word-recovery-open").addEventListener("click", () => openWordTools("recovery"));
+$("#recovery-refresh").addEventListener("click", () => refreshRecoveryOverview());
+$("#merge-template-choose").addEventListener("click", chooseMergeTemplate);
+$("#merge-data-choose").addEventListener("click", chooseMergeDataSource);
+$("#merge-preview").addEventListener("click", previewMailMerge);
+$("#merge-generate").addEventListener("click", generateMailMerge);
+$$("[data-merge-template]").forEach((button) => button.addEventListener("click", () => createMergeTemplate(button.dataset.mergeTemplate)));
+$("#accessibility-check").addEventListener("click", () => runAccessibilityCheck());
+$("#accessibility-repair").addEventListener("click", repairAccessibility);
+$("#quality-check").addEventListener("click", () => runQualityCheck());
+$$("[data-word-template]").forEach((button) => button.addEventListener("click", () => createStructuredWordTemplate(button.dataset.wordTemplate)));
+$("#citation-form").addEventListener("submit", saveCitationSource);
+$("#citation-reset").addEventListener("click", () => fillCitationForm());
+$("#citation-copy").addEventListener("click", copyInlineCitation);
+$("#citation-insert").addEventListener("click", insertDynamicCitation);
+$("#citation-append").addEventListener("click", appendBibliography);
+$("#citation-update").addEventListener("click", updateDocumentCitations);
+$("#reading-load-current").addEventListener("click", loadCurrentReadingContent);
+$("#reading-load-second").addEventListener("click", loadSecondReadingContent);
+$("#reading-mode").addEventListener("change", renderReadingWorkspace);
+$("#reading-primary").addEventListener("scroll", () => synchronizeReadingScroll($("#reading-primary"), $("#reading-secondary")));
+$("#reading-secondary").addEventListener("scroll", () => synchronizeReadingScroll($("#reading-secondary"), $("#reading-primary")));
+$$("[data-language-tool]").forEach((button) => button.addEventListener("click", () => runLanguageTool(button)));
+$("#autotext-save").addEventListener("click", saveAutoText);
+$("#autotext-insert").addEventListener("click", insertSelectedAutoText);
+$("#cover-insert").addEventListener("click", insertCoverPage);
+$("#diagram-insert").addEventListener("click", insertDiagram);
 $("#repair-onlyoffice-tw").addEventListener("click", repairOnlyOfficeTraditionalChinese);
 $("#open-document").addEventListener("click", async () => {
   const result = await open({ multiple: false, directory: false, filters: [{ name: "Office 與 PDF", extensions: ["docx","docm","doc","rtf","xlsx","xlsm","xls","csv","pptx","pptm","ppt","pdf","odt","ods","odp"] }] });
@@ -1866,6 +2525,7 @@ $("#word-edit").addEventListener("click", async () => {
   if (!path) return;
   try {
     const result = await invoke("backup_and_open", { path, engine: state.selectedAnalysis?.preferred_engine || "ONLYOFFICE" });
+    await refreshRecoveryOverview(false);
     toast(result.message, 8000);
   } catch (error) { toast(String(error)); }
 });
@@ -1958,10 +2618,11 @@ $("#open-primary").addEventListener("click", async () => {
       return;
     }
     const result = await invoke("backup_and_open", { path: state.selectedPath, engine: state.selectedAnalysis.preferred_engine });
+    await refreshRecoveryOverview(false);
     toast(result.message);
   } catch (error) { toast(String(error)); }
 });
-$("#open-alternate").addEventListener("click", async () => { try { const result = await invoke("backup_and_open", { path: state.selectedPath, engine: state.selectedAnalysis.alternate_engine }); toast(result.message); } catch (error) { toast(String(error)); } });
+$("#open-alternate").addEventListener("click", async () => { try { const result = await invoke("backup_and_open", { path: state.selectedPath, engine: state.selectedAnalysis.alternate_engine }); await refreshRecoveryOverview(false); toast(result.message); } catch (error) { toast(String(error)); } });
 $("#convert-pdf").addEventListener("click", async () => { try { toast("正在本機轉換 PDF…"); const result = await invoke("convert_pdf", { path: state.selectedPath }); toast(`PDF 已完成：${result}`); } catch (error) { toast(`PDF 轉換失敗：${error}`); } });
 $("#magi-analyze").addEventListener("click", () => { $("#magi-panel").classList.toggle("hidden"); if (!$("#magi-panel").classList.contains("hidden")) $("#magi-panel").scrollIntoView({ behavior: "smooth", block: "center" }); });
 $("#magi-run").addEventListener("click", runMagiAnalysis);

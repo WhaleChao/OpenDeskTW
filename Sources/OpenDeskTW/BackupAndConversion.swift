@@ -106,20 +106,40 @@ struct PDFConverter {
         let outputFolder = root.appendingPathComponent("\(sourceURL.deletingPathExtension().lastPathComponent)-\(stamp)", isDirectory: true)
         try FileManager.default.createDirectory(at: outputFolder, withIntermediateDirectories: true)
 
-        let profileFolder = FileManager.default.temporaryDirectory
+        let workingFolder = FileManager.default.temporaryDirectory
             .appendingPathComponent("OpenDeskTW-LO-\(UUID().uuidString)", isDirectory: true)
+        let profileFolder = workingFolder.appendingPathComponent("profile", isDirectory: true)
+        let stagedOutputFolder = workingFolder.appendingPathComponent("output", isDirectory: true)
+        var stagedSource = workingFolder.appendingPathComponent("input")
+        if !sourceURL.pathExtension.isEmpty {
+            stagedSource.appendPathExtension(sourceURL.pathExtension)
+        }
         try FileManager.default.createDirectory(at: profileFolder, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: profileFolder) }
+        try FileManager.default.createDirectory(at: stagedOutputFolder, withIntermediateDirectories: true)
+        try FileManager.default.copyItem(at: sourceURL, to: stagedSource)
+        defer { try? FileManager.default.removeItem(at: workingFolder) }
 
+        let officeArguments = [
+            "-env:UserInstallation=\(profileFolder.absoluteString)",
+            "--headless",
+            "--nologo",
+            "--nodefault",
+            "--norestore",
+            "--nolockcheck",
+            "--convert-to", "pdf",
+            "--outdir", stagedOutputFolder.path,
+            stagedSource.path
+        ]
+        // LibreOffice 的 macOS headless 模式仍會初始化 AppKit。直接執行
+        // Contents/MacOS/soffice 在 macOS 26 可能於 HIServices 註冊階段
+        // SIGABRT；經由 LaunchServices 啟動隱藏的新 instance 並等待完成。
         let result = try ProcessRunner.run(
-            executable: executable.path,
+            executable: "/usr/bin/open",
             arguments: [
-                "-env:UserInstallation=\(profileFolder.absoluteString)",
-                "--headless",
-                "--convert-to", "pdf",
-                "--outdir", outputFolder.path,
-                sourceURL.path
-            ]
+                "-W", "-n", "-j", "-g",
+                "-a", EngineLocator.appURL(for: .libreOffice).path,
+                "--args"
+            ] + officeArguments
         )
         guard result.exitCode == 0 else {
             throw OpenDeskError.processFailed(
@@ -129,10 +149,12 @@ struct PDFConverter {
             )
         }
 
-        let expected = outputFolder.appendingPathComponent(sourceURL.deletingPathExtension().lastPathComponent).appendingPathExtension("pdf")
-        guard FileManager.default.fileExists(atPath: expected.path) else {
-            throw OpenDeskError.outputMissing(expected.path)
+        let generated = stagedOutputFolder.appendingPathComponent("input.pdf")
+        guard FileManager.default.fileExists(atPath: generated.path) else {
+            throw OpenDeskError.outputMissing(generated.path)
         }
+        let expected = outputFolder.appendingPathComponent(sourceURL.deletingPathExtension().lastPathComponent).appendingPathExtension("pdf")
+        try FileManager.default.copyItem(at: generated, to: expected)
         return expected
     }
 

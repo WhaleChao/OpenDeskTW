@@ -24,9 +24,9 @@
           <button class="quiet" id="check-update">檢查安全熱修</button>
         </div>
         <div class="quick-grid">
-          <button class="quick-card word" data-create="text"><span class="quick-icon">W</span><span><b>新增文字文件</b><small>DOCX・排版・頁碼・頁首頁尾</small></span></button>
-          <button class="quick-card sheet" data-create="spreadsheet"><span class="quick-icon">X</span><span><b>新增試算表</b><small>XLSX・公式・圖表・工作表</small></span></button>
-          <button class="quick-card slide" data-create="presentation"><span class="quick-icon">P</span><span><b>新增簡報</b><small>PPTX・母片・轉場・備忘稿</small></span></button>
+          <button class="quick-card word" data-create="text"><span class="quick-icon">W</span><span><b>新增文字文件</b><small>立即開啟・儲存時再選位置</small></span></button>
+          <button class="quick-card sheet" data-create="spreadsheet"><span class="quick-icon">X</span><span><b>新增試算表</b><small>立即開啟・儲存時再選位置</small></span></button>
+          <button class="quick-card slide" data-create="presentation"><span class="quick-icon">P</span><span><b>新增簡報</b><small>立即開啟・儲存時再選位置</small></span></button>
           <button class="quick-card open" id="open-document"><span class="quick-icon">＋</span><span><b>開啟現有文件</b><small>Office・PDF・ODF・舊版格式</small></span></button>
         </div>
       </section>
@@ -41,6 +41,7 @@
           <div class="word-start-actions">
             <button class="primary" data-create="text">＋ 新增 Word 文件</button>
             <button id="open-word-document">開啟 Word 文件</button>
+            <button id="word-complete-tools">Word 進階工具</button>
             <button id="word-shortcuts">快捷鍵總覽</button>
           </div>
         </div>
@@ -50,6 +51,10 @@
             <span id="onlyoffice-tw-detail">會核對完整繁中介面、數字字級與寫作工具，不會讀取文件內容。</span>
           </div>
           <button id="repair-onlyoffice-tw">一鍵補齊繁中＋數字字級</button>
+        </div>
+        <div class="word-recovery-banner hidden" id="word-recovery-banner" aria-live="polite">
+          <div><b id="word-recovery-title">有可復原的工作階段</b><span id="word-recovery-detail"></span></div>
+          <button id="word-recovery-open">查看並復原</button>
         </div>
         <div class="word-ribbon" role="tablist" aria-label="Word 功能區">
           <button id="word-tab-file" role="tab" aria-selected="false" aria-controls="word-task-panel" tabindex="-1" data-word-tab="file">檔案</button>
@@ -252,6 +257,10 @@
                 <option value="summary">摘要重點</option>
                 <option value="review">校對與疑點</option>
                 <option value="structure">結構與標題</option>
+                <option value="translate">整份文件翻譯</option>
+                <option value="rewrite">正式改寫</option>
+                <option value="thesaurus">同義詞與用語</option>
+                <option value="similarity">相似度檢查</option>
               </select>
             </label>
             <label class="magi-instruction">追加要求（可留白）
@@ -311,6 +320,181 @@
       <div class="shortcut-platform-note" id="shortcut-platform-note"></div>
       <div class="shortcut-grid" id="shortcut-grid"></div>
       <p class="shortcut-boundary">常用頁籤已集中分散對齊、智慧補齊、標題重編與 MAGI 摘要；格式刷仍在原生常用工具列。快捷鍵只在文件編輯器內生效，不占用作業系統全域熱鍵。</p>
+    </dialog>
+    <dialog class="word-tools-dialog" id="word-tools-dialog" aria-labelledby="word-tools-title">
+      <div class="shortcut-dialog-head">
+        <div>
+          <span class="eyebrow">真正產出檔案・不只提供說明</span>
+          <h2 id="word-tools-title">Word 進階工具</h2>
+          <p>復原、合併列印、無障礙修復與引文書目都在本機完成。</p>
+        </div>
+        <button id="word-tools-close" aria-label="關閉 Word 進階工具">關閉</button>
+      </div>
+      <div class="word-tools-tabs" role="tablist" aria-label="Word 進階工具">
+        <button class="active" data-word-tool-tab="recovery">工作階段復原</button>
+        <button data-word-tool-tab="merge">合併列印</button>
+        <button data-word-tool-tab="accessibility">無障礙檢查</button>
+        <button data-word-tool-tab="quality">公文校閱與範本</button>
+        <button data-word-tool-tab="citations">引文與書目</button>
+        <button data-word-tool-tab="view">檢視與註解</button>
+        <button data-word-tool-tab="language">語言與聽寫</button>
+        <button data-word-tool-tab="quickparts">封面・AutoText・圖解</button>
+      </div>
+      <section class="word-tool-panel active" data-word-tool-panel="recovery">
+        <div class="word-tool-heading">
+          <div><h3>未儲存工作階段復原</h3><p>工作台開啟文件後每 45 秒檢查變更，保留最新可辨識副本；復原時永遠另存新檔。</p></div>
+          <button id="recovery-refresh">重新整理</button>
+        </div>
+        <div class="word-tool-results" id="recovery-list"><p class="empty">正在讀取復原清單…</p></div>
+      </section>
+      <section class="word-tool-panel" data-word-tool-panel="merge">
+        <div class="word-tool-heading">
+          <div><h3>整合式合併列印</h3><p>主文件可使用 <code>{{姓名}}</code>、<code>«姓名»</code>、Word MERGEFIELD，以及 IF、Ask、Fill-in、Set、MergeRec／MergeSeq、Skip／Next Record If 規則。</p></div>
+        </div>
+        <div class="word-tool-actions template-actions">
+          <button data-merge-template="letter">建立信件範本</button>
+          <button data-merge-template="envelope">建立信封範本</button>
+          <button data-merge-template="labels">建立標籤範本</button>
+        </div>
+        <div class="word-tool-form">
+          <label>主文件 <span id="merge-template-path">尚未選擇</span><button type="button" id="merge-template-choose">選擇 DOCX</button></label>
+          <label>收件人資料 <span id="merge-data-path">尚未選擇</span><button type="button" id="merge-data-choose">選擇 CSV／TSV</button></label>
+          <div class="word-tool-form-grid">
+            <label>輸出檔名欄位<select id="merge-naming-field"><option value="">依序編號</option></select></label>
+            <label>輸出格式<select id="merge-output-format"><option value="docx">個別 DOCX</option><option value="pdf">個別 PDF</option><option value="both">DOCX＋PDF</option></select></label>
+            <label>篩選欄位<select id="merge-filter-column"><option value="">不篩選</option></select></label>
+            <label>篩選條件<select id="merge-filter-operator"><option value="contains">包含</option><option value="notcontains">不包含</option><option value="equals">等於</option><option value="not">不等於</option><option value="starts">開頭是</option><option value="ends">結尾是</option><option value="empty">空白</option><option value="notempty">非空白</option><option value=">">大於</option><option value=">=">大於等於</option><option value="<">小於</option><option value="<=">小於等於</option></select></label>
+            <label>比較文字<input id="merge-filter-value" type="text" placeholder="空白／非空白不需填" /></label>
+          </div>
+          <details class="merge-rule-guide">
+            <summary>Word 條件規則寫法</summary>
+            <p><code>{{IF:會員|等於|是|會員您好|您好}}</code>、<code>{{SET:稱謂|姓名}}</code>、<code>{{ASK:主旨|提示|預設主旨}}</code>、<code>{{FILLIN:提示|預設文字}}</code>、<code>{{MERGEREC}}</code>、<code>{{MERGESEQ}}</code>、<code>{{SKIPIF:狀態|等於|停用}}</code>。<code>NEXTIF</code> 在個別文件模式中等同略過符合資料列。</p>
+          </details>
+          <div class="word-tool-actions">
+            <button id="merge-preview">預覽資料</button>
+            <button class="primary" id="merge-generate">選輸出資料夾並產生</button>
+          </div>
+        </div>
+        <div class="word-tool-results" id="merge-preview-result"><p class="empty">先選擇主文件及收件人資料。</p></div>
+      </section>
+      <section class="word-tool-panel" data-word-tool-panel="accessibility">
+        <div class="word-tool-heading">
+          <div><h3>可操作的無障礙檢查器</h3><p>檢查替代文字、表格標題列、文件語言、標題跳級、連結文字與文件標題；每項都顯示位置。</p></div>
+          <button class="primary" id="accessibility-check">檢查目前 Word 文件</button>
+        </div>
+        <div class="word-tool-results" id="accessibility-results"><p class="empty">尚未檢查文件。</p></div>
+        <div class="word-tool-actions hidden" id="accessibility-actions">
+          <button class="primary" id="accessibility-repair">安全自動修復並另存</button>
+          <span>只自動處理可確定的項目；圖片替代文字、標題層級與連結名稱保留人工判斷。</span>
+        </div>
+      </section>
+      <section class="word-tool-panel" data-word-tool-panel="quality">
+        <div class="word-tool-heading">
+          <div><h3>台灣文件交付前校閱</h3><p>在本機檢查未完成欄位、括號／引號、中文半形標點、空白排版、長句、待辦註記、重複文字與常見非台灣用語。</p></div>
+          <button class="primary" id="quality-check">檢查目前 Word 文件</button>
+        </div>
+        <div class="word-tool-results" id="quality-results"><p class="empty">尚未檢查文件。</p></div>
+        <div class="template-library">
+          <h4>結構化繁體中文範本</h4>
+          <p>建立後立即可編輯，第一次儲存位置由您決定；標題結構可直接產生目錄與導覽。</p>
+          <div class="word-tool-actions">
+            <button data-word-template="official-letter">機關函稿</button>
+            <button data-word-template="legal-pleading">法律書狀</button>
+            <button data-word-template="meeting-minutes">會議紀錄</button>
+            <button data-word-template="structured-report">結構化報告</button>
+          </div>
+        </div>
+      </section>
+      <section class="word-tool-panel" data-word-tool-panel="citations">
+        <div class="word-tool-heading">
+          <div><h3>引文來源與參考書目</h3><p>來源資料庫保留在本機，可輸出 APA 7、MLA 9、Chicago 作者日期及台灣中文格式。</p></div>
+        </div>
+        <form class="citation-form" id="citation-form">
+          <input id="citation-id" type="hidden" />
+          <label>類型<select id="citation-type"><option value="book">書籍</option><option value="article">期刊文章</option><option value="web">網站</option><option value="legal">法規／判決</option><option value="report">報告</option></select></label>
+          <label>作者／機關<input id="citation-author" required /></label>
+          <label class="wide">標題<input id="citation-title" required /></label>
+          <label>年份<input id="citation-year" /></label>
+          <label>出版者<input id="citation-publisher" /></label>
+          <label class="wide">期刊／書名／網站<input id="citation-container" /></label>
+          <label>卷<input id="citation-volume" /></label>
+          <label>期<input id="citation-issue" /></label>
+          <label>頁碼<input id="citation-pages" /></label>
+          <label>DOI<input id="citation-doi" /></label>
+          <label class="wide">網址<input id="citation-url" type="url" /></label>
+          <label>瀏覽日期<input id="citation-accessed" type="date" /></label>
+          <div class="word-tool-actions wide"><button class="primary" type="submit">儲存來源</button><button type="reset" id="citation-reset">清除表單</button></div>
+        </form>
+        <div class="citation-toolbar">
+          <label>引用格式<select id="citation-style"><option value="apa7">APA 7</option><option value="mla9">MLA 9</option><option value="chicago">Chicago 作者日期</option><option value="taiwan">台灣中文</option></select></label>
+          <button id="citation-copy">複製內文引文</button>
+          <button id="citation-insert">插入動態內文引文</button>
+          <button class="primary" id="citation-append">加入動態參考書目</button>
+          <button id="citation-update">更新文件引文／書目</button>
+        </div>
+        <p class="citation-preview">若要指定內文引文位置，先在文件放入獨立一段 <code>{{CITATION}}</code>；否則會加入文件末端。動態區塊可在來源資料修改後重新更新。</p>
+        <div class="word-tool-results citation-list" id="citation-list"><p class="empty">尚無來源。</p></div>
+      </section>
+      <section class="word-tool-panel" data-word-tool-panel="view">
+        <div class="word-tool-heading">
+          <div><h3>可編輯大綱、草稿、Web 與並排同步檢視</h3><p>大綱模式可提升／降低標題層級，或連同所屬內容上下移動並另存；也可載入第二份文件同步捲動比較。</p></div>
+          <div class="word-tool-actions"><button class="primary" id="reading-load-current">載入目前文件</button><button id="reading-load-second">選擇並排文件</button></div>
+        </div>
+        <div class="reading-toolbar">
+          <label>檢視模式<select id="reading-mode"><option value="outline">大綱</option><option value="draft">草稿</option><option value="web">Web 版面</option></select></label>
+          <label><input id="reading-sync" type="checkbox" checked /> 並排同步捲動</label>
+          <span id="reading-status">尚未載入文件</span>
+        </div>
+        <div class="reading-grid" id="reading-grid">
+          <article class="reading-pane" id="reading-primary"><p class="empty">載入 Word 文件後顯示內容。</p></article>
+          <article class="reading-pane hidden" id="reading-secondary"><p class="empty">尚未選擇第二份文件。</p></article>
+        </div>
+        <div class="word-tool-results" id="review-comments"><p class="empty">文件中的註解、作者與 @指派會顯示在這裡。</p></div>
+      </section>
+      <section class="word-tool-panel" data-word-tool-panel="language">
+        <div class="word-tool-heading">
+          <div><h3>翻譯、改寫、同義詞與相似度</h3><p>透過目前唯一運作的本機 MAGI V2／V3 分析目前 Word 文件，結果留在工作台，不直接覆寫原文。</p></div>
+        </div>
+        <div class="language-tool-grid">
+          <button data-language-tool="translate" data-language-instruction="將整份文件翻譯為繁體中文，保留段落與標題順序。"><b>整份文件翻譯</b><span>翻成繁體中文並保留結構</span></button>
+          <button data-language-tool="rewrite" data-language-instruction="提供清楚、正式且不改變原意的改寫版本，列出主要修改。"><b>正式改寫</b><span>語氣、清晰度與精簡建議</span></button>
+          <button data-language-tool="thesaurus" data-language-instruction="找出重複或不精確用詞，提供繁體中文同義詞及適用語境。"><b>同義詞與用語</b><span>提供台灣常用替代詞</span></button>
+          <button data-language-tool="similarity" data-language-instruction="找出文件內部高度相似、重複或近似改寫的段落，逐項標示。"><b>相似度檢查</b><span>找出重複與近似段落</span></button>
+        </div>
+        <div class="dictation-guide">
+          <b>系統聽寫與朗讀</b>
+          <p>macOS：按兩次 Fn／🌐 開始繁體中文聽寫；Windows：按 Win＋H。朗讀可使用 ONLYOFFICE 螢幕閱讀器模式或作業系統朗讀選取內容。</p>
+          <p>音訊逐字稿涉及本機 MAGI 是否配置語音模型；工作台只在偵測到可用服務時處理，不會把錄音上傳未知服務。</p>
+        </div>
+      </section>
+      <section class="word-tool-panel" data-word-tool-panel="quickparts">
+        <div class="word-tool-heading">
+          <div><h3>封面、Quick Parts／AutoText 與可編輯圖解</h3><p>所有元件都寫入新 DOCX 副本；圖解使用開放式 OOXML 表格／段落，因此可在 Word 或 ONLYOFFICE 繼續修改。</p></div>
+        </div>
+        <div class="component-grid">
+          <section>
+            <h4>封面頁</h4>
+            <label>標題<input id="cover-title" placeholder="文件標題" /></label>
+            <label>副標題<input id="cover-subtitle" placeholder="副標題或案件編號" /></label>
+            <label>作者／機關<input id="cover-author" placeholder="作者或機關" /></label>
+            <button class="primary" id="cover-insert">插入封面並另存</button>
+          </section>
+          <section>
+            <h4>AutoText</h4>
+            <label>名稱<input id="autotext-name" placeholder="例如：公司地址" /></label>
+            <label>內容<textarea id="autotext-content" rows="4"></textarea></label>
+            <div class="word-tool-actions"><button id="autotext-save">儲存片段</button><button class="primary" id="autotext-insert">插入所選片段並另存</button></div>
+            <div id="autotext-list" class="autotext-list"><p class="empty">尚無片段。</p></div>
+          </section>
+          <section>
+            <h4>可編輯圖解</h4>
+            <label>類型<select id="diagram-kind"><option value="process">流程</option><option value="hierarchy">組織／階層</option><option value="matrix">四象限矩陣</option></select></label>
+            <label>圖解標題<input id="diagram-title" /></label>
+            <label>項目（每行一項）<textarea id="diagram-items" rows="5" placeholder="收件&#10;審查&#10;核定&#10;發文"></textarea></label>
+            <button class="primary" id="diagram-insert">插入圖解並另存</button>
+          </section>
+        </div>
+      </section>
     </dialog>
     <dialog class="pdf-tool-dialog" id="pdf-tool-dialog" aria-labelledby="pdf-tool-title">
       <form method="dialog" id="pdf-tool-form">
