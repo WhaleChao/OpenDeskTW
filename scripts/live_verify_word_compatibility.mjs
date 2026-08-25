@@ -493,9 +493,9 @@ async function main() {
       `段落寬度改變後仍使用固定字距：${JSON.stringify({ before: distributedDiagnostic, resized: distributedAfterResize })}`,
     );
     assert.ok(
-      distributedAfterResize?.implementation === "word-layout-ranges-v3" &&
+      distributedAfterResize?.implementation === "word-layout-ranges-v4" &&
         distributedAfterResize.preclearedRuns >= 1,
-      `沒有載入會先完成清除再量測的 2.0.3 實作：${JSON.stringify(distributedAfterResize)}`,
+      `沒有載入具備行位置降級保護的 2.0.4 實作：${JSON.stringify(distributedAfterResize)}`,
     );
     assert.ok(
       distributedAfterResize.widths?.[0]?.available <

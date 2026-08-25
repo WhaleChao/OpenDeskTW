@@ -792,7 +792,7 @@ dependencies = [
 
 [[package]]
 name = "document-workbench-tw"
-version = "2.8.4"
+version = "2.8.5"
 dependencies = [
  "chrono",
  "dirs",

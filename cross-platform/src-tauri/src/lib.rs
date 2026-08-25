@@ -7307,7 +7307,8 @@ mod tests {
         assert!(code.contains("tableParagraphs.has(paragraph)"));
         assert!(code.contains("nativeLeft"));
         assert!(code.contains("adaptiveStates"));
-        assert!(code.contains("word-layout-ranges-v3"));
+        assert!(code.contains("word-layout-ranges-v4"));
+        assert!(code.contains("rangePositionFallbacks"));
         assert!(code.contains("resize-and-layout-drag-only"));
         assert!(code.contains("in-place-current-paragraph"));
         assert!(code.contains("distributedLayoutBusy"));

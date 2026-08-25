@@ -70,6 +70,8 @@ assert.match(pluginCode, /availableWidth - occupiedWidth/);
 assert.match(pluginCode, /layoutSafetyMm/);
 assert.match(pluginCode, /Math\.floor\(\(spacingMm \* 1440\) \/ 25\.4\)/);
 assert.match(pluginCode, /wrapCorrections/);
+assert.match(pluginCode, /rangePositionFallbacks/);
+assert.match(pluginCode, /rangePositionErrors/);
 assert.match(pluginCode, /SetSpacing\(job\.spacing\)/);
 assert.match(pluginCode, /marker\.dynamicSpacings/);
 assert.match(pluginCode, /marker\.renderedRanges/);
@@ -129,6 +131,7 @@ let pageNumberFields = 0;
 let updatedFields = 0;
 let wentToPage = null;
 let forceRecalculateCount = 0;
+let forceRecalculateFailures = 0;
 let magiFetchMode = "success";
 const magiFetches = [];
 const magiPayloads = [];
@@ -365,6 +368,12 @@ const apiDocument = {
   SelectCurrentWord() {},
   ForceRecalculate() {
     forceRecalculateCount += 1;
+    if (forceRecalculateFailures > 0) {
+      forceRecalculateFailures -= 1;
+      throw new TypeError(
+        "Cannot read properties of undefined (reading 'yBa')",
+      );
+    }
   },
   UpdateAllFields() {
     updatedFields += 1;
@@ -819,6 +828,79 @@ assert.equal(
 assert.ok(
   pluginWindow.__OpenDeskTwDistributedLayout.widths[0].spacing <= 410,
   "壓縮版表格的動態字距不得越過實際可容納上限",
+);
+const failingYBaParagraph = makeParagraph(
+  "為委任書狀",
+  0x1234567c,
+  true,
+  55,
+  500,
+);
+delete failingYBaParagraph.Paragraph.Get_EndRangePos2;
+failingYBaParagraph.Paragraph.yBa = function () {
+  throw new TypeError(
+    "Cannot read properties of undefined (reading 'yBa')",
+  );
+};
+activeSelectionParagraph = failingYBaParagraph;
+messages.length = 0;
+toolbarHandlers.get("opendesk-distributed")();
+assert.ok(
+  !messages.some((message) => message.includes("發生錯誤")),
+  "壓縮版 yBa 讀不到行尾位置時不得讓整個分散對齊失敗",
+);
+assert.equal(pluginWindow.__OpenDeskTwDistributedLayout.appliedRanges, 1);
+assert.equal(pluginWindow.__OpenDeskTwDistributedLayout.rangePositionErrors, 1);
+assert.equal(
+  pluginWindow.__OpenDeskTwDistributedLayout.rangePositionFallbacks,
+  1,
+);
+assert.equal(
+  failingYBaParagraph.Paragraph.Lines.length,
+  1,
+  "yBa 降級路徑仍必須完成表格內單行等距分布",
+);
+assert.equal(
+  pluginWindow.__OpenDeskTwDistributedLayout.implementation,
+  "word-layout-ranges-v4",
+);
+const failingMultiLineParagraph = makeParagraph(
+  "甲乙丙丁戊己",
+  0x1234567d,
+);
+failingMultiLineParagraph.Paragraph.Lines = [
+  { Ranges: [{ X: 0, XEnd: 50, W: 30 }] },
+  { Ranges: [{ X: 0, XEnd: 50, W: 30 }] },
+];
+delete failingMultiLineParagraph.Paragraph.Get_EndRangePos2;
+failingMultiLineParagraph.Paragraph.yBa = function () {
+  throw new TypeError(
+    "Cannot read properties of undefined (reading 'yBa')",
+  );
+};
+activeSelectionParagraph = failingMultiLineParagraph;
+messages.length = 0;
+toolbarHandlers.get("opendesk-distributed")();
+assert.ok(
+  !messages.some((message) => message.includes("發生錯誤")),
+  "多行段落的 yBa 失效時不得讓整個分散對齊失敗",
+);
+assert.equal(pluginWindow.__OpenDeskTwDistributedLayout.appliedRanges, 2);
+assert.equal(
+  pluginWindow.__OpenDeskTwDistributedLayout.rangePositionFallbacks,
+  2,
+);
+activeSelectionParagraph = selectionParagraph;
+forceRecalculateFailures = 1;
+messages.length = 0;
+toolbarHandlers.get("opendesk-distributed")();
+assert.ok(
+  !messages.some((message) => message.includes("發生錯誤")),
+  "清除舊字距後的暫時重排失效不得誤報整次分散對齊失敗",
+);
+assert.match(
+  pluginWindow.__OpenDeskTwDistributedLayout.preclearRecalculationWarning,
+  /reading 'yBa'/,
 );
 activeSelectionParagraph = selectionParagraph;
 

@@ -715,11 +715,22 @@
               clearDirectRunSpacing(paragraph);
               paragraph.SetSpacing?.(0);
             });
-            document.ForceRecalculate?.();
+            let recalculationWarning = "";
+            try {
+              document.ForceRecalculate?.();
+            } catch (error) {
+              // 剛切回自然字距時，ONLYOFFICE 9.4 偶爾仍握有上一輪的
+              // 壓縮行位置。這不影響下一個 callCommand 重新量測，不應
+              // 把非致命的重排例外顯示成整次分散對齊失敗。
+              recalculationWarning = `${error?.name || "Error"}: ${
+                error?.message || error
+              }`;
+            }
             return {
               applied: paragraphs.length,
               clearedRuns,
               completed: true,
+              recalculationWarning,
             };
           } catch (error) {
             return {
@@ -740,6 +751,9 @@
               if (layoutResult && typeof layoutResult === "object") {
                 layoutResult.preclearedRuns = Number(
                   completed.clearedRuns || 0,
+                );
+                layoutResult.preclearRecalculationWarning = String(
+                  completed.recalculationWarning || "",
                 );
                 if (!layoutResult.error && completed.error) {
                   layoutResult.error = completed.error;
@@ -955,6 +969,30 @@
               }
             }
           }
+          let rangePositionFallbacks = 0;
+          let rangePositionErrors = 0;
+          let layoutMutationErrors = 0;
+          let recalculationErrors = 0;
+          function forceRecalculateSafely() {
+            try {
+              document.ForceRecalculate?.();
+              return true;
+            } catch (_error) {
+              recalculationErrors += 1;
+              return false;
+            }
+          }
+          function setJobSpacingSafely(job) {
+            try {
+              job.paragraph
+                .GetRange(job.start, job.end)
+                ?.SetSpacing(job.spacing);
+              return true;
+            } catch (_error) {
+              layoutMutationErrors += 1;
+              return false;
+            }
+          }
 
           // Word 的 wdAlignParagraphDistribute 不是固定字距，而是把每一行
           // 的字元依該行當下可用寬度重新分布。ONLYOFFICE 9.4 雖保留核心值
@@ -980,15 +1018,88 @@
                 ?.SetSpacing(0);
             }
           });
-          document.ForceRecalculate?.();
+          forceRecalculateSafely();
 
-          const jobs = [];
+          let jobs = [];
           const spacingByParagraph = new Map();
           const naturalLineCountByParagraph = new Map();
           const tableParagraphs = new Set();
           let lineCount = 0;
           let skipped = 0;
           let tableConstrainedRanges = 0;
+          function allocateMissingOffsets(records, textLength) {
+            let cursor = 0;
+            let index = 0;
+            while (index < records.length) {
+              const record = records[index];
+              if (record.hasNativeOffsets) {
+                cursor = Math.max(cursor, record.end);
+                index += 1;
+                continue;
+              }
+
+              const groupStart = index;
+              while (
+                index < records.length &&
+                !records[index].hasNativeOffsets
+              ) {
+                index += 1;
+              }
+              const nextNativeStart =
+                index < records.length ? records[index].start : textLength;
+              const upperBound = Math.max(
+                cursor,
+                Math.min(
+                  textLength,
+                  Number.isFinite(nextNativeStart)
+                    ? nextNativeStart
+                    : textLength,
+                ),
+              );
+              const group = records.slice(groupStart, index);
+              let remainingWeight = group.reduce(function (total, item) {
+                return (
+                  total +
+                  (Number.isFinite(item.occupiedWidth) &&
+                  item.occupiedWidth > 0
+                    ? item.occupiedWidth
+                    : 1)
+                );
+              }, 0);
+              let groupCursor = cursor;
+              group.forEach(function (item, groupIndex) {
+                const weight =
+                  Number.isFinite(item.occupiedWidth) &&
+                  item.occupiedWidth > 0
+                    ? item.occupiedWidth
+                    : 1;
+                const slotsLeft = group.length - groupIndex;
+                const charactersLeft = Math.max(0, upperBound - groupCursor);
+                let take = charactersLeft;
+                if (slotsLeft > 1) {
+                  const proportional =
+                    remainingWeight > 0
+                      ? Math.round(
+                          (charactersLeft * weight) / remainingWeight,
+                        )
+                      : Math.floor(charactersLeft / slotsLeft);
+                  const minimum = charactersLeft >= slotsLeft ? 1 : 0;
+                  const maximum =
+                    charactersLeft >= slotsLeft
+                      ? charactersLeft - (slotsLeft - 1)
+                      : charactersLeft;
+                  take = Math.max(minimum, Math.min(maximum, proportional));
+                }
+                item.start = groupCursor;
+                item.end = groupCursor + take;
+                item.fallback = true;
+                groupCursor = item.end;
+                remainingWeight -= weight;
+                rangePositionFallbacks += 1;
+              });
+              cursor = Math.max(cursor, upperBound);
+            }
+          }
           paragraphs.forEach(function (paragraph) {
             const internal = nativeParagraphFor(paragraph);
             const tableLayout = tableLayoutFor(paragraph, internal);
@@ -999,25 +1110,36 @@
             const lines = internal?.Lines || internal?.Xb || [];
             naturalLineCountByParagraph.set(paragraph, lines.length);
             lineCount += lines.length;
+            const rangeRecords = [];
             lines.forEach(function (line, lineIndex) {
               (line.Ranges || line.Of || []).forEach(function (layoutRange, rangeIndex) {
-                const getStartRangePosition =
-                  internal.Get_StartRangePos2 || internal.BBa;
-                const getEndRangePosition =
-                  internal.Get_EndRangePos2 || internal.yBa;
-                const startPosition = getStartRangePosition?.call(
-                  internal,
-                  lineIndex,
-                  rangeIndex,
-                );
-                const endPosition = getEndRangePosition?.call(
-                  internal,
-                  lineIndex,
-                  rangeIndex,
-                  false,
-                );
-                const start = apiOffsetForPosition(internal, startPosition);
-                const end = apiOffsetForPosition(internal, endPosition);
+                if (!layoutRange) return;
+                let start = null;
+                let end = null;
+                try {
+                  const getStartRangePosition =
+                    internal?.Get_StartRangePos2 || internal?.BBa;
+                  const getEndRangePosition =
+                    internal?.Get_EndRangePos2 || internal?.yBa;
+                  const startPosition = getStartRangePosition?.call(
+                    internal,
+                    lineIndex,
+                    rangeIndex,
+                  );
+                  const endPosition = getEndRangePosition?.call(
+                    internal,
+                    lineIndex,
+                    rangeIndex,
+                    false,
+                  );
+                  start = apiOffsetForPosition(internal, startPosition);
+                  end = apiOffsetForPosition(internal, endPosition);
+                } catch (_error) {
+                  // ONLYOFFICE 9.4 的壓縮內部方法 yBa/BBa 在部分表格、
+                  // 跨頁或剛完成重排的行上會讀到尚未建立的位置物件。
+                  // 只讓該行改走下方的版面寬度推算，不得讓整個操作失敗。
+                  rangePositionErrors += 1;
+                }
                 const rangeStart = Number(
                   layoutRange.X ?? layoutRange.ha,
                 );
@@ -1044,6 +1166,34 @@
                 const occupiedWidth = Number(
                   layoutRange.W ?? layoutRange.Da,
                 );
+                rangeRecords.push({
+                  lineIndex,
+                  rangeIndex,
+                  start,
+                  end,
+                  rangeStart,
+                  availableWidth,
+                  occupiedWidth,
+                  hasNativeOffsets:
+                    Number.isFinite(start) &&
+                    Number.isFinite(end) &&
+                    end > start,
+                  fallback: false,
+                });
+              });
+            });
+
+            allocateMissingOffsets(
+              rangeRecords,
+              Array.from(paragraph.GetText?.() || "").length,
+            );
+            rangeRecords.forEach(function (record) {
+              const {
+                start,
+                end,
+                availableWidth,
+                occupiedWidth,
+              } = record;
                 if (
                   !Number.isFinite(start) ||
                   !Number.isFinite(end) ||
@@ -1055,7 +1205,14 @@
                   skipped += 1;
                   return;
                 }
-                const measuredRange = paragraph.GetRange(start, end);
+                let measuredRange = null;
+                try {
+                  measuredRange = paragraph.GetRange(start, end);
+                } catch (_error) {
+                  rangePositionErrors += 1;
+                  skipped += 1;
+                  return;
+                }
                 const text = measuredRange?.GetText?.() || "";
                 const glyphCount = Array.from(text).filter(function (character) {
                   return (
@@ -1100,19 +1257,21 @@
                   occupiedWidth,
                   glyphCount,
                   inTable: Boolean(tableLayout.cell),
+                  usedPositionFallback: Boolean(record.fallback),
                 });
-              });
             });
           });
-          jobs.forEach(function (job) {
-            job.paragraph
-              .GetRange(job.start, job.end)
-              ?.SetSpacing(job.spacing);
+          jobs = jobs.filter(function (job) {
+            if (!setJobSpacingSafely(job)) {
+              skipped += 1;
+              return false;
+            }
             const key = String(job.paragraph.GetParaId?.() || "");
             if (!spacingByParagraph.has(key)) {
               spacingByParagraph.set(key, new Set());
             }
             spacingByParagraph.get(key).add(job.spacing);
+            return true;
           });
 
           const nativeLeft =
@@ -1133,10 +1292,16 @@
                 : nativeDistributed,
             );
           });
-          document.ForceRecalculate?.();
-          logicDocument?.Kc?.();
-          logicDocument?.Ue?.();
-          logicDocument?.td?.();
+          forceRecalculateSafely();
+          [logicDocument?.Kc, logicDocument?.Ue, logicDocument?.td].forEach(
+            function (refresh) {
+              try {
+                refresh?.call(logicDocument);
+              } catch (_error) {
+                recalculationErrors += 1;
+              }
+            },
+          );
 
           // 字型 fallback 或壓縮版 SDK 無法提供儲存格 XLimit 時，實際
           // advance width 只能在第二次排版後確定。若新增了換行，就在
@@ -1179,13 +1344,11 @@
                     0,
                     Math.floor(job.initialSpacing * state.scale),
                   );
-                  job.paragraph
-                    .GetRange(job.start, job.end)
-                    ?.SetSpacing(job.spacing);
+                  setJobSpacingSafely(job);
                 });
               wrapCorrections += 1;
             });
-            document.ForceRecalculate?.();
+            forceRecalculateSafely();
           }
           adaptiveStates.forEach(function (state, paragraph) {
             jobs
@@ -1199,12 +1362,10 @@
                   0,
                   Math.floor(job.initialSpacing * state.low) - 1,
                 );
-                job.paragraph
-                  .GetRange(job.start, job.end)
-                  ?.SetSpacing(job.spacing);
+                setJobSpacingSafely(job);
               });
           });
-          if (adaptiveStates.size) document.ForceRecalculate?.();
+          if (adaptiveStates.size) forceRecalculateSafely();
 
           // 僅記錄最後實際存在於文件中的字距，供儲存橋接移除畫面
           // 備援格式；二分搜尋的中間值不會寫入 DOCX。
@@ -1293,12 +1454,16 @@
             markerCount: markers.length,
             dynamic: true,
             method: "word-paragraph-width",
-            implementation: "word-layout-ranges-v3",
+            implementation: "word-layout-ranges-v4",
             clearedRuns,
             wrapCorrections,
             adaptiveSearches: adaptiveStates.size,
             tableParagraphs: tableParagraphs.size,
             tableConstrainedRanges,
+            rangePositionFallbacks,
+            rangePositionErrors,
+            layoutMutationErrors,
+            recalculationErrors,
             value: nativeDistributed,
             spacings: Array.from(
               new Set(

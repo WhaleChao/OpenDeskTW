@@ -157,7 +157,7 @@ try {
     }
     if (!pluginContextId || !editorContextId) await delay(250);
   }
-  assert.ok(pluginContextId, "找不到 2.0.3 繁中工具執行環境");
+  assert.ok(pluginContextId, "找不到 2.0.4 繁中工具執行環境");
   assert.ok(editorContextId, "找不到 Word 相容快捷鍵監聽器");
 
   const blankBefore = await evaluate(
@@ -370,7 +370,7 @@ try {
     !tableDiagnostic?.error,
     `窄欄表格分散對齊失敗：${JSON.stringify(tableDiagnostic)}`,
   );
-  assert.equal(tableDiagnostic?.implementation, "word-layout-ranges-v3");
+  assert.equal(tableDiagnostic?.implementation, "word-layout-ranges-v4");
   assert.equal(tableDiagnostic?.tableParagraphs, 1);
   assert.equal(tableLayout.text.trim(), tableFixtureText);
   assert.equal(tableLayout.inTable, true);
@@ -518,7 +518,7 @@ try {
     JSON.stringify(
       {
         ok: true,
-        version: "2.8.4 / plugin 2.0.3",
+        version: "2.8.5 / plugin 2.0.4",
         blank: {
           before: blankBefore,
           after: blankAfter,
