@@ -1,9 +1,10 @@
 import { readFileSync } from "node:fs";
 
-const html = readFileSync("src/index.html", "utf8");
-const main = readFileSync("src/main.js", "utf8");
-const rust = readFileSync("src-tauri/src/lib.rs", "utf8");
-const python = readFileSync("src-tauri/resources/acropdf-core/embedded_core.py", "utf8");
+const readSource = path => readFileSync(path,"utf8").replace(/\r\n/g,"\n");
+const html = readSource("src/index.html");
+const main = readSource("src/main.js");
+const rust = readSource("src-tauri/src/lib.rs");
+const python = readSource("src-tauri/resources/acropdf-core/embedded_core.py");
 
 function values(source, expression) {
   return new Set([...source.matchAll(expression)].map((match) => match[1]));
