@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 const here = path.dirname(fileURLToPath(import.meta.url));
 const projectRoot = path.resolve(here, "..");
 const repositoryRoot = path.resolve(projectRoot, "..");
-const read = (relative) => readFileSync(path.join(repositoryRoot, relative), "utf8");
+const read = (relative) => readFileSync(path.join(repositoryRoot, relative), "utf8").replace(/\r\n/g, "\n");
 
 function assert(condition, message) {
   if (!condition) throw new Error(message);
