@@ -88,6 +88,12 @@ def main() -> None:
     output.mkdir(parents=True)
 
     queue = list(ROOT_DISTRIBUTIONS)
+    for name in ("macholib", "pefile", "pywin32-ctypes", "tzdata"):
+        try:
+            metadata.distribution(name)
+            queue.append(name)
+        except metadata.PackageNotFoundError:
+            pass
     found: dict[str, metadata.Distribution] = {}
     while queue:
         requested = queue.pop(0)

@@ -114,7 +114,23 @@ if (!existsSync(dependencyManifestPath) || !existsSync(pythonManifestPath)) {
   throw new Error("缺少相依套件清單；請先執行 npm run legal:bundle");
 }
 const dependencies = JSON.parse(readFileSync(dependencyManifestPath, "utf8"));
-const pythonPackages = JSON.parse(readFileSync(pythonManifestPath, "utf8"));
+let pythonPackages = JSON.parse(readFileSync(pythonManifestPath, "utf8"));
+
+// Include every locked platform's build inputs, not only Linux-installed packages.
+const npmLock=JSON.parse(readFileSync(path.join(projectRoot,"package-lock.json"),"utf8"));
+const npmUnion=new Map(dependencies.npm.map(item=>[`${item.name}@${item.version}`,item]));
+for(const [location,item] of Object.entries(npmLock.packages)) {
+  if(!location || !item.version || !location.includes("node_modules/"))continue;
+  const name=item.name || location.split("node_modules/").at(-1);
+  npmUnion.set(`${name}@${item.version}`,{name,version:item.version,license:item.license||"See upstream license"});
+}
+dependencies.npm=[...npmUnion.values()];
+const pythonUnion=new Map(pythonPackages.map(item=>[item.name.toLowerCase().replaceAll('_','-'),item]));
+for(const line of readFileSync(path.join(projectRoot,"requirements-pdf-core.txt"),"utf8").split(/\r?\n/)) {
+ const match=line.match(/^([A-Za-z0-9_.-]+)==([^ ]+)$/);if(!match)continue;
+ pythonUnion.set(match[1].toLowerCase().replaceAll('_','-'),{name:match[1],version:match[2]});
+}
+pythonPackages=[...pythonUnion.values()];
 
 console.log(`下載 ${dependencies.npm.length} 個 npm 原始碼封存檔……`);
 const npmSources = await mapLimit(dependencies.npm, 8, async (item) => {
