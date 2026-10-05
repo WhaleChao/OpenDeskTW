@@ -686,24 +686,21 @@ def verify_signatures_pdf(path: str | Path, options: dict[str, Any]) -> dict[str
     results: list[dict[str, Any]] = []
     trust_store_available = True
     trust_store_error = ""
+    try:
+        validation_context = ValidationContext(allow_fetching=False)
+    except Exception as error:
+        # Unsupported or unavailable OS trust APIs must not prevent checking
+        # cryptographic integrity. No certificate becomes trusted in fallback.
+        trust_store_available = False
+        trust_store_error = str(error)
+        validation_context = ValidationContext(trust_roots=[], allow_fetching=False)
     with source.open("rb") as stream:
         reader = PdfFileReader(stream, strict=False)
         if reader.encrypted and reader.decrypt(str(options.get("password") or "")).status.name == "FAILED":
             raise PermissionError("簽章驗證需要正確的文件密碼")
         for embedded in reader.embedded_signatures:
             try:
-                try:
-                    validation = validate_pdf_signature(embedded, signer_validation_context=ValidationContext(allow_fetching=False))
-                except OSError as error:
-                    # macOS may deny access to the system trust store in a sandbox.
-                    # Retry without trust anchors so cryptographic integrity and
-                    # document modifications can still be reported accurately.
-                    trust_store_available = False
-                    trust_store_error = str(error)
-                    validation = validate_pdf_signature(
-                        embedded,
-                        signer_validation_context=ValidationContext(trust_roots=[]),
-                    )
+                validation = validate_pdf_signature(embedded, signer_validation_context=validation_context)
                 results.append({
                     "field": embedded.field_name,
                     "valid": bool(validation.valid),
@@ -712,7 +709,7 @@ def verify_signatures_pdf(path: str | Path, options: dict[str, Any]) -> dict[str
                     "summary": validation.summary(),
                 })
             except Exception as error:
-                results.append({"field": embedded.field_name, "valid": False, "error": str(error)})
+                results.append({"field": embedded.field_name, "valid": False, "intact": None, "trusted": False, "error": str(error)})
     return {
         "protocol_version": PROTOCOL_VERSION,
         "query": "signatures",

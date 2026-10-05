@@ -205,6 +205,24 @@ class PdfSafety(unittest.TestCase):
             core.operate_pdf(self.source, "add_text", {"text":"too large " * 5000, "width":30, "height":20})
         self.assertEqual(self.source.read_bytes(), original)
 
+    def test_unavailable_system_trust_never_blocks_signature_integrity(self):
+        from test_embedded_pdf_core import make_certificate
+        from pyhanko_certvalidator import ValidationContext
+        certificate=self.root / "identity.p12"
+        make_certificate(certificate,b"secret")
+        output=self.root / "signed.pdf"
+        core.operate_pdf(self.source,"sign",{"certificate":str(certificate),"certificate_password":"secret","field_name":"Signature1"},output)
+        def context(**options):
+            if "trust_roots" not in options:
+                raise ValueError("unsupported OS certificate provider")
+            return ValidationContext(**options)
+        with patch("pyhanko_certvalidator.ValidationContext",side_effect=context):
+            report=core.verify_signatures_pdf(output,{})
+        self.assertFalse(report["trust_store_available"])
+        self.assertTrue(report["signatures"][0]["intact"])
+        self.assertTrue(report["signatures"][0]["valid"])
+        self.assertFalse(report["signatures"][0]["trusted"])
+
     def test_encrypted_signature_preserves_password_and_verifies(self):
         from test_embedded_pdf_core import make_certificate
         source = self.encrypt()

@@ -157,7 +157,7 @@ def main() -> None:
         core.operate_pdf(pdf, "sign", {"certificate": str(certificate), "certificate_password": "secret", "field_name": "Signature1"}, signed)
         signatures = core.verify_signatures_pdf(signed, {})
         assert signatures["available"] and signatures["count"] == 1
-        assert signatures["signatures"][0]["intact"] is True
+        assert signatures["signatures"][0]["intact"] is True, signatures
 
         redacted = root / "永久遮蔽.pdf"
         shutil.copy2(pdf, redacted)
