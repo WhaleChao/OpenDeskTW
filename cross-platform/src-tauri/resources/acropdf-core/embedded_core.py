@@ -128,7 +128,8 @@ def inspect_pdf(path: str | Path, password: str = "") -> dict[str, Any]:
     document = fitz.open(source)
     try:
         encrypted = bool(document.needs_pass or (document.metadata or {}).get("encryption"))
-        unlocked = not encrypted or bool(password and document.authenticate(password))
+        authentication = document.authenticate(password) if encrypted and password else 0
+        unlocked = not document.is_encrypted or bool(authentication)
         report: dict[str, Any] = {
             "protocol_version": PROTOCOL_VERSION,
             "engine_version": APP_VERSION,
@@ -137,6 +138,8 @@ def inspect_pdf(path: str | Path, password: str = "") -> dict[str, Any]:
             "pages": document.page_count,
             "encrypted": encrypted,
             "locked": not unlocked,
+            "can_print": bool(not encrypted or authentication & 4 or document.permissions & fitz.PDF_PERM_PRINT),
+            "can_print_high_quality": bool(not encrypted or authentication & 4 or document.permissions & fitz.PDF_PERM_PRINT_HQ),
             "metadata": _metadata(document),
             "characters": 0,
             "words": 0,
@@ -249,7 +252,14 @@ def render_page(path: str | Path, page_index: int, scale: float, password: str =
     try:
         if page_index < 0 or page_index >= document.page_count:
             raise IndexError(f"頁碼超出範圍：{page_index + 1}")
-        safe_scale = max(0.35, min(float(scale), 3.0))
+        requested_scale = float(scale)
+        if not math.isfinite(requested_scale):
+            raise ValueError("無效的頁面縮放比例")
+        safe_scale = max(0.35, min(requested_scale, 4.5))
+        area = document[page_index].rect.width * document[page_index].rect.height
+        if area <= 0 or not math.isfinite(area):
+            raise ValueError("無效的 PDF 頁面尺寸")
+        safe_scale = min(safe_scale, math.sqrt(25_000_000 / area))
         pixmap = document[page_index].get_pixmap(
             matrix=fitz.Matrix(safe_scale, safe_scale), alpha=False, annots=True
         )
