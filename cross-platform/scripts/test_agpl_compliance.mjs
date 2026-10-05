@@ -56,6 +56,9 @@ assert(release.includes("corresponding-source.tar.gz"), "Release 未上傳對應
 const bundleRoot = path.join(projectRoot, "src-tauri/resources/licenses/third-party");
 assert(existsSync(path.join(bundleRoot, "README.md")), "缺少第三方授權封裝摘要");
 assert(existsSync(path.join(bundleRoot, "python/README.md")), "缺少 Python 授權封裝摘要");
+const runtime = JSON.parse(readFileSync(path.join(bundleRoot,"python/runtime.json"),"utf8"));
+assert(existsSync(path.join(bundleRoot,`python/CPython@${runtime.version}/LICENSE.txt`)),"缺少內建 CPython 授權");
+assert(read("cross-platform/src-tauri/resources/licenses/TESSDATA_LICENSE.txt").includes("Apache License"),"缺少 OCR 模型完整授權");
 const groups = ["npm", "cargo", "python"];
 for (const group of groups) {
   const directory = path.join(bundleRoot, group);

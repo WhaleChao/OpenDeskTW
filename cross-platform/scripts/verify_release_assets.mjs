@@ -13,6 +13,7 @@ const wanted=read(`${source}.sha256`).toString().trim().split(/\s+/)[0];
 if(createHash('sha256').update(read(source)).digest('hex')!==wanted)throw new Error('Corresponding source digest mismatch');
 for(const platform of ['macos','windows']) {
  const proof=JSON.parse(read(`${platform}-install-verification.json`).toString().replace(/^\uFEFF/,''));
+ if(proof.source_revision!==process.env.GITHUB_SHA)throw new Error(`${platform} source revision mismatch`);
  if(!proof.passed||proof.version!==version||!proof.packaged_core||!proof.window_ready||!proof.recovery||!proof.pdf_undo||proof.backups!==12)throw new Error(`${platform} installation proof failed`);
  if(platform==='windows'&&!proof.uninstall)throw new Error('Windows uninstall not verified');
 }
@@ -32,6 +33,11 @@ function validateSignature(name,encoded) {
  if(!verify(null,message,publicKey,signature)||!verify(null,Buffer.concat([signature,Buffer.from(lines[2].slice(17))]),publicKey,Buffer.from(lines[3]??'','base64')))throw new Error(`Updater signature verification failed: ${name}`);
 }
 for(const name of [exe,mac])validateSignature(name,read(`${name}.sig`).toString());
+// Generate one manifest after both platform builds; avoid concurrent asset races.
+const latestManifest={version,notes:`OpenDesk TW ${version}`,pub_date:new Date().toISOString(),platforms:{}};
+for(const [platform,name] of [['darwin-aarch64',mac],['windows-x86_64',exe]]) latestManifest.platforms[platform]={url:`https://github.com/WhaleChao/OpenDeskTW/releases/download/v${version}/${encodeURIComponent(name)}`,signature:read(`${name}.sig`).toString().trim()};
+fs.writeFileSync(path.join(root,'latest.json'),JSON.stringify(latestManifest,null,2));
+if(!names.includes('latest.json'))names.push('latest.json');
 if(names.includes('latest.json')) {
  const latest=JSON.parse(read('latest.json'));
  if(latest.version!==version)throw new Error('Updater version mismatch');
@@ -43,5 +49,5 @@ if(names.includes('latest.json')) {
  }
 } else throw new Error('Signed updater manifest missing');
 fs.writeFileSync(path.join(root,'SHA256SUMS'),names.filter(name=>name!=='SHA256SUMS').sort().map(name=>`${createHash('sha256').update(read(name)).digest('hex')}  ${name}`).join('\n')+'\n');
-fs.writeFileSync(path.join(root,'release-verification.json'),JSON.stringify({passed:true,version,source_sha256:wanted,platforms:['darwin-aarch64','windows-x86_64'],installer_verified:true,updater_signatures_verified:true,assets:names},null,2));
+fs.writeFileSync(path.join(root,'release-verification.json'),JSON.stringify({passed:true,version,source_revision:process.env.GITHUB_SHA,source_sha256:wanted,platforms:['darwin-aarch64','windows-x86_64'],installer_verified:true,updater_signatures_verified:true,assets:names},null,2));
 console.log('Release installers, source, updater manifest and Ed25519 signatures: PASS');

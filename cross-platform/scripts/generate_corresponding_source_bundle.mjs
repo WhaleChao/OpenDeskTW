@@ -173,6 +173,10 @@ const cargoSources = dependencies.cargo.map((item) => {
   };
 });
 
+const pythonRuntime = JSON.parse(readFileSync(path.join(projectRoot,"src-tauri/resources/licenses/third-party/python/runtime.json"),"utf8"));
+console.log(`封裝 CPython ${pythonRuntime.version} 對應上游原始碼……`);
+const runtimeSource = await download(pythonRuntime.source,path.join(sourcesRoot,"cpython",`Python-${pythonRuntime.version}.tar.xz`));
+
 console.log("封裝固定版本的 OCR 模型與 Apache 授權……");
 const ocrModels = [
   {name:"eng.traineddata",sha256:"7d4322bd2a7749724879683fc3912cb542f19906c83bcc1a52132556427170b2"},
@@ -217,6 +221,8 @@ const manifest = {
   npm: npmSources,
   cargo: cargoSources,
   python: pythonSources,
+  pythonRuntime: {...pythonRuntime,...runtimeSource},
+  ocrModels,
 };
 writeFileSync(path.join(stageRoot, "SOURCE_MANIFEST.json"), `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
 

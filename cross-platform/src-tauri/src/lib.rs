@@ -7495,7 +7495,7 @@ pub fn verify_install(directory: &Path) -> Result<Value, String> {
     if fs::read(&source).map_err(|error| error.to_string())? != original {
         return Err("PDF 復原沒有保留原始位元組".into());
     }
-    let result = json!({"passed":true,"version":env!("CARGO_PKG_VERSION"),"core_version":core.get("app_version"),"packaged_core":expected.is_file(),"backups":backups.len(),"registry_replace":true,"corrupt_registry_preserved":true,"recovery":true,"render":true,"pdf_undo":true});
+    let result = json!({"passed":true,"version":env!("CARGO_PKG_VERSION"),"source_revision":option_env!("OPENDESK_SOURCE_REVISION"),"core_version":core.get("app_version"),"packaged_core":expected.is_file(),"backups":backups.len(),"registry_replace":true,"corrupt_registry_preserved":true,"recovery":true,"render":true,"pdf_undo":true});
     atomic_write(
         &directory.join("verification.json"),
         &serde_json::to_vec_pretty(&result).map_err(|error| error.to_string())?,

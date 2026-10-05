@@ -29,6 +29,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: cross-platform/src-tauri -> target
+          cache-on-failure: true
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
@@ -65,6 +69,7 @@ jobs:
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          OPENDESK_SOURCE_REVISION: ${{ github.sha }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
@@ -75,6 +80,7 @@ jobs:
           releaseDraft: true
           prerelease: true
           releaseCommitish: ${{ github.sha }}
+          includeUpdaterJson: false
           updaterJsonPreferNsis: true
           args: ${{ matrix.args }}
       - name: 驗證 Windows 安裝、工作區與移除
@@ -148,4 +154,4 @@ jobs:
           mkdir -p release-assets
           gh release download "v${source_version}" --dir release-assets
           node scripts/verify_release_assets.mjs release-assets
-          gh release upload "v${source_version}" release-assets/SHA256SUMS release-assets/release-verification.json --clobber
+          gh release upload "v${source_version}" release-assets/SHA256SUMS release-assets/latest.json release-assets/release-verification.json --clobber

@@ -8,6 +8,8 @@ import json
 import re
 import shutil
 import sys
+import sysconfig
+import platform
 from importlib import metadata
 from pathlib import Path
 
@@ -102,6 +104,17 @@ def main() -> None:
         found[actual_key] = distribution
         queue.extend(active_requirements(distribution))
 
+    # The interpreter is bundled as well as pip distributions.
+    runtime_version = platform.python_version()
+    runtime_root = output / f"CPython@{runtime_version}"
+    runtime_root.mkdir()
+    candidates = [Path(sysconfig.get_path("stdlib")) / "LICENSE.txt", Path(sys.base_prefix) / "LICENSE.txt", Path(sys.base_prefix) / "LICENSE"]
+    runtime_license = next((path for path in candidates if path.is_file()), None)
+    if runtime_license is None:
+        raise SystemExit("找不到 CPython 完整授權；不能建立不完整的發行包")
+    shutil.copyfile(runtime_license, runtime_root / "LICENSE.txt")
+    (output / "runtime.json").write_text(json.dumps({"name":"CPython","version":runtime_version,"license":"Python-2.0","source":f"https://www.python.org/ftp/python/{runtime_version}/Python-{runtime_version}.tar.xz"},indent=2)+"\n",encoding="utf-8")
+
     rows: list[tuple[str, str, str, str, int]] = []
     copied_total = 0
     for key, distribution in sorted(found.items()):
@@ -142,6 +155,7 @@ def main() -> None:
         "# Python／PDF sidecar 第三方授權",
         "",
         "此檔由 `generate_python_licenses.py` 依目前建置環境自動產生。",
+        f"內建 CPython {runtime_version} 的完整授權亦隨附於 CPython@{runtime_version}/LICENSE.txt。",
         "",
         "| 套件 | 版本 | 授權 | 上游 | 授權檔數 |",
         "|---|---:|---|---|---:|",
