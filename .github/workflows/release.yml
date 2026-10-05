@@ -82,7 +82,7 @@ jobs:
           projectPath: cross-platform
           tagName: v__VERSION__
           releaseName: "全能文件工作台 v__VERSION__"
-          releaseBody: "OpenDesk TW 2.9.0：日夜模式、六個工作區、PDF 文件保護、原子儲存、復原與跨平台修正。待 macOS／Windows 安裝與對應原始碼驗證完成後發布。採 AGPL-3.0-or-later。"
+          releaseBody: "OpenDesk TW 2.9.1：日夜模式、六個工作區、PDF 文件保護、原子儲存、復原與跨平台修正。待 macOS／Windows 安裝與對應原始碼驗證完成後發布。採 AGPL-3.0-or-later。"
           releaseDraft: true
           prerelease: true
           releaseCommitish: ${{ github.sha }}

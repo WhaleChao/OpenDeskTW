@@ -19,7 +19,7 @@
 body { margin: 0; min-width: 900px; background: radial-gradient(circle at 85% 5%, #d9f4f2 0, transparent 28rem), #eef5f6; }
 button, input { font: inherit; }
 select { font: inherit; }
-button { cursor: pointer; border: 1px solid var(--line); border-radius: 11px; padding: 10px 14px; background: #fff; color: #172033; font-weight: 650; }
+button { -webkit-appearance: none; appearance: none; cursor: pointer; border: 1px solid var(--line); border-radius: 11px; padding: 10px 14px; background: #fff; color: #172033; font-weight: 650; }
 button:hover { border-color: #79bbc0; box-shadow: 0 5px 18px rgba(15, 76, 92, .09); }
 button:focus-visible, input:focus-visible { outline: 3px solid rgba(8, 126, 131, .28); outline-offset: 2px; }
 .shell { width: min(1220px, calc(100% - 42px)); margin: 0 auto; padding: 28px 0 42px; }

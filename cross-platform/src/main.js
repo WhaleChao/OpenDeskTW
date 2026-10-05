@@ -2825,6 +2825,11 @@ $("#studio-command").addEventListener("click", openStudioCommands);
 $("#studio-command-close").addEventListener("click", () => $("#studio-command-dialog").close());
 $("#studio-command-input").addEventListener("input", renderStudioCommands);
 $("#studio-command-dialog").addEventListener("keydown", event => {
+  if (event.key === "Escape") {
+    event.preventDefault();
+    $("#studio-command-dialog").close();
+    return;
+  }
   const buttons = [...$("#studio-command-results").querySelectorAll("button")];
   const current = buttons.indexOf(document.activeElement);
   if (event.key === "ArrowDown" || event.key === "ArrowUp") {
