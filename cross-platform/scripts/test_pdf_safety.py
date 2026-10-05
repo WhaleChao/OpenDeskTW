@@ -42,6 +42,27 @@ class PdfSafety(unittest.TestCase):
             self.assertEqual(document.page_count, pages)
             self.assertEqual(document.metadata["title"], "Retained title")
 
+    def test_empty_reader_password_is_open_but_preserves_owner_restrictions(self):
+        source = self.root / "restricted.pdf"
+        with fitz.open(self.source) as document:
+            document.save(source, encryption=fitz.PDF_ENCRYPT_AES_256, user_pw="", owner_pw="owner", permissions=0)
+        report = core.inspect_pdf(source)
+        self.assertTrue(report["encrypted"])
+        self.assertFalse(report["locked"])
+        self.assertEqual(report["text_pages"], 3)
+        self.assertFalse(report["can_print"])
+        self.assertTrue(core.inspect_pdf(source, "owner")["can_print_high_quality"])
+        with self.assertRaises(PermissionError):
+            core.operate_pdf(source, "add_text", {"text":"Denied"})
+
+    def test_print_render_supports_300_dpi_and_rejects_nonfinite_scale(self):
+        rendered = core.render_page(self.source, 0, 300 / 72)
+        self.assertAlmostEqual(rendered["scale"], 300 / 72)
+        self.assertGreater(rendered["width"], 2400)
+        for scale in (float("nan"),float("inf")):
+            with self.assertRaises(ValueError):
+                core.render_page(self.source, 0, scale)
+
     def test_extract_preserves_password_and_metadata(self):
         source = self.encrypt()
         output = self.root / "擷取.pdf"

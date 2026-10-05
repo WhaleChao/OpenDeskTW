@@ -2148,19 +2148,35 @@ async function printCurrentPdf() {
   if (state.pdfBusy) return;
   const source = state.selectedPath;
   const password = state.pdfPassword;
-  if (state.pdfPages > 200 && !window.confirm(`這份 PDF 有 ${state.pdfPages} 頁，準備列印預覽可能需要較多記憶體。要繼續嗎？`)) return;
+  const totalPages = state.pdfPages;
+  const settings = await requestPdfToolOptions({
+    title: "列印 PDF", detail: "選擇文件頁碼與預覽解析度，接著開啟系統列印設定。較長文件可分段列印。",
+    fields: [
+      {name:"first",label:"起始頁",type:"number",value:1,min:1,max:totalPages},
+      {name:"last",label:"結束頁",type:"number",value:totalPages,min:1,max:totalPages},
+      {name:"dpi",label:"解析度",type:"select",value:totalPages <= 12 ? "300" : "144",options:[["144","144 DPI・快速"],["216","216 DPI・標準"],["300","300 DPI・精細"]]},
+    ],
+  });
+  if (!settings || state.pdfBusy || state.selectedPath !== source) return;
+  if (!Number.isInteger(settings.first) || !Number.isInteger(settings.last) || settings.first < 1 || settings.last > totalPages || settings.first > settings.last) throw new Error("列印頁碼範圍無效。");
   setPdfBusy(true);
   const root = $("#pdf-print-root");
   try {
+  const protection = await invoke("pdf_report", {path:source,password:password || null});
+  if (!protection.can_print) throw new Error("文件未授權列印，請使用擁有者密碼解鎖。");
+  const printScale = protection.can_print_high_quality ? Number(settings.dpi) / 72 : 2;
+  let renderedPixels = 0;
   root.innerHTML = "";
-  $("#pdf-inline-status").textContent = `正在準備 ${state.pdfPages} 頁列印預覽…`;
-  for (let page = 0; page < state.pdfPages; page += 1) {
+  $("#pdf-inline-status").textContent = `正在準備第 ${settings.first}–${settings.last} 頁列印預覽…`;
+  for (let page = settings.first - 1; page < settings.last; page += 1) {
     const rendered = await invoke("pdf_render_page", {
       path: source,
       page,
-      scale: 2,
+      scale: printScale,
       password: password || null,
     });
+    renderedPixels += rendered.width * rendered.height;
+    if (renderedPixels > 150_000_000) throw new Error("列印預覽超過記憶體處理上限，請縮小頁碼範圍或選擇較低解析度。");
     root.insertAdjacentHTML("beforeend", `<section class="pdf-print-page"><img src="${rendered.data_url}" alt="第 ${page + 1} 頁" /></section>`);
   }
   $("#pdf-inline-status").textContent = "列印預覽已完成；請在系統對話框選擇頁碼範圍與印表機。";
@@ -2429,9 +2445,9 @@ async function runSelfTest() {
 
 async function runMagiAnalysis() {
   if (!state.selectedPath) return;
-  const accepted = await confirm(`將「${pathLeaf(state.selectedPath)}」的擷取文字交給 MAGI 分析。處理位置依 MAGI 的模型設定，可能使用外部服務。`, { title: "交給 MAGI", kind: "info", okLabel: "開始分析", cancelLabel: "取消" });
-  if (!accepted) return;
   const source = state.selectedPath;
+  const accepted = await confirm(`將「${pathLeaf(source)}」的擷取文字交給 MAGI 分析。處理位置依 MAGI 的模型設定，可能使用外部服務。`, { title: "交給 MAGI", kind: "info", okLabel: "開始分析", cancelLabel: "取消" });
+  if (!accepted || state.selectedPath !== source) return;
   const button = $("#magi-run");
   const result = $("#magi-result");
   button.disabled = true;
