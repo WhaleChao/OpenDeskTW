@@ -23,6 +23,8 @@ import mimetypes
 import os
 import re
 import shutil
+import stat
+from contextlib import contextmanager
 import sys
 import tempfile
 from datetime import date
@@ -40,7 +42,7 @@ if _BUNDLED_TESSDATA.is_dir():
 import fitz
 
 
-APP_VERSION = "1.3.0-embedded"
+APP_VERSION = "1.4.0-embedded"
 PROTOCOL_VERSION = 2
 CAPABILITIES = [
     {"id": "view", "category": "檢視", "label": "同視窗閱讀、搜尋、縮放與頁面導覽"},
@@ -85,7 +87,9 @@ def _page_indices(document: fitz.Document, raw: Any, default: int | None = None)
         values = [raw]
     else:
         values = [int(value) for value in raw]
-    result = sorted({value for value in values if value is not None and 0 <= value < document.page_count})
+    if any(value is None or value < 0 or value >= document.page_count for value in values):
+        raise ValueError("頁碼超出文件範圍")
+    result = list(dict.fromkeys(values))
     if not result:
         raise ValueError("沒有有效的頁碼")
     return result
@@ -123,7 +127,7 @@ def inspect_pdf(path: str | Path, password: str = "") -> dict[str, Any]:
     source = _source(path)
     document = fitz.open(source)
     try:
-        encrypted = bool(document.needs_pass)
+        encrypted = bool(document.needs_pass or (document.metadata or {}).get("encryption"))
         unlocked = not encrypted or bool(password and document.authenticate(password))
         report: dict[str, Any] = {
             "protocol_version": PROTOCOL_VERSION,
@@ -274,8 +278,8 @@ def _rect(page: fitz.Page, options: dict[str, Any], key: str = "rect") -> fitz.R
     if isinstance(raw, (list, tuple)) and len(raw) == 4:
         rectangle = fitz.Rect(*(float(value) for value in raw))
     else:
-        x = float(options.get("x") or 72)
-        y = float(options.get("y") or 72)
+        x = float(options.get("x", 72))
+        y = float(options.get("y", 72))
         width = float(options.get("width") or min(260, max(40, page.rect.width - x - 36)))
         height = float(options.get("height") or 72)
         rectangle = fitz.Rect(x, y, x + width, y + height)
@@ -348,7 +352,7 @@ def _atomic_save(
         raise ValueError("輸出檔名必須使用 .pdf")
     destination.parent.mkdir(parents=True, exist_ok=True)
     handle, temporary_name = tempfile.mkstemp(
-        prefix=f".{destination.stem}-", suffix=".pdf", dir=destination.parent
+        prefix=".opendesk-", suffix=".pdf", dir=destination.parent
     )
     os.close(handle)
     temporary = Path(temporary_name)
@@ -363,6 +367,13 @@ def _atomic_save(
             user_pw=user_pw,
             permissions=permissions,
         )
+        with fitz.open(temporary) as checked:
+            if checked.page_count != document.page_count or not checked.is_pdf:
+                raise RuntimeError("PDF 保存驗證失敗，原檔未變更")
+        with temporary.open("r+b") as stream:
+            os.fsync(stream.fileno())
+        if destination.exists():
+            os.chmod(temporary, stat.S_IMODE(destination.stat().st_mode))
         # Windows 不允許取代仍由 MuPDF 開啟中的同名來源檔。
         # 臨時檔完成後才關閉控制代碼，仍可確保寫入失敗時保留原檔。
         for opened_document in close_before_replace:
@@ -382,11 +393,13 @@ def _split(document: fitz.Document, source: Path, options: dict[str, Any]) -> li
         start, end = int(raw_range[0]), int(raw_range[1])
         if start < 0 or end < start or end >= document.page_count:
             raise ValueError(f"無效的分割範圍：{start + 1}–{end + 1}")
-        part = fitz.open()
+        part = fitz.open(stream=document.tobytes(encryption=fitz.PDF_ENCRYPT_KEEP), filetype="pdf")
         try:
-            part.insert_pdf(document, from_page=start, to_page=end)
-            destination = output_dir / f"{source.stem}_第{number}部分.pdf"
-            _atomic_save(part, destination, encryption=fitz.PDF_ENCRYPT_NONE)
+            if part.needs_pass and not part.authenticate(str(options.get("password") or "")):
+                raise ValueError("分割加密 PDF 需要目前文件密碼")
+            part.select(list(range(start, end + 1)))
+            destination = _unique_destination(output_dir, f"{source.stem}_第{number}部分.pdf")
+            _atomic_save(part, destination)
             outputs.append(str(destination))
         finally:
             part.close()
@@ -394,22 +407,33 @@ def _split(document: fitz.Document, source: Path, options: dict[str, Any]) -> li
 
 
 def _ocr(document: fitz.Document, options: dict[str, Any]) -> fitz.Document:
+    # Add a searchable layer to the existing pages; retain links, forms, metadata,
+    # annotations, vector content, bookmarks and encryption.
     language = str(options.get("language") or "chi_tra+eng")
     dpi = max(150, min(int(options.get("dpi") or 250), 400))
-    output = fitz.open()
-    try:
-        for page in document:
-            pixmap = page.get_pixmap(dpi=dpi, alpha=False)
-            ocr_bytes = pixmap.pdfocr_tobytes(language=language, compress=True)
-            ocr_page = fitz.open(stream=ocr_bytes, filetype="pdf")
-            try:
-                output.insert_pdf(ocr_page)
-            finally:
-                ocr_page.close()
-        return output
-    except Exception:
-        output.close()
-        raise
+    for page in document:
+        if (page.get_text("text") or "").strip():
+            continue
+        rotation = page.rotation
+        page.set_rotation(0)
+        try:
+            pixmap = page.get_pixmap(dpi=dpi, alpha=False, annots=False)
+            with fitz.open(stream=pixmap.pdfocr_tobytes(language=language, compress=True), filetype="pdf") as ocr_page:
+                ratio_x = page.rect.width / ocr_page[0].rect.width
+                ratio_y = page.rect.height / ocr_page[0].rect.height
+                for block in ocr_page[0].get_text("dict")["blocks"]:
+                    for line in block.get("lines", []):
+                        for span in line.get("spans", []):
+                            text = span.get("text", "")
+                            if not text.strip():
+                                continue
+                            x, y = span["origin"]
+                            page.insert_text((x * ratio_x, y * ratio_y), text,
+                                             fontsize=max(1, span["size"] * ratio_y),
+                                             render_mode=3, **_traditional_font())
+        finally:
+            page.set_rotation(rotation)
+    return document
 
 
 def search_pdf(path: str | Path, options: dict[str, Any]) -> dict[str, Any]:
@@ -653,11 +677,13 @@ def verify_signatures_pdf(path: str | Path, options: dict[str, Any]) -> dict[str
     trust_store_available = True
     trust_store_error = ""
     with source.open("rb") as stream:
-        reader = PdfFileReader(stream)
+        reader = PdfFileReader(stream, strict=False)
+        if reader.encrypted and reader.decrypt(str(options.get("password") or "")).status.name == "FAILED":
+            raise PermissionError("簽章驗證需要正確的文件密碼")
         for embedded in reader.embedded_signatures:
             try:
                 try:
-                    validation = validate_pdf_signature(embedded)
+                    validation = validate_pdf_signature(embedded, signer_validation_context=ValidationContext(allow_fetching=False))
                 except OSError as error:
                     # macOS may deny access to the system trust store in a sandbox.
                     # Retry without trust anchors so cryptographic integrity and
@@ -685,6 +711,7 @@ def verify_signatures_pdf(path: str | Path, options: dict[str, Any]) -> dict[str
         "count": len(results),
         "trust_store_available": trust_store_available,
         "trust_store_error": trust_store_error,
+        "online_revocation_checked": False,
     }
 
 
@@ -706,7 +733,31 @@ def query_pdf(path: str | Path, query: str, options: dict[str, Any]) -> dict[str
     raise ValueError(f"不支援的 PDF 查詢：{query}")
 
 
+@contextmanager
+def _staged_output(destination: Path):
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    descriptor, raw = tempfile.mkstemp(prefix=".opendesk-", suffix=destination.suffix, dir=destination.parent)
+    os.close(descriptor)
+    temporary = Path(raw)
+    try:
+        yield temporary
+        with temporary.open("r+b") as stream:
+            os.fsync(stream.fileno())
+        if destination.exists():
+            temporary.chmod(stat.S_IMODE(destination.stat().st_mode))
+        os.replace(temporary, destination)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
 def _export_pdf(document: fitz.Document, destination: Path, options: dict[str, Any]) -> dict[str, Any]:
+    with _staged_output(destination) as temporary:
+        result = _export_pdf_write(document, temporary, options)
+    result["output"] = str(destination)
+    return result
+
+
+def _export_pdf_write(document: fitz.Document, destination: Path, options: dict[str, Any]) -> dict[str, Any]:
     export_format = str(options.get("format") or destination.suffix.lstrip(".")).lower()
     destination.parent.mkdir(parents=True, exist_ok=True)
     if export_format in {"txt", "text"}:
@@ -743,7 +794,8 @@ def _export_pdf(document: fitz.Document, destination: Path, options: dict[str, A
             sheet = workbook.create_sheet(f"第{index + 1}頁")
             for row, line in enumerate((page.get_text("text") or "").splitlines(), start=1):
                 for column, value in enumerate(re.split(r"\t+|\s{2,}", line.strip()), start=1):
-                    sheet.cell(row=row, column=column, value=value)
+                    cell = sheet.cell(row=row, column=column, value=value)
+                    cell.data_type = "s"  # PDF content is data, never an executable Excel formula.
         workbook.save(destination)
     elif export_format == "pptx":
         from pptx import Presentation
@@ -757,11 +809,12 @@ def _export_pdf(document: fitz.Document, destination: Path, options: dict[str, A
                 image = Path(temporary) / f"page-{index + 1}.png"
                 page.get_pixmap(dpi=144, alpha=False, annots=True).save(image)
                 slide = presentation.slides.add_slide(blank_layout)
-                slide.shapes.add_picture(
-                    str(image), 0, 0,
-                    width=presentation.slide_width,
-                    height=presentation.slide_height,
-                )
+                ratio = page.rect.width / page.rect.height
+                width = min(presentation.slide_width, int(presentation.slide_height * ratio))
+                height = int(width / ratio)
+                slide.shapes.add_picture(str(image), (presentation.slide_width - width) // 2,
+                                        (presentation.slide_height - height) // 2,
+                                        width=width, height=height)
                 notes = slide.notes_slide.notes_text_frame
                 notes.text = page.get_text("text") or ""
         presentation.save(destination)
@@ -782,8 +835,20 @@ def _export_pdf(document: fitz.Document, destination: Path, options: dict[str, A
 
 
 def _sign_pdf(source: Path, destination: Path, options: dict[str, Any]) -> dict[str, Any]:
+    with _staged_output(destination) as temporary:
+        result = _sign_pdf_write(source, temporary, options)
+        with fitz.open(temporary) as signed:
+            if not signed.is_pdf or signed.page_count < 1:
+                raise ValueError("簽署後的 PDF 無效")
+    result["output"] = str(destination)
+    return result
+
+
+def _sign_pdf_write(source: Path, destination: Path, options: dict[str, Any]) -> dict[str, Any]:
     try:
         from pyhanko.pdf_utils.incremental_writer import IncrementalPdfFileWriter
+        from pyhanko.pdf_utils.reader import PdfFileReader
+        from pyhanko.pdf_utils import generic
         from pyhanko.sign import fields as signature_fields
         from pyhanko.sign import signers
         from pyhanko.sign.fields import SigFieldSpec
@@ -801,7 +866,18 @@ def _sign_pdf(source: Path, destination: Path, options: dict[str, Any]) -> dict[
     field_name = str(options.get("field_name") or "Signature1")
     destination.parent.mkdir(parents=True, exist_ok=True)
     with source.open("rb") as input_stream, destination.open("wb") as output_stream:
-        writer = IncrementalPdfFileWriter(input_stream)
+        reader = PdfFileReader(input_stream, strict=False)
+        password = str(options.get("password") or "")
+        if reader.encrypted and reader.decrypt(password).status.name == "FAILED":
+            raise PermissionError("簽署需要正確的文件密碼")
+        writer = IncrementalPdfFileWriter(input_stream, prev=reader)
+        if reader.encrypted:
+            writer.encrypt(password)
+            if not isinstance(writer._encrypt, generic.IndirectObject):
+                # PyMuPDF writes a direct encryption dictionary. pyHanko's
+                # incremental writer requires an indirect one; retain all
+                # existing encryption parameters and append the same dictionary.
+                writer._encrypt = writer.add_object(reader.encrypt_dict)
         signature_fields.append_signature_field(
             writer,
             SigFieldSpec(sig_field_name=field_name, on_page=int(options.get("page") or 0)),
@@ -851,22 +927,53 @@ def _smart_file(source: Path, output_dir: Path, document: fitz.Document) -> dict
     }
 
 
+def _require_permission(document: fitz.Document, operation: str, password: str) -> None:
+    if not (document.needs_pass or (document.metadata or {}).get("encryption")):
+        return
+    if document.authenticate(password) & 4:
+        return  # Owner authentication authorises all changes.
+    assembly = {"rotate", "delete", "insert_blank", "reorder", "merge", "extract", "split"}
+    annotations = {"note", "free_text", "highlight_search", "mark_search", "shape", "measure", "link"}
+    exports = {"export", "export_form_data", "extract_attachment"}
+    if operation in assembly:
+        required = fitz.PDF_PERM_ASSEMBLE
+    elif operation in annotations:
+        required = fitz.PDF_PERM_ANNOTATE
+    elif operation in {"fill_form", "import_form_data", "sign"}:
+        required = fitz.PDF_PERM_FORM
+    elif operation in exports:
+        required = fitz.PDF_PERM_COPY
+    elif operation == "smart_file":
+        return  # Exact file copies retain the original protection.
+    else:
+        required = fitz.PDF_PERM_MODIFY
+    if document.permissions & required != required:
+        raise PermissionError("目前文件密碼未授權這項操作，請使用擁有者密碼")
+
+
 def operate_pdf(
     path: str | Path,
     operation: str,
     options: dict[str, Any],
-    output: str | Path | None,
+    output: str | Path | None = None,
 ) -> dict[str, Any]:
     source = _source(path)
     password = str(options.get("password") or "")
     document = _open(source, password)
     destination = Path(output).expanduser().resolve() if output else source
+    if output and options.get("unique_output"):
+        destination = _unique_destination(destination.parent, destination.name)
     result: dict[str, Any] = {"operation": operation, "output": str(destination)}
     replacement: fitz.Document | None = None
     try:
+        _require_permission(document, operation, password)
+        separate_operations = {"extract", "extract_attachment", "export_form_data", "export", "sign"}
+        same_source = destination == source or (destination.exists() and os.path.samefile(destination, source))
+        if operation in separate_operations and (output is None or same_source):
+            raise ValueError("這項操作必須另存新檔，不能覆寫來源 PDF")
         current_page = int(options.get("page") or 0)
         if operation == "rotate":
-            angle = int(options.get("angle") or 90)
+            angle = int(options.get("angle", 90))
             if angle not in {-270, -180, -90, 90, 180, 270}:
                 raise ValueError("旋轉角度必須是 90、180 或 270")
             for index in _page_indices(document, options.get("pages"), current_page):
@@ -876,10 +983,10 @@ def operate_pdf(
             pages = _page_indices(document, options.get("pages"), current_page)
             if len(pages) >= document.page_count:
                 raise ValueError("PDF 至少必須保留一頁")
-            for index in reversed(pages):
+            for index in sorted(pages, reverse=True):
                 document.delete_page(index)
         elif operation == "insert_blank":
-            position = max(0, min(int(options.get("position") or current_page + 1), document.page_count))
+            position = max(0, min(int(options.get("position", current_page + 1)), document.page_count))
             document.new_page(
                 pno=position,
                 width=float(options.get("width") or 595),
@@ -893,15 +1000,13 @@ def operate_pdf(
         elif operation == "merge":
             other = _open(str(options.get("other") or ""), str(options.get("other_password") or ""))
             try:
-                position = max(0, min(int(options.get("position") or document.page_count), document.page_count))
+                position = max(0, min(int(options.get("position", document.page_count)), document.page_count))
                 document.insert_pdf(other, start_at=position)
             finally:
                 other.close()
         elif operation == "extract":
             pages = _page_indices(document, options.get("pages"), current_page)
-            replacement = fitz.open()
-            for index in pages:
-                replacement.insert_pdf(document, from_page=index, to_page=index)
+            document.select(pages)
         elif operation == "split":
             outputs = _split(document, source, options)
             return {"protocol_version": PROTOCOL_VERSION, "operation": operation, "outputs": outputs}
@@ -973,17 +1078,19 @@ def operate_pdf(
             text = str(options.get("text") or "").strip()
             if not text:
                 raise ValueError("請輸入文字")
-            x = float(options.get("x") or 72)
-            y = float(options.get("y") or 72)
+            x = float(options.get("x", 72))
+            y = float(options.get("y", 72))
             width = float(options.get("width") or min(360, page.rect.width - x - 36))
             height = float(options.get("height") or 100)
-            page.insert_textbox(
+            remaining = page.insert_textbox(
                 fitz.Rect(x, y, x + width, y + height),
                 text,
                 fontsize=max(6.0, min(float(options.get("font_size") or 12), 72.0)),
                 color=(0, 0, 0),
                 **_traditional_font(),
             )
+            if remaining < 0:
+                raise ValueError("文字超出指定範圍，請減少內容或縮小字級")
         elif operation == "edit_text":
             term = str(options.get("text") or "").strip()
             replacement_text = str(options.get("replacement") or "")
@@ -1002,13 +1109,15 @@ def operate_pdf(
                 fontsize = max(5.0, min(float(options.get("font_size") or 11), 72.0))
                 for page, rectangle in replacements:
                     target = fitz.Rect(rectangle.x0, rectangle.y0, max(rectangle.x1, rectangle.x0 + 40), rectangle.y1 + fontsize)
-                    page.insert_textbox(
+                    remaining = page.insert_textbox(
                         target,
                         replacement_text,
                         fontsize=fontsize,
                         color=_color(options.get("color"), (0, 0, 0)),
                         **_traditional_font(),
                     )
+                    if remaining < 0:
+                        raise ValueError("取代文字超出原文字範圍，請減少內容或縮小字級")
             result["matches"] = len(replacements)
         elif operation in {"image_delete", "image_replace"}:
             page = document[current_page]
@@ -1035,7 +1144,7 @@ def operate_pdf(
         elif operation == "note":
             page = document[current_page]
             note = page.add_text_annot(
-                fitz.Point(float(options.get("x") or 72), float(options.get("y") or 72)),
+                fitz.Point(float(options.get("x", 72)), float(options.get("y", 72))),
                 str(options.get("text") or "全能文件工作台註解"),
             )
             note.set_info(title=str(options.get("author") or "全能文件工作台"))
@@ -1227,7 +1336,8 @@ def operate_pdf(
                 for rect in page_hits:
                     page.add_redact_annot(rect, fill=(0, 0, 0))
                 if page_hits:
-                    page.apply_redactions(images=fitz.PDF_REDACT_IMAGE_NONE)
+                    page.apply_redactions(images=fitz.PDF_REDACT_IMAGE_PIXELS,
+                                          graphics=fitz.PDF_REDACT_LINE_ART_REMOVE_IF_TOUCHED)
                     hits += len(page_hits)
             result["matches"] = hits
         elif operation == "redact_pattern":
@@ -1248,7 +1358,8 @@ def operate_pdf(
                 for rectangle in page_hits:
                     page.add_redact_annot(rectangle, fill=(0, 0, 0))
                 if page_hits:
-                    page.apply_redactions(images=fitz.PDF_REDACT_IMAGE_NONE)
+                    page.apply_redactions(images=fitz.PDF_REDACT_IMAGE_PIXELS,
+                                          graphics=fitz.PDF_REDACT_LINE_ART_REMOVE_IF_TOUCHED)
                     hits += len(page_hits)
             result["matches"] = hits
         elif operation == "fill_form":
@@ -1306,7 +1417,8 @@ def operate_pdf(
                     if widget.field_name:
                         values[widget.field_name] = widget.field_value
             destination.parent.mkdir(parents=True, exist_ok=True)
-            destination.write_text(json.dumps(values, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+            with _staged_output(destination) as temporary:
+                temporary.write_text(json.dumps(values, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
             return {
                 "protocol_version": PROTOCOL_VERSION,
                 "operation": operation,
@@ -1365,7 +1477,7 @@ def operate_pdf(
                 encryption=fitz.PDF_ENCRYPT_AES_256,
                 owner_pw=owner_password,
                 user_pw=user_password,
-                permissions=int(options.get("permissions") or -1),
+                permissions=int(options.get("permissions", -1)),
                 close_before_replace=close_documents,
             )
             result["output"] = str(saved)
@@ -1381,7 +1493,7 @@ def operate_pdf(
             result["output"] = str(saved)
             return {"protocol_version": PROTOCOL_VERSION, **result}
         elif operation == "ocr":
-            replacement = _ocr(document, options)
+            _ocr(document, options)
         elif operation == "export":
             if output is None:
                 raise ValueError("匯出時必須指定輸出檔案")

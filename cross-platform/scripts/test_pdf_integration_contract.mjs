@@ -51,7 +51,7 @@ if (missingRustQueries.length || missingPythonQueries.length) {
 }
 
 for (const requiredText of [
-  "結果會直接顯示在這裡，不會跳到網頁。",
+  'id="magi-result"',
   "拖曳即可重排",
   "復原上次修改",
   "匯出 Word／Excel／簡報／圖片",

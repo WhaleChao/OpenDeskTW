@@ -8,6 +8,10 @@ on:
 permissions:
   contents: read
 
+defaults:
+  run:
+    shell: bash
+
 jobs:
   build-preview:
     strategy:
@@ -56,6 +60,8 @@ jobs:
           npm run test:traditional
           npm run test:contracts
           npm run test:pdf-core
+          npm run test:safety
+          npm run test:preferences
           npm run test:legal
           cargo test --manifest-path src-tauri/Cargo.toml --lib
       - name: 建立預覽安裝包

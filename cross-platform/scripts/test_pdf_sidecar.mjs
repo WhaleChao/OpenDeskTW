@@ -82,7 +82,23 @@ try {
   if (!validated.passed || validated.roundtrip_pages !== 2) {
     throw new Error("封裝核心 LIVE 往返失敗");
   }
-  console.log(`封裝 PDF 常駐核心：PASS（冷啟動 ${coldMs} ms，後續回應 ${warmMs} ms）`);
+  // Exercise the real bundled OCR models on an image-only generated page.
+  const scanned = path.join(testRoot, "scanned.pdf");
+  const fixture = spawnSync(process.env.DOCUMENT_WORKBENCH_PYTHON || (process.platform === "win32" ? "python" : "python3"), ["-c", `import fitz,sys
+source=fitz.open()
+p=source.new_page()
+p.insert_text((72,100), 'OpenDesk OCR Verification', fontsize=24)
+image=p.get_pixmap(dpi=250, alpha=False).tobytes('png')
+scanned=fitz.open()
+p=scanned.new_page()
+p.insert_image(p.rect, stream=image)
+scanned.set_metadata({'title':'Preserved OCR title'})
+scanned.save(sys.argv[1])`, scanned], {encoding:"utf8", windowsHide:true});
+  if (fixture.status !== 0) throw new Error(fixture.stderr || "OCR fixture failed");
+  await request(["--embedded-operate", scanned, "--operation", "ocr", "--options-json", JSON.stringify({language:"eng",dpi:250}), "--output", scanned], 45000);
+  const recognized = await request(["--embedded-query", scanned, "--query", "search", "--options-json", JSON.stringify({text:"Verification"})], 5000);
+  if (recognized.matches < 1) throw new Error("封裝 OCR 辨識失敗");
+  console.log(`封裝 PDF 常駐核心＋實際 OCR：PASS（冷啟動 ${coldMs} ms，後續回應 ${warmMs} ms）`);
 } finally {
   child.stdin.end();
   child.kill();

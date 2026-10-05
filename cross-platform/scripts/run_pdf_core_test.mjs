@@ -8,8 +8,8 @@ const candidates = process.env.DOCUMENT_WORKBENCH_PYTHON
 
 for (const executable of candidates) {
   const args = executable === "py"
-    ? ["-3", "scripts/test_embedded_pdf_core.py"]
-    : ["scripts/test_embedded_pdf_core.py"];
+    ? ["-3", process.argv[2] || "scripts/test_embedded_pdf_core.py"]
+    : [process.argv[2] || "scripts/test_embedded_pdf_core.py"];
   const result = spawnSync(executable, args, { stdio: "inherit" });
   if (result.error?.code === "ENOENT") continue;
   if (result.error) throw result.error;

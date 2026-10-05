@@ -9,19 +9,25 @@
   </head>
   <body>
     <main class="shell">
-      <header class="hero">
-        <div class="brand-mark" aria-hidden="true">▤</div>
-        <div class="hero-copy">
-          <h1>全能文件工作台</h1>
-          <p>文件・試算表・簡報・PDF・MAGI 一站整合・全繁體中文・本機安全</p>
-        </div>
-        <div class="system-summary" id="system-summary" aria-live="polite">正在檢查本機環境…</div>
+      <aside class="studio-sidebar" aria-label="主導覽">
+        <div class="studio-brand"><span class="studio-monogram" aria-hidden="true">O</span><div><b>OpenDesk <small>TW</small></b><span>文件工作台</span></div></div>
+        <nav><button data-view="home" aria-label="工作台" aria-current="page"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg><span>工作台</span></button><button data-view="word" aria-label="文字"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><path d="M14 3v6h6M8 13h8M8 17h6"/></svg><span>文字</span></button><button data-view="excel" aria-label="試算表"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 10h18M9 4v16M15 10v10M3 15h18"/></svg><span>試算表</span></button><button data-view="powerpoint" aria-label="簡報"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="13" rx="2"/><path d="m8 21 4-4 4 4M7 12l4-4 3 3 3-4"/></svg><span>簡報</span></button><button data-view="pdf" aria-label="PDF"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9zM14 3v6h6"/><path d="m8 16 2-5 2 5m-3-2h2m3-3h2a2 2 0 0 1 0 4h-2z"/></svg><span>PDF</span></button><button data-view="tools" aria-label="工具"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m14 6 4 4M9 11l-6 6 4 4 6-6M15 3a6 6 0 0 0-7 7l6 6a6 6 0 0 0 7-7l-4 4-6-6z"/></svg><span>工具</span></button></nav>
+        <div class="sidebar-bottom"><span class="sidebar-caption">文件與工作流程</span><button id="studio-shortcuts">快捷鍵總覽 <kbd>?</kbd></button><button id="studio-legal">授權與原始碼 ↗</button></div>
+      </aside>
+      <header class="studio-topbar">
+        <div class="studio-breadcrumb"><span>OpenDesk</span><span aria-hidden="true">／</span><h1 id="studio-view-title">工作台</h1></div>
+        <div class="studio-header-actions"><button id="studio-command" class="command-button">搜尋指令 <kbd>⌘ / Ctrl K</kbd></button><label class="theme-control"><span class="sr-only">外觀</span><select id="studio-theme" aria-label="外觀"><option value="system">跟隨系統</option><option value="light">日間</option><option value="dark">夜間</option></select></label><button class="primary" id="studio-open">開啟文件</button></div>
       </header>
+      <section class="studio-welcome" data-studio-section="home" aria-labelledby="welcome-title">
+        <div><span class="eyebrow">OPENDESK / DOCUMENT STUDIO</span><h2 id="welcome-title">文件工作台</h2><p>閱讀、編輯與整理文件。</p></div>
+        <div class="document-composition" aria-hidden="true"><div class="composition-sheet back-sheet"><span>W</span><i></i><i></i><i></i></div><div class="composition-sheet front-sheet"><span>PDF</span><i></i><i></i><i></i><div class="composition-grid"><i></i><i></i><i></i><i></i></div></div></div>
+      </section>
+      <section class="section studio-module hidden" id="studio-module" data-studio-section="excel powerpoint" aria-labelledby="module-title"><span class="eyebrow" id="module-eyebrow">SPREADSHEETS</span><h2 id="module-title">試算表</h2><p id="module-description">整理資料、編輯公式與建立圖表。</p><div class="action-row"><button class="primary" id="module-create">新增試算表</button><button id="module-open">開啟試算表</button></div><p class="module-engine-note">Office 編輯使用 ONLYOFFICE 或 LibreOffice；PDF 直接在工作台處理。</p></section>
 
-      <section class="section" aria-labelledby="quick-title">
+      <section class="section" data-studio-section="home" aria-labelledby="quick-title">
         <div class="section-heading">
-          <div><h2 id="quick-title">開始使用</h2><p>選一個動作就能開始，不必先理解格式或引擎。</p></div>
-          <button class="quiet" id="check-update">檢查安全熱修</button>
+          <div><h2 id="quick-title">開始工作</h2><p>建立新文件，或繼續手邊的工作。</p></div>
+          <button class="quiet" id="check-update">檢查更新</button>
         </div>
         <div class="quick-grid">
           <button class="quick-card word" data-create="text"><span class="quick-icon">W</span><span><b>新增文字文件</b><small>立即開啟・儲存時再選位置</small></span></button>
@@ -31,12 +37,12 @@
         </div>
       </section>
 
-      <section class="section word-center" id="word-center" aria-labelledby="word-center-title">
+      <section class="section word-center" id="word-center" data-studio-section="word" aria-labelledby="word-center-title">
         <div class="section-heading word-heading">
           <div>
             <span class="eyebrow">WORD 文件中心</span>
-            <h2 id="word-center-title">想完成什麼？</h2>
-            <p>依 Word 熟悉的功能區整理，但每張卡片都直接說明用途與下一步。</p>
+            <h2 id="word-center-title">文字文件</h2>
+            <p>編輯、排版、校閱與交付。</p>
           </div>
           <div class="word-start-actions">
             <button class="primary" data-create="text">＋ 新增 Word 文件</button>
@@ -48,7 +54,7 @@
         <div class="onlyoffice-tw-banner" id="onlyoffice-tw-banner" aria-live="polite">
           <div>
             <b id="onlyoffice-tw-title">正在檢查 ONLYOFFICE 繁體中文…</b>
-            <span id="onlyoffice-tw-detail">會核對完整繁中介面、數字字級與寫作工具，不會讀取文件內容。</span>
+            <span id="onlyoffice-tw-detail">檢查繁體中文介面、字級與寫作工具。</span>
           </div>
           <button id="repair-onlyoffice-tw">一鍵補齊繁中＋數字字級</button>
         </div>
@@ -113,12 +119,12 @@
         </div>
       </section>
 
-      <section class="section pdf-center" id="pdf-center" aria-labelledby="pdf-center-title">
+      <section class="section pdf-center" id="pdf-center" data-studio-section="pdf" aria-labelledby="pdf-center-title">
         <div class="section-heading pdf-heading">
           <div>
             <span class="eyebrow pdf-eyebrow">PDF 文件中心</span>
-            <h2 id="pdf-center-title">PDF 想怎麼處理？</h2>
-            <p>文字、試算表、簡報與 AcroPDF 核心都在同一個視窗完成。</p>
+            <h2 id="pdf-center-title">PDF 工作區</h2>
+            <p>閱讀、整理頁面、註解與匯出。</p>
           </div>
           <div class="word-start-actions">
             <button class="pdf-primary" id="open-pdf-document">開啟 PDF</button>
@@ -147,7 +153,7 @@
               <li>開啟前自動建立原檔備份。</li>
               <li>修改、遮蔽或簽署都在本機完成。</li>
             </ol>
-            <p>內建核心不會開啟另一套 APP，也不會把文件傳送到網路。</p>
+            <p>修改前保留備份，可使用「復原上次修改」回到上一個版本。</p>
           </aside>
         </div>
 
@@ -178,12 +184,13 @@
           <section class="pdf-inline-workspace hidden" id="pdf-inline-workspace" aria-labelledby="pdf-inline-title">
             <div class="pdf-inline-head">
               <div>
-                <span class="eyebrow pdf-eyebrow">內建 ACROPDF 核心</span>
-                <h3 id="pdf-inline-title">同視窗 PDF 編輯器</h3>
+                <span class="eyebrow pdf-eyebrow">PDF WORKSPACE</span>
+                <h3 id="pdf-inline-title">PDF 編輯器</h3>
                 <p id="pdf-inline-file">尚未載入文件</p>
               </div>
               <div class="pdf-inline-head-actions">
                 <span>每次修改前自動備份</span>
+                <button id="pdf-save-copy">另存副本</button>
                 <button id="pdf-inline-close">收合編輯器</button>
               </div>
             </div>
@@ -236,7 +243,7 @@
         </div>
       </section>
 
-      <section class="section workspace hidden" id="workspace" aria-labelledby="workspace-title">
+      <section class="section workspace hidden" id="workspace" data-studio-section="home word excel powerpoint pdf tools" aria-labelledby="workspace-title">
         <div class="section-heading">
           <div><h2 id="workspace-title">目前文件</h2><p id="workspace-path"></p></div>
           <span class="risk-badge" id="risk-badge">一般</span>
@@ -268,36 +275,36 @@
             </label>
             <button class="primary" id="magi-run">開始分析</button>
           </div>
-          <div id="magi-result" class="magi-result">結果會直接顯示在這裡，不會跳到網頁。</div>
+          <div id="magi-result" class="magi-result">分析結果</div>
           <button class="quiet hidden" id="magi-copy">複製分析結果</button>
         </div>
       </section>
 
-      <section class="section" aria-labelledby="recent-title">
-        <div class="section-heading"><div><h2 id="recent-title">最近文件</h2><p>按一下即可先檢查與備份，再繼續工作。</p></div><button class="quiet" id="clear-recent">清除清單</button></div>
+      <section class="section" data-studio-section="home" aria-labelledby="recent-title">
+        <div class="section-heading"><div><h2 id="recent-title">最近文件</h2><p>選擇文件，繼續工作。</p></div><button class="quiet" id="clear-recent">清除清單</button></div>
         <div id="recent-list" class="recent-list"><p class="empty">尚無最近文件。</p></div>
       </section>
 
-      <section class="section" aria-labelledby="feature-title">
+      <section class="section" data-studio-section="tools excel powerpoint" aria-labelledby="feature-title">
         <div class="section-heading">
-          <div><h2 id="feature-title">完整 Office 功能中心</h2><p>搜尋功能名稱，直接知道在哪個模組使用及相容界線。</p></div>
+          <div><h2 id="feature-title">功能索引</h2><p>搜尋功能名稱，直接知道在哪個模組使用及相容界線。</p></div>
           <input id="feature-search" class="search" type="search" placeholder="搜尋：頁碼、公式、動畫…" aria-label="搜尋 Office 功能" />
         </div>
-        <div class="feature-tabs" role="tablist" aria-label="Office 模組">
-          <button class="active" data-feature-tab="all">全部</button>
-          <button data-feature-tab="word">文字</button>
-          <button data-feature-tab="excel">試算表</button>
-          <button data-feature-tab="powerpoint">簡報</button>
-          <button data-feature-tab="pdf">PDF</button>
-          <button data-feature-tab="safety">安全與 AI</button>
+        <div class="feature-tabs" role="group" aria-label="Office 模組">
+          <button class="active" data-feature-tab="all" aria-pressed="true">全部</button>
+          <button data-feature-tab="word" aria-pressed="false">文字</button>
+          <button data-feature-tab="excel" aria-pressed="false">試算表</button>
+          <button data-feature-tab="powerpoint" aria-pressed="false">簡報</button>
+          <button data-feature-tab="pdf" aria-pressed="false">PDF</button>
+          <button data-feature-tab="safety" aria-pressed="false">安全與 AI</button>
         </div>
         <div id="feature-grid" class="feature-grid"></div>
         <aside class="boundary"><b>Microsoft 專屬界線</b><span>VBA、ActiveX、COM、IRM、Microsoft 365 雲端共同編輯，以及部分複雜 SmartArt／3D／動作路徑，會保留原檔並先警示；不會暗中轉格式。</span></aside>
       </section>
 
-      <section class="section verify" aria-labelledby="verify-title">
+      <section class="section verify" data-studio-section="tools" aria-labelledby="verify-title">
         <div class="section-heading">
-          <div><h2 id="verify-title">完整相容性 LIVE 檢查</h2><p>驗證編輯引擎、內建範本、備份、Office 結構、PDF 與 MAGI。</p></div>
+          <div><h2 id="verify-title">環境與相容性檢查</h2><p>驗證編輯引擎、內建範本、備份、Office 結構、PDF 與 MAGI。</p></div>
           <button class="primary" id="run-self-test">執行完整檢查</button>
         </div>
         <div id="self-test-result" class="test-result">尚未執行。</div>
@@ -305,13 +312,14 @@
 
       <footer>
         <span id="app-version">全能文件工作台</span>
-        <span>文件預設留在本機・更新包必須通過密碼學簽章</span>
+        <span class="system-summary" id="system-summary" aria-live="polite">正在檢查編輯工具…</span>
         <button class="footer-license" id="legal-open">GNU AGPL v3+・授權與原始碼</button>
       </footer>
     </main>
+    <dialog id="studio-command-dialog" class="studio-command-dialog" aria-labelledby="command-title"><div class="command-head"><h2 id="command-title">搜尋指令</h2><button id="studio-command-close" aria-label="關閉指令搜尋">關閉</button></div><label><span class="sr-only">搜尋功能或工作區</span><input id="studio-command-input" type="search" placeholder="搜尋：開啟、PDF、復原、引文…" autocomplete="off" /></label><div id="studio-command-results" class="command-results"></div><p class="command-hint">↑ ↓ 選擇 · Enter 執行 · Esc 關閉</p></dialog>
     <dialog class="shortcut-dialog" id="shortcut-dialog" aria-labelledby="shortcut-title">
       <div class="shortcut-dialog-head">
-        <div><span class="eyebrow">本機可用・全繁體中文</span><h2 id="shortcut-title">Word 相容快捷鍵總覽</h2><p>Word 同鍵與全能文件覆寫均在本機執行；可搜尋動作、按鍵或支援層級。</p></div>
+        <div><span class="eyebrow">SHORTCUTS</span><h2 id="shortcut-title">Word 相容快捷鍵總覽</h2><p>搜尋動作、按鍵或支援層級。</p></div>
         <button id="shortcut-close" aria-label="關閉快捷鍵總覽">關閉</button>
       </div>
       <label class="shortcut-search-label">搜尋快捷鍵
@@ -324,30 +332,30 @@
     <dialog class="word-tools-dialog" id="word-tools-dialog" aria-labelledby="word-tools-title">
       <div class="shortcut-dialog-head">
         <div>
-          <span class="eyebrow">真正產出檔案・不只提供說明</span>
+          <span class="eyebrow">文件工具</span>
           <h2 id="word-tools-title">Word 進階工具</h2>
-          <p>復原、合併列印、無障礙修復與引文書目都在本機完成。</p>
+          <p>復原工作階段、合併列印、修復無障礙問題與整理引文書目。</p>
         </div>
         <button id="word-tools-close" aria-label="關閉 Word 進階工具">關閉</button>
       </div>
       <div class="word-tools-tabs" role="tablist" aria-label="Word 進階工具">
-        <button class="active" data-word-tool-tab="recovery">工作階段復原</button>
-        <button data-word-tool-tab="merge">合併列印</button>
-        <button data-word-tool-tab="accessibility">無障礙檢查</button>
-        <button data-word-tool-tab="quality">公文校閱與範本</button>
-        <button data-word-tool-tab="citations">引文與書目</button>
-        <button data-word-tool-tab="view">檢視與註解</button>
-        <button data-word-tool-tab="language">語言與聽寫</button>
-        <button data-word-tool-tab="quickparts">封面・AutoText・圖解</button>
+        <button class="active" data-word-tool-tab="recovery" role="tab" id="word-advanced-tab-recovery" aria-controls="word-advanced-panel-recovery" aria-selected="true" tabindex="0">工作階段復原</button>
+        <button data-word-tool-tab="merge" role="tab" id="word-advanced-tab-merge" aria-controls="word-advanced-panel-merge" aria-selected="false" tabindex="-1">合併列印</button>
+        <button data-word-tool-tab="accessibility" role="tab" id="word-advanced-tab-accessibility" aria-controls="word-advanced-panel-accessibility" aria-selected="false" tabindex="-1">無障礙檢查</button>
+        <button data-word-tool-tab="quality" role="tab" id="word-advanced-tab-quality" aria-controls="word-advanced-panel-quality" aria-selected="false" tabindex="-1">公文校閱與範本</button>
+        <button data-word-tool-tab="citations" role="tab" id="word-advanced-tab-citations" aria-controls="word-advanced-panel-citations" aria-selected="false" tabindex="-1">引文與書目</button>
+        <button data-word-tool-tab="view" role="tab" id="word-advanced-tab-view" aria-controls="word-advanced-panel-view" aria-selected="false" tabindex="-1">檢視與註解</button>
+        <button data-word-tool-tab="language" role="tab" id="word-advanced-tab-language" aria-controls="word-advanced-panel-language" aria-selected="false" tabindex="-1">語言與聽寫</button>
+        <button data-word-tool-tab="quickparts" role="tab" id="word-advanced-tab-quickparts" aria-controls="word-advanced-panel-quickparts" aria-selected="false" tabindex="-1">封面・AutoText・圖解</button>
       </div>
-      <section class="word-tool-panel active" data-word-tool-panel="recovery">
+      <section class="word-tool-panel active" data-word-tool-panel="recovery" role="tabpanel" id="word-advanced-panel-recovery" aria-labelledby="word-advanced-tab-recovery">
         <div class="word-tool-heading">
           <div><h3>未儲存工作階段復原</h3><p>工作台開啟文件後每 45 秒檢查變更，保留最新可辨識副本；復原時永遠另存新檔。</p></div>
           <button id="recovery-refresh">重新整理</button>
         </div>
         <div class="word-tool-results" id="recovery-list"><p class="empty">正在讀取復原清單…</p></div>
       </section>
-      <section class="word-tool-panel" data-word-tool-panel="merge">
+      <section class="word-tool-panel" data-word-tool-panel="merge" role="tabpanel" id="word-advanced-panel-merge" aria-labelledby="word-advanced-tab-merge">
         <div class="word-tool-heading">
           <div><h3>整合式合併列印</h3><p>主文件可使用 <code>{{姓名}}</code>、<code>«姓名»</code>、Word MERGEFIELD，以及 IF、Ask、Fill-in、Set、MergeRec／MergeSeq、Skip／Next Record If 規則。</p></div>
         </div>
@@ -377,7 +385,7 @@
         </div>
         <div class="word-tool-results" id="merge-preview-result"><p class="empty">先選擇主文件及收件人資料。</p></div>
       </section>
-      <section class="word-tool-panel" data-word-tool-panel="accessibility">
+      <section class="word-tool-panel" data-word-tool-panel="accessibility" role="tabpanel" id="word-advanced-panel-accessibility" aria-labelledby="word-advanced-tab-accessibility">
         <div class="word-tool-heading">
           <div><h3>可操作的無障礙檢查器</h3><p>檢查替代文字、表格標題列、文件語言、標題跳級、連結文字與文件標題；每項都顯示位置。</p></div>
           <button class="primary" id="accessibility-check">檢查目前 Word 文件</button>
@@ -388,7 +396,7 @@
           <span>只自動處理可確定的項目；圖片替代文字、標題層級與連結名稱保留人工判斷。</span>
         </div>
       </section>
-      <section class="word-tool-panel" data-word-tool-panel="quality">
+      <section class="word-tool-panel" data-word-tool-panel="quality" role="tabpanel" id="word-advanced-panel-quality" aria-labelledby="word-advanced-tab-quality">
         <div class="word-tool-heading">
           <div><h3>台灣文件交付前校閱</h3><p>在本機檢查未完成欄位、括號／引號、中文半形標點、空白排版、長句、待辦註記、重複文字與常見非台灣用語。</p></div>
           <button class="primary" id="quality-check">檢查目前 Word 文件</button>
@@ -405,7 +413,7 @@
           </div>
         </div>
       </section>
-      <section class="word-tool-panel" data-word-tool-panel="citations">
+      <section class="word-tool-panel" data-word-tool-panel="citations" role="tabpanel" id="word-advanced-panel-citations" aria-labelledby="word-advanced-tab-citations">
         <div class="word-tool-heading">
           <div><h3>引文來源與參考書目</h3><p>來源資料庫保留在本機，可輸出 APA 7、MLA 9、Chicago 作者日期及台灣中文格式。</p></div>
         </div>
@@ -435,7 +443,7 @@
         <p class="citation-preview">若要指定內文引文位置，先在文件放入獨立一段 <code>{{CITATION}}</code>；否則會加入文件末端。動態區塊可在來源資料修改後重新更新。</p>
         <div class="word-tool-results citation-list" id="citation-list"><p class="empty">尚無來源。</p></div>
       </section>
-      <section class="word-tool-panel" data-word-tool-panel="view">
+      <section class="word-tool-panel" data-word-tool-panel="view" role="tabpanel" id="word-advanced-panel-view" aria-labelledby="word-advanced-tab-view">
         <div class="word-tool-heading">
           <div><h3>可編輯大綱、草稿、Web 與並排同步檢視</h3><p>大綱模式可提升／降低標題層級，或連同所屬內容上下移動並另存；也可載入第二份文件同步捲動比較。</p></div>
           <div class="word-tool-actions"><button class="primary" id="reading-load-current">載入目前文件</button><button id="reading-load-second">選擇並排文件</button></div>
@@ -451,7 +459,7 @@
         </div>
         <div class="word-tool-results" id="review-comments"><p class="empty">文件中的註解、作者與 @指派會顯示在這裡。</p></div>
       </section>
-      <section class="word-tool-panel" data-word-tool-panel="language">
+      <section class="word-tool-panel" data-word-tool-panel="language" role="tabpanel" id="word-advanced-panel-language" aria-labelledby="word-advanced-tab-language">
         <div class="word-tool-heading">
           <div><h3>翻譯、改寫、同義詞與相似度</h3><p>透過目前唯一運作的本機 MAGI V2／V3 分析目前 Word 文件，結果留在工作台，不直接覆寫原文。</p></div>
         </div>
@@ -467,7 +475,7 @@
           <p>音訊逐字稿涉及本機 MAGI 是否配置語音模型；工作台只在偵測到可用服務時處理，不會把錄音上傳未知服務。</p>
         </div>
       </section>
-      <section class="word-tool-panel" data-word-tool-panel="quickparts">
+      <section class="word-tool-panel" data-word-tool-panel="quickparts" role="tabpanel" id="word-advanced-panel-quickparts" aria-labelledby="word-advanced-tab-quickparts">
         <div class="word-tool-heading">
           <div><h3>封面、Quick Parts／AutoText 與可編輯圖解</h3><p>所有元件都寫入新 DOCX 副本；圖解使用開放式 OOXML 表格／段落，因此可在 Word 或 ONLYOFFICE 繼續修改。</p></div>
         </div>

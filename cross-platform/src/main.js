@@ -2,9 +2,12 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 import { invoke } from "@tauri-apps/api/core";
-import { open, save } from "@tauri-apps/plugin-dialog";
+import { confirm, open, save } from "@tauri-apps/plugin-dialog";
 import { check } from "@tauri-apps/plugin-updater";
 import { relaunch } from "@tauri-apps/plugin-process";
+
+import { readPreference, writePreference, recentPaths, themePreference, resolvedTheme } from "./preferences.mjs";
+const storage = (() => { try { return window.localStorage; } catch { return null; } })();
 
 const featureItems = [
   ["word", "文字格式與樣式", "字型、大小、色彩、粗斜底線、段落、定位點、樣式與格式刷。", "編輯引擎"],
@@ -398,6 +401,9 @@ const wordShortcuts = [
 const state = {
   status: null,
   selectedPath: null,
+  selectionToken: 0,
+  pdfBusy: false,
+  view: "home",
   selectedAnalysis: null,
   wordReport: null,
   wordTab: "home",
@@ -461,7 +467,7 @@ function openShortcutCatalog() {
 
 function selectWordToolTab(name) {
   state.wordToolTab = name;
-  $$("[data-word-tool-tab]").forEach((button) => button.classList.toggle("active", button.dataset.wordToolTab === name));
+  $$("[data-word-tool-tab]").forEach((button) => (() => { const active = button.dataset.wordToolTab === name; button.classList.toggle("active", active); button.setAttribute("aria-selected", String(active)); button.tabIndex = active ? 0 : -1; })());
   $$("[data-word-tool-panel]").forEach((panel) => panel.classList.toggle("active", panel.dataset.wordToolPanel === name));
 }
 
@@ -581,7 +587,8 @@ async function createMergeTemplate(kind) {
   const names = { letter: "合併列印-信件範本.docx", envelope: "合併列印-信封範本.docx", labels: "合併列印-標籤範本.docx" };
   const destination = await save({ defaultPath: names[kind], filters: [{ name: "Word 文件", extensions: ["docx"] }] });
   if (!destination) return;
-  const fieldText = window.prompt("請輸入欄位名稱，以逗號分隔：", "姓名,地址,郵遞區號") || "姓名,地址,郵遞區號";
+  const fieldText = window.prompt("請輸入欄位名稱，以逗號分隔：", "姓名,地址,郵遞區號");
+  if (fieldText === null) return;
   const fields = fieldText.split(/[,，]/).map((value) => value.trim()).filter(Boolean);
   try {
     const result = await invoke("create_mail_merge_template", { kind, destination, fields });
@@ -980,7 +987,8 @@ async function runLanguageTool(button) {
 
 function autoTextItems() {
   try {
-    return JSON.parse(localStorage.getItem("opendesk-autotext-v1") || "[]");
+    const values = JSON.parse(readPreference(storage, "opendesk-autotext-v1", "[]") || "[]");
+    return Array.isArray(values) ? values.filter(item => item && typeof item.name === "string" && typeof item.content === "string").slice(0, 100) : [];
   } catch {
     return [];
   }
@@ -994,7 +1002,7 @@ function renderAutoText() {
   $$("[data-autotext-delete]").forEach((button) => button.addEventListener("click", () => {
     const next = autoTextItems();
     next.splice(Number(button.dataset.autotextDelete), 1);
-    localStorage.setItem("opendesk-autotext-v1", JSON.stringify(next));
+    if (!writePreference(storage, "opendesk-autotext-v1", JSON.stringify(next))) { toast("無法保存文字片段，請檢查儲存空間與應用程式權限。"); return; }
     renderAutoText();
   }));
 }
@@ -1010,7 +1018,7 @@ function saveAutoText() {
   const existing = items.find((item) => item.name === name);
   if (existing) existing.content = content;
   else items.push({ name, content });
-  localStorage.setItem("opendesk-autotext-v1", JSON.stringify(items));
+  writePreference(storage, "opendesk-autotext-v1", JSON.stringify(items));
   $("#autotext-name").value = "";
   $("#autotext-content").value = "";
   renderAutoText();
@@ -1064,9 +1072,9 @@ async function insertDiagram() {
 
 async function loadStatus() {
   if (!window.__TAURI_INTERNALS__) {
-    $("#system-summary").textContent = "介面預覽模式・本機文件功能會在桌面 App 啟用";
-    $("#pdf-engine-line").textContent = "介面預覽模式・桌面 App 會啟用同視窗內建 PDF 核心";
-    $("#onlyoffice-tw-title").textContent = "介面預覽模式・桌面 App 會固定使用 zh-TW";
+    $("#system-summary").textContent = "介面預覽";
+    $("#pdf-engine-line").textContent = "介面預覽";
+    $("#onlyoffice-tw-title").textContent = "介面預覽";
     return;
   }
   try {
@@ -1126,10 +1134,10 @@ async function repairOnlyOfficeTraditionalChinese() {
   }
 }
 
-function recentDocuments() { return JSON.parse(localStorage.getItem("opendesk-recent") || "[]"); }
+function recentDocuments() { return recentPaths(storage); }
 function recordRecent(path) {
   const next = [path, ...recentDocuments().filter((item) => item !== path)].slice(0, 12);
-  localStorage.setItem("opendesk-recent", JSON.stringify(next));
+  writePreference(storage, "opendesk-recent", JSON.stringify(next));
   renderRecent();
 }
 function renderRecent() {
@@ -1142,8 +1150,12 @@ function escapeHtml(value) { return value.replace(/[&<>"]/g, (character) => ({"&
 
 async function selectDocument(path) {
   if (!path) return;
+  if (state.pdfBusy) { toast("PDF 正在儲存，完成後即可切換文件。"); return; }
+  const token = ++state.selectionToken;
+  ++state.pdfRenderToken;
   try {
     const analysis = await invoke("scan_document", { path });
+    if (token !== state.selectionToken) return;
     if (path !== state.selectedPath) {
       state.pdfPassword = "";
       state.lastPdfBackup = null;
@@ -1152,6 +1164,7 @@ async function selectDocument(path) {
     }
     state.selectedPath = path;
     state.selectedAnalysis = analysis;
+    setStudioView(isPdfPath(path) ? "pdf" : isWordPath(path) ? "word" : /\.(xlsx?|ods|csv)$/i.test(path) ? "excel" : /\.(pptx?|odp)$/i.test(path) ? "powerpoint" : "home");
     $("#workspace").classList.remove("hidden");
     $("#workspace-title").textContent = analysis.file_name;
     $("#workspace-path").textContent = path;
@@ -1167,12 +1180,14 @@ async function selectDocument(path) {
     recordRecent(path);
     if (isWordPath(path)) {
       await loadWordReport(path);
+      if (token !== state.selectionToken) return;
     } else {
       state.wordReport = null;
       $("#word-current").classList.add("hidden");
     }
     if (isPdfPath(path)) {
       await loadPdfReport(path);
+      if (token !== state.selectionToken) return;
       $("#open-primary").textContent = "備份並開啟 PDF 工作區";
       $("#convert-pdf").disabled = true;
       $("#convert-pdf").textContent = "目前已是 PDF";
@@ -1184,7 +1199,7 @@ async function selectDocument(path) {
       $("#convert-pdf").textContent = "轉換 PDF";
     }
     $("#workspace").scrollIntoView({ behavior: "smooth", block: "center" });
-  } catch (error) { toast(`無法檢查文件：${error}`); }
+  } catch (error) { if (token === state.selectionToken) toast(`無法檢查文件：${error}`); }
 }
 
 async function createDocument(kind) {
@@ -1306,6 +1321,7 @@ async function runWordTask(id) {
 async function loadWordReport(path, shouldScroll = false) {
   try {
     const report = await invoke("word_report", { path });
+    if (state.selectedPath !== path) return;
     state.wordReport = report;
     $("#word-current").classList.remove("hidden");
     $("#word-report-title").textContent = report.file_name;
@@ -1340,6 +1356,7 @@ async function loadWordReport(path, shouldScroll = false) {
     $("#word-warnings").innerHTML = warningItems.map(([kind, warning]) => `<div class="word-warning"><span>${escapeHtml(kind)}</span><p>${escapeHtml(warning)}</p></div>`).join("");
     if (shouldScroll) $("#word-current").scrollIntoView({ behavior: "smooth", block: "start" });
   } catch (error) {
+    if (state.selectedPath !== path) return;
     $("#word-current").classList.add("hidden");
     toast(`Word 文件檢查失敗：${error}`, 7000);
   }
@@ -1563,7 +1580,7 @@ async function renderPdfPage(page = state.pdfPage) {
   const token = ++state.pdfRenderToken;
   const message = $("#pdf-render-message");
   const image = $("#pdf-page-image");
-  message.textContent = "正在由內建核心渲染頁面…";
+  message.textContent = "正在載入頁面…";
   message.classList.remove("hidden");
   image.classList.add("loading");
   try {
@@ -1585,7 +1602,7 @@ async function renderPdfPage(page = state.pdfPage) {
     $("#pdf-page-previous").disabled = state.pdfPage <= 0;
     $("#pdf-page-next").disabled = state.pdfPage >= state.pdfPages - 1;
     $("#pdf-zoom-label").textContent = `${Math.round(state.pdfZoom * 100)}%`;
-    $("#pdf-inline-status").textContent = `第 ${state.pdfPage + 1}／${state.pdfPages} 頁・${result.width}×${result.height} 像素・文件留在本機`;
+    $("#pdf-inline-status").textContent = `第 ${state.pdfPage + 1}／${state.pdfPages} 頁`;
     renderPdfPageButtons();
     message.classList.add("hidden");
   } catch (error) {
@@ -1599,7 +1616,16 @@ async function renderPdfPage(page = state.pdfPage) {
 
 async function applyPdfOperation(operation, options = {}, output = null) {
   if (!isPdfPath(state.selectedPath)) throw new Error("請先選擇 PDF 文件");
+  if (state.pdfBusy) throw new Error("前一項 PDF 作業尚未完成");
+  if ((!output || output === state.selectedPath) && state.pdfReport?.signature_fields > 0) {
+    const accepted = await confirm("這份 PDF 含簽名欄。修改內容可能使既有簽章失效，建議先另存副本。", { title: "修改簽署文件", kind: "warning", okLabel: "繼續修改", cancelLabel: "取消" });
+    if (!accepted) throw new Error("已取消修改");
+    if (state.pdfBusy) throw new Error("前一項作業尚未完成");
+  }
   const source = state.selectedPath;
+  options = { ...options };
+  setPdfBusy(true);
+  try {
   if (state.pdfPassword && !options.password) options.password = state.pdfPassword;
   $("#pdf-inline-status").textContent = "正在處理；完成前請勿關閉文件…";
   const result = await invoke("pdf_apply_operation", { path: source, operation, options, output });
@@ -1623,6 +1649,7 @@ async function applyPdfOperation(operation, options = {}, output = null) {
     toast(`新 PDF 已儲存：${result.output || output}`, 9000);
   }
   return result;
+  } finally { setPdfBusy(false); }
 }
 
 const pdfToolDefinitions = {
@@ -1968,7 +1995,8 @@ async function verifyPdfSignatures() {
     return;
   }
   const valid = (result.signatures || []).filter((signature) => signature.valid && signature.intact).length;
-  const message = result.count ? `找到 ${result.count} 個數位簽章，其中 ${valid} 個內容完整且簽章有效。` : "這份 PDF 沒有數位簽章。";
+  const trusted = (result.signatures || []).filter(signature => signature.valid && signature.intact && signature.trusted).length;
+  const message = result.count ? `${result.count} 個簽章：${valid} 個內容完整，${trusted} 個憑證受信任。尚未確認即時撤銷狀態。` : "這份 PDF 沒有數位簽章。";
   $("#pdf-inline-status").textContent = message;
   toast(message, 9000);
 }
@@ -1995,6 +2023,7 @@ async function signCurrentPdf() {
 }
 
 async function batchProcessPdfs() {
+  if (state.pdfBusy) return;
   const files = await open({ multiple: true, directory: false, filters: [{ name: "PDF 文件", extensions: ["pdf"] }] });
   if (!Array.isArray(files) || !files.length) return;
   const outputDir = await open({ multiple: false, directory: true, title: "選擇批次輸出資料夾" });
@@ -2009,6 +2038,9 @@ async function batchProcessPdfs() {
     ],
   });
   if (!options) return;
+  if (state.pdfBusy) return;
+  setPdfBusy(true);
+  try {
   const operation = options.batch_operation;
   const results = [];
   for (const path of files) {
@@ -2019,7 +2051,7 @@ async function batchProcessPdfs() {
         ? { footer: options.footer, font_size: 10 }
         : { remove_metadata: false };
     try {
-      await invoke("pdf_apply_operation", { path, operation, options: operationOptions, output: destination });
+      await invoke("pdf_apply_operation", { path, operation, options: { ...operationOptions, unique_output: true }, output: destination });
       results.push({ path, ok: true });
     } catch (error) {
       results.push({ path, ok: false, error: String(error) });
@@ -2029,6 +2061,7 @@ async function batchProcessPdfs() {
   const message = `批次完成：${passed}/${results.length} 份成功，輸出到 ${outputDir}。`;
   $("#pdf-inline-status").textContent = message;
   toast(message, 10000);
+  } finally { setPdfBusy(false); }
 }
 
 async function smartFileCurrentPdf() {
@@ -2112,21 +2145,31 @@ async function importPdfFormData() {
 
 async function printCurrentPdf() {
   if (!isPdfPath(state.selectedPath)) return;
+  if (state.pdfBusy) return;
+  const source = state.selectedPath;
+  const password = state.pdfPassword;
   if (state.pdfPages > 200 && !window.confirm(`這份 PDF 有 ${state.pdfPages} 頁，準備列印預覽可能需要較多記憶體。要繼續嗎？`)) return;
+  setPdfBusy(true);
   const root = $("#pdf-print-root");
+  try {
   root.innerHTML = "";
   $("#pdf-inline-status").textContent = `正在準備 ${state.pdfPages} 頁列印預覽…`;
   for (let page = 0; page < state.pdfPages; page += 1) {
     const rendered = await invoke("pdf_render_page", {
-      path: state.selectedPath,
+      path: source,
       page,
       scale: 2,
-      password: state.pdfPassword || null,
+      password: password || null,
     });
     root.insertAdjacentHTML("beforeend", `<section class="pdf-print-page"><img src="${rendered.data_url}" alt="第 ${page + 1} 頁" /></section>`);
   }
   $("#pdf-inline-status").textContent = "列印預覽已完成；請在系統對話框選擇頁碼範圍與印表機。";
-  window.setTimeout(() => window.print(), 100);
+  const images = [...root.querySelectorAll("img")];
+  await Promise.all(images.map(image => image.decode()));
+  window.addEventListener("afterprint", () => root.replaceChildren(), { once: true });
+  window.print();
+  } catch (error) { root.replaceChildren(); throw error; }
+  finally { setPdfBusy(false); }
 }
 
 async function runEmbeddedPdfTool(tool) {
@@ -2287,7 +2330,7 @@ async function runEmbeddedPdfTool(tool) {
       return;
     }
     if (tool === "ocr") {
-      if (!window.confirm("繁中 OCR 會重新渲染整份文件，較大的 PDF 可能需要數分鐘。要繼續嗎？")) return;
+      if (!window.confirm("繁中 OCR 會為掃描頁加入可搜尋文字層，較大的 PDF 可能需要數分鐘。要繼續嗎？")) return;
       await applyPdfOperation("ocr", { language: "chi_tra+eng", dpi: 250 });
       return;
     }
@@ -2316,6 +2359,7 @@ async function runEmbeddedPdfTool(tool) {
 async function loadPdfReport(path, shouldScroll = false) {
   try {
     const report = await invoke("pdf_report", { path, password: state.pdfPassword || null });
+    if (state.selectedPath !== path) return;
     state.pdfReport = report;
     $("#pdf-current").classList.remove("hidden");
     $("#pdf-report-title").textContent = report.file_name;
@@ -2350,6 +2394,7 @@ async function loadPdfReport(path, shouldScroll = false) {
     $("#pdf-warnings").innerHTML = warnings.map((warning) => `<div class="word-warning"><span>${report.warnings?.length ? "提醒" : "通過"}</span><p>${escapeHtml(warning)}</p></div>`).join("");
     if (shouldScroll) $("#pdf-current").scrollIntoView({ behavior: "smooth", block: "start" });
   } catch (error) {
+    if (state.selectedPath !== path) return;
     $("#pdf-current").classList.add("hidden");
     toast(`PDF 文件檢查失敗：${error}`, 8000);
   }
@@ -2384,18 +2429,22 @@ async function runSelfTest() {
 
 async function runMagiAnalysis() {
   if (!state.selectedPath) return;
+  const accepted = await confirm(`將「${pathLeaf(state.selectedPath)}」的擷取文字交給 MAGI 分析。處理位置依 MAGI 的模型設定，可能使用外部服務。`, { title: "交給 MAGI", kind: "info", okLabel: "開始分析", cancelLabel: "取消" });
+  if (!accepted) return;
+  const source = state.selectedPath;
   const button = $("#magi-run");
   const result = $("#magi-result");
   button.disabled = true;
   button.textContent = "分析中…";
-  result.textContent = "正在本機擷取文件文字並交給 MAGI；文件不會上傳到任何外部文件伺服器…";
+  result.textContent = "正在擷取文字並交給 MAGI 分析…";
   $("#magi-copy").classList.add("hidden");
   try {
     const reply = await invoke("magi_analyze", {
-      path: state.selectedPath,
+      path: source,
       mode: $("#magi-mode").value,
       instruction: $("#magi-instruction").value,
     });
+    if (state.selectedPath !== source) return;
     result.textContent = `${reply.text}\n\n— ${reply.compatibility_version.toUpperCase()}${reply.model ? `・${reply.model}` : ""}${reply.degraded ? "・降級回應" : ""}`;
     $("#magi-copy").classList.remove("hidden");
   } catch (error) {
@@ -2411,14 +2460,18 @@ async function checkUpdate() {
   button.disabled = true;
   button.textContent = "檢查中…";
   try {
+    if (state.pdfBusy) throw new Error("PDF 正在儲存，完成後再檢查更新");
     const update = await check();
-    if (!update) { toast("目前已是最新安全版本。"); return; }
+    if (!update) { toast("目前已是最新版本。"); return; }
+    const accepted = await confirm(`更新至 ${update.version} 後會重新啟動工作台。`, { title: "安裝更新", kind: "info", okLabel: "安裝並重新啟動", cancelLabel: "稍後" });
+    if (!accepted) return;
+    if (state.pdfBusy) throw new Error("PDF 作業尚未完成");
     button.textContent = `下載 ${update.version}`;
     await update.downloadAndInstall();
-    toast(`安全熱修 ${update.version} 已驗證並安裝，正在重新啟動…`);
+    toast(`更新 ${update.version} 已驗證並安裝，正在重新啟動…`);
     await relaunch();
   } catch (error) { toast(`更新未安裝：${error}`); }
-  finally { button.disabled = false; button.textContent = "檢查安全熱修"; }
+  finally { button.disabled = false; button.textContent = "檢查更新"; }
 }
 
 async function showLegalDocument(document) {
@@ -2590,13 +2643,14 @@ $("#pdf-password-apply").addEventListener("click", async () => {
   try {
     await loadPdfReport(state.selectedPath);
     await renderPdfPage(state.pdfPage);
-    toast("PDF 密碼已在本機套用到目前工作階段。", 7000);
+    toast("已套用文件密碼。", 7000);
   } catch (error) {
     toast(`無法解鎖 PDF：${error}`, 9000);
   }
 });
 $("#pdf-undo").addEventListener("click", async () => {
-  if (!state.lastPdfBackup || !isPdfPath(state.selectedPath)) return;
+  if (state.pdfBusy || !state.lastPdfBackup || !isPdfPath(state.selectedPath)) return;
+  setPdfBusy(true);
   try {
     const result = await invoke("pdf_restore_backup", { path: state.selectedPath, backup: state.lastPdfBackup });
     state.lastPdfBackup = null;
@@ -2606,7 +2660,7 @@ $("#pdf-undo").addEventListener("click", async () => {
     toast(result.message, 8000);
   } catch (error) {
     toast(`無法復原：${error}`, 9000);
-  }
+  } finally { setPdfBusy(false); }
 });
 $$('[data-pdf-operation]').forEach((button) => button.addEventListener("click", () => runEmbeddedPdfTool(button.dataset.pdfOperation)));
 $("#pdf-live-check").addEventListener("click", () => runPdfLiveCheck());
@@ -2628,9 +2682,9 @@ $("#magi-analyze").addEventListener("click", () => { $("#magi-panel").classList.
 $("#magi-run").addEventListener("click", runMagiAnalysis);
 $("#magi-copy").addEventListener("click", async () => { await navigator.clipboard.writeText($("#magi-result").textContent); toast("MAGI 分析結果已複製。"); });
 $("#reveal-file").addEventListener("click", () => invoke("reveal_path", { path: state.selectedPath }).catch((error) => toast(String(error))));
-$("#clear-recent").addEventListener("click", () => { localStorage.removeItem("opendesk-recent"); renderRecent(); toast("最近文件清單已清除，原始文件未刪除。"); });
+$("#clear-recent").addEventListener("click", () => { writePreference(storage, "opendesk-recent", "[]"); renderRecent(); toast("最近文件清單已清除，原始文件未刪除。"); });
 $("#feature-search").addEventListener("input", renderFeatures);
-$$('[data-feature-tab]').forEach((button) => button.addEventListener("click", () => { state.featureTab = button.dataset.featureTab; $$('[data-feature-tab]').forEach((item) => item.classList.toggle("active", item === button)); renderFeatures(); }));
+$$('[data-feature-tab]').forEach((button) => button.addEventListener("click", () => { state.featureTab = button.dataset.featureTab; $$('[data-feature-tab]').forEach((item) => (() => { item.classList.toggle("active", item === button); item.setAttribute("aria-pressed", String(item === button)); })()); renderFeatures(); }));
 $("#run-self-test").addEventListener("click", runSelfTest);
 $("#check-update").addEventListener("click", checkUpdate);
 $("#legal-open").addEventListener("click", openLegalDialog);
@@ -2664,3 +2718,132 @@ window.addEventListener("keydown", (event) => {
 });
 
 renderRecent(); renderFeatures(); renderWordTab(); renderPdfTab(); loadStatus();
+
+const studioViews = { home: "工作台", word: "文字", excel: "試算表", powerpoint: "簡報", pdf: "PDF", tools: "工具" };
+function setStudioView(view) {
+  if (!studioViews[view]) view = "home";
+  state.view = view;
+  $$("[data-studio-section]").forEach(section => section.classList.toggle("studio-hidden", !section.dataset.studioSection.split(" ").includes(view)));
+  $$("[data-view]").forEach(button => {
+    if (button.dataset.view === view) button.setAttribute("aria-current", "page");
+    else button.removeAttribute("aria-current");
+  });
+  $("#studio-view-title").textContent = studioViews[view];
+  if (["excel", "powerpoint", "tools"].includes(view)) {
+    state.featureTab = view === "tools" ? "all" : view;
+    $$("[data-feature-tab]").forEach(button => (() => { const active = button.dataset.featureTab === state.featureTab; button.classList.toggle("active", active); button.setAttribute("aria-pressed", String(active)); })());
+    renderFeatures();
+  }
+  if (["excel", "powerpoint"].includes(view)) {
+    const sheet = view === "excel";
+    $("#module-title").textContent = sheet ? "試算表" : "簡報";
+    $("#module-eyebrow").textContent = sheet ? "SPREADSHEETS" : "PRESENTATIONS";
+    $("#module-description").textContent = sheet ? "整理資料、編輯公式與建立圖表。" : "安排版面、編輯投影片與準備放映。";
+    $("#module-create").textContent = sheet ? "新增試算表" : "新增簡報";
+    $("#module-open").textContent = sheet ? "開啟試算表" : "開啟簡報";
+  }
+  window.scrollTo({ top: 0, behavior: "instant" });
+}
+function setPdfBusy(busy) {
+  state.pdfBusy = busy;
+  $("#pdf-inline-workspace").setAttribute("aria-busy", String(busy));
+  $$("[data-pdf-operation], [data-create], [data-recent], #studio-open, #open-document, #pdf-tool-confirm").forEach(button => { button.disabled = busy; });
+  $("#pdf-undo").disabled = busy || !state.lastPdfBackup;
+}
+const systemAppearance = window.matchMedia("(prefers-color-scheme: dark)");
+let appearance = themePreference(readPreference(storage, "opendesk-theme", "system"));
+function applyAppearance() {
+  document.documentElement.dataset.theme = resolvedTheme(appearance, systemAppearance.matches);
+  $("#studio-theme").value = appearance;
+}
+if (systemAppearance.addEventListener) systemAppearance.addEventListener("change", applyAppearance);
+else systemAppearance.addListener(applyAppearance);
+$("#studio-theme").addEventListener("change", event => {
+  appearance = themePreference(event.target.value);
+  writePreference(storage, "opendesk-theme", appearance);
+  applyAppearance();
+});
+$$("[data-view]").forEach(button => button.addEventListener("click", () => setStudioView(button.dataset.view)));
+$("#studio-module").classList.remove("hidden");
+$("#studio-open").addEventListener("click", () => $("#open-document").click());
+$("#module-create").addEventListener("click", () => createDocument(state.view === "excel" ? "spreadsheet" : "presentation"));
+$("#module-open").addEventListener("click", () => $("#open-document").click());
+$("#studio-shortcuts").addEventListener("click", openShortcutCatalog);
+$("#studio-legal").addEventListener("click", openLegalDialog);
+const studioCommands = [
+  ["開啟文件", "檔案", () => $("#open-document").click()],
+  ["新增文字文件", "文字", () => createDocument("text")],
+  ["新增試算表", "試算表", () => createDocument("spreadsheet")],
+  ["新增簡報", "簡報", () => createDocument("presentation")],
+  ["新增空白 PDF", "PDF", () => $("#create-pdf-document").click()],
+  ...Object.entries(studioViews).map(([view, label]) => [label, "工作區", () => setStudioView(view)]),
+  ["復原工作階段", "工具", () => openWordTools("recovery")],
+  ["管理引文與書目", "文字", () => openWordTools("citations")],
+  ["文件校閱", "文字", () => openWordTools("quality")],
+  ["快捷鍵總覽", "工具", openShortcutCatalog],
+  ["檢查更新", "工具", checkUpdate],
+  ["授權與原始碼", "工具", openLegalDialog],
+];
+function renderStudioCommands() {
+  const query = $("#studio-command-input").value.trim().toLowerCase();
+  const choices = studioCommands.filter(([title, group]) => `${title}${group}`.toLowerCase().includes(query));
+  const results = $("#studio-command-results");
+  results.replaceChildren();
+  for (const [title, group, action] of choices) {
+    const button = document.createElement("button");
+    const label = document.createElement("span"); label.textContent = title;
+    const hint = document.createElement("small"); hint.textContent = group;
+    button.append(label, hint);
+    button.addEventListener("click", () => { $("#studio-command-dialog").close(); action(); });
+    results.append(button);
+  }
+  if (!choices.length) { const empty = document.createElement("p"); empty.className = "empty"; empty.textContent = "沒有符合的指令。"; results.append(empty); }
+}
+function openStudioCommands() {
+  const dialog = $("#studio-command-dialog");
+  if (dialog.open) return;
+  $("#studio-command-input").value = "";
+  renderStudioCommands(); dialog.showModal(); $("#studio-command-input").focus();
+}
+$("#studio-command").addEventListener("click", openStudioCommands);
+$("#studio-command-close").addEventListener("click", () => $("#studio-command-dialog").close());
+$("#studio-command-input").addEventListener("input", renderStudioCommands);
+$("#studio-command-dialog").addEventListener("keydown", event => {
+  const buttons = [...$("#studio-command-results").querySelectorAll("button")];
+  const current = buttons.indexOf(document.activeElement);
+  if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+    event.preventDefault();
+    if (buttons.length) {
+      const delta = event.key === "ArrowDown" ? 1 : -1;
+      buttons[current < 0 ? (delta > 0 ? 0 : buttons.length - 1) : (current + delta + buttons.length) % buttons.length].focus();
+    }
+  } else if (event.key === "Enter" && document.activeElement === $("#studio-command-input") && buttons.length) { event.preventDefault(); buttons[0].click(); }
+});
+window.addEventListener("keydown", event => {
+  if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") { event.preventDefault(); openStudioCommands(); }
+  if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "o" && !document.querySelector("dialog[open]")) { event.preventDefault(); $("#open-document").click(); }
+});
+applyAppearance(); setStudioView("home");
+
+$("#pdf-save-copy").addEventListener("click", async () => {
+  if (state.pdfBusy || !isPdfPath(state.selectedPath)) return;
+  const source = state.selectedPath;
+  const destination = await save({ defaultPath: `${pathStem(source)}_副本.pdf`, filters: [{ name: "PDF 文件", extensions: ["pdf"] }] });
+  if (!destination || state.pdfBusy || source !== state.selectedPath) return;
+  setPdfBusy(true);
+  try { const result = await invoke("pdf_save_copy", { path: source, destination }); toast(result.message); }
+  catch (error) { toast(`另存副本失敗：${error}`, 9000); }
+  finally { setPdfBusy(false); }
+});
+
+if (window.__TAURI_INTERNALS__) invoke("frontend_ready", { summary: { view: state.view, theme: document.documentElement.dataset.theme, navigation: Object.keys(studioViews).length } }).catch(() => {});
+
+// Arrow keys and Home/End keep the advanced tools reachable without a mouse.
+$(".word-tools-tabs").addEventListener("keydown", event => {
+  const tabs = $$("[data-word-tool-tab]");
+  const current = tabs.indexOf(document.activeElement);
+  if (current < 0 || !["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+  event.preventDefault();
+  const index = event.key === "Home" ? 0 : event.key === "End" ? tabs.length - 1 : (current + (event.key === "ArrowRight" ? 1 : -1) + tabs.length) % tabs.length;
+  tabs[index].click(); tabs[index].focus();
+});

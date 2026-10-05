@@ -9,6 +9,10 @@ on:
 permissions:
   contents: write
 
+defaults:
+  run:
+    shell: bash
+
 jobs:
   build:
     strategy:
@@ -53,6 +57,8 @@ jobs:
           npm run test:traditional
           npm run test:contracts
           npm run test:pdf-core
+          npm run test:safety
+          npm run test:preferences
           npm run test:legal
           cargo test --manifest-path src-tauri/Cargo.toml --lib
       - name: 建置並附加至 GitHub Release
@@ -65,11 +71,29 @@ jobs:
           projectPath: cross-platform
           tagName: v__VERSION__
           releaseName: "全能文件工作台 v__VERSION__"
-          releaseBody: "文字、試算表、簡報、內建 PDF 與 MAGI 一站式全繁體中文工作台。採 AGPL-3.0-or-later；本頁的 GitHub Source code 是同標籤專案原始碼，另附含 npm、Cargo、Python／PyMuPDF 上游來源、雜湊及第三方授權的「第三方對應原始碼」包。另含 macOS App／DMG、Windows NSIS 安裝程式與強制簽章熱修資訊。"
-          releaseDraft: false
-          prerelease: false
+          releaseBody: "OpenDesk TW 2.9.0：日夜模式、六個工作區、PDF 文件保護、原子儲存、復原與跨平台修正。待 macOS／Windows 安裝與對應原始碼驗證完成後發布。採 AGPL-3.0-or-later。"
+          releaseDraft: true
+          prerelease: true
+          releaseCommitish: ${{ github.sha }}
           updaterJsonPreferNsis: true
           args: ${{ matrix.args }}
+      - name: 驗證 Windows 安裝、工作區與移除
+        if: runner.os == 'Windows'
+        working-directory: cross-platform
+        shell: pwsh
+        run: ./scripts/verify_windows_install.ps1
+      - name: 驗證 macOS DMG 與安裝版
+        if: runner.os == 'macOS'
+        working-directory: cross-platform
+        run: bash scripts/verify_macos_install.sh
+      - name: 上傳安裝驗證證據
+        working-directory: cross-platform
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          source_version=$(node -p "require('./package.json').version")
+          gh release upload "v${source_version}" *-install-verification.json --clobber
 
   source-bundle:
     name: 建立 AGPL 對應原始碼包
@@ -105,3 +129,23 @@ jobs:
             "dist/complete-document-workbench-${source_version}-corresponding-source.tar.gz#全能文件工作台 ${source_version}－AGPL 對應原始碼" \
             "dist/complete-document-workbench-${source_version}-corresponding-source.tar.gz.sha256#AGPL 對應原始碼 SHA-256" \
             --clobber
+
+  verify-release:
+    name: 驗證完整發行套件
+    needs: [build, source-bundle]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: 下載並驗證套件與更新簽章
+        working-directory: cross-platform
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          source_version=$(node -p "require('./package.json').version")
+          mkdir -p release-assets
+          gh release download "v${source_version}" --dir release-assets
+          node scripts/verify_release_assets.mjs release-assets
+          gh release upload "v${source_version}" release-assets/SHA256SUMS release-assets/release-verification.json --clobber

@@ -15,3 +15,8 @@ npm-debug.log*
 __pycache__/
 *.py[cod]
 cross-platform/src-tauri/resources/licenses/third-party/
+
+.venv/
+work/
+/cross-platform/*-install-verification.json
+/cross-platform/release-assets/

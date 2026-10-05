@@ -1,6 +1,10 @@
 // Copyright (c) 2026 WhaleChao and contributors.
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
+mod file_safety;
+use file_safety::{atomic_copy, atomic_write, private_directory, publish, replace_file, unique_id};
+static PDF_MUTATIONS: OnceLock<Mutex<()>> = OnceLock::new();
+
 use chrono::Local;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
@@ -405,34 +409,6 @@ fn acropdf_runtime_candidates() -> Vec<AcroPdfRuntime> {
         });
     }
 
-    // `cargo test` 與開發模式的執行檔位於 target 目錄，不會和 Tauri
-    // sidecar 放在同一層；直接採用封裝腳本產生的平台檔名，確保 CI
-    // 驗證的也是實際隨安裝包出貨的核心，而不是碰巧可用的系統 Python。
-    let development_sidecar_name = if cfg!(all(target_os = "macos", target_arch = "aarch64")) {
-        Some("document-pdf-core-aarch64-apple-darwin")
-    } else if cfg!(all(target_os = "macos", target_arch = "x86_64")) {
-        Some("document-pdf-core-x86_64-apple-darwin")
-    } else if cfg!(all(target_os = "windows", target_arch = "x86_64")) {
-        Some("document-pdf-core-x86_64-pc-windows-msvc.exe")
-    } else if cfg!(all(target_os = "windows", target_arch = "aarch64")) {
-        Some("document-pdf-core-aarch64-pc-windows-msvc.exe")
-    } else {
-        None
-    };
-    if let Some(name) = development_sidecar_name {
-        let sidecar = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("binaries")
-            .join(name);
-        if sidecar.is_file() {
-            native_sidecar_available = true;
-            candidates.push(AcroPdfRuntime {
-                executable: sidecar.clone(),
-                prefix_args: Vec::new(),
-                display_path: sidecar.to_string_lossy().to_string(),
-            });
-        }
-    }
-
     if let Ok(current_executable) = std::env::current_exe() {
         if let Some(binary_root) = current_executable.parent() {
             let sidecar = if cfg!(target_os = "windows") {
@@ -451,6 +427,34 @@ fn acropdf_runtime_candidates() -> Vec<AcroPdfRuntime> {
         }
     }
 
+    // `cargo test` 與開發模式的執行檔位於 target 目錄，不會和 Tauri
+    // sidecar 放在同一層；直接採用封裝腳本產生的平台檔名，確保 CI
+    // 驗證的也是實際隨安裝包出貨的核心，而不是碰巧可用的系統 Python。
+    let development_sidecar_name = if cfg!(all(target_os = "macos", target_arch = "aarch64")) {
+        Some("document-pdf-core-aarch64-apple-darwin")
+    } else if cfg!(all(target_os = "macos", target_arch = "x86_64")) {
+        Some("document-pdf-core-x86_64-apple-darwin")
+    } else if cfg!(all(target_os = "windows", target_arch = "x86_64")) {
+        Some("document-pdf-core-x86_64-pc-windows-msvc.exe")
+    } else if cfg!(all(target_os = "windows", target_arch = "aarch64")) {
+        Some("document-pdf-core-aarch64-pc-windows-msvc.exe")
+    } else {
+        None
+    };
+    if let Some(name) = development_sidecar_name.filter(|_| cfg!(debug_assertions)) {
+        let sidecar = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("binaries")
+            .join(name);
+        if sidecar.is_file() {
+            native_sidecar_available = true;
+            candidates.push(AcroPdfRuntime {
+                executable: sidecar.clone(),
+                prefix_args: Vec::new(),
+                display_path: sidecar.to_string_lossy().to_string(),
+            });
+        }
+    }
+
     // 正式 App 與已完成 sidecar 建置的開發環境不得默默回退到使用者的
     // 系統 Python。後者可能載入其他產品（例如 MAGI）的 user-site PyObjC，
     // 在無視窗背景程序中誤啟動 AppKit。只有尚未建置 sidecar 的原始碼測試，
@@ -459,7 +463,9 @@ fn acropdf_runtime_candidates() -> Vec<AcroPdfRuntime> {
         .ok()
         .as_deref()
         == Some("1");
-    if !allow_python_pdf_core_fallback(native_sidecar_available, explicitly_allowed) {
+    if (!cfg!(debug_assertions) && !explicitly_allowed)
+        || !allow_python_pdf_core_fallback(native_sidecar_available, explicitly_allowed)
+    {
         return candidates;
     }
 
@@ -488,8 +494,20 @@ fn acropdf_runtime_candidates() -> Vec<AcroPdfRuntime> {
     candidates
 }
 
+fn quiet_command(executable: impl AsRef<std::ffi::OsStr>) -> Command {
+    let mut command = Command::new(executable);
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        command.creation_flags(0x08000000);
+    }
+    #[cfg(not(windows))]
+    let _ = &mut command;
+    command
+}
+
 fn spawn_acropdf_server(runtime: AcroPdfRuntime) -> Result<AcroPdfServer, String> {
-    let mut command = Command::new(&runtime.executable);
+    let mut command = quiet_command(&runtime.executable);
     command
         .args(&runtime.prefix_args)
         .arg("--embedded-server")
@@ -580,25 +598,62 @@ fn command_output_with_timeout(
     args: &[String],
     timeout: Duration,
 ) -> Result<Output, String> {
-    let mut command = Command::new(&runtime.executable);
+    let mut command = quiet_command(&runtime.executable);
     command
         .args(&runtime.prefix_args)
         .args(args)
+        .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     let mut child = command.spawn().map_err(|error| error.to_string())?;
+    let mut stdout = child.stdout.take().ok_or("無法讀取核心回應")?;
+    let mut stderr = child.stderr.take().ok_or("無法讀取核心錯誤")?;
+    // Drain both pipes while waiting: renders can exceed the OS pipe buffer.
+    let out = thread::spawn(move || {
+        let mut bytes = Vec::new();
+        stdout.read_to_end(&mut bytes).map(|_| bytes)
+    });
+    let err = thread::spawn(move || {
+        let mut bytes = Vec::new();
+        stderr.read_to_end(&mut bytes).map(|_| bytes)
+    });
     let started = Instant::now();
-    loop {
+    let status = loop {
         match child.try_wait().map_err(|error| error.to_string())? {
-            Some(_) => return child.wait_with_output().map_err(|error| error.to_string()),
-            None if started.elapsed() < timeout => thread::sleep(Duration::from_millis(80)),
+            Some(status) => break status,
+            None if started.elapsed() < timeout => thread::sleep(Duration::from_millis(20)),
             None => {
                 let _ = child.kill();
                 let _ = child.wait();
+                let _ = out.join();
+                let _ = err.join();
                 return Err("內建 PDF 核心回應逾時".into());
             }
         }
-    }
+    };
+    let stdout = out
+        .join()
+        .map_err(|_| "核心回應讀取中斷")?
+        .map_err(|error| error.to_string())?;
+    let stderr = err
+        .join()
+        .map_err(|_| "核心錯誤讀取中斷")?
+        .map_err(|error| error.to_string())?;
+    Ok(Output {
+        status,
+        stdout,
+        stderr,
+    })
+}
+
+fn pdf_request_can_retry(args: &[String]) -> bool {
+    // A lost reply can follow a committed change. Never repeat a mutation.
+    !args
+        .iter()
+        .any(|arg| matches!(arg.as_str(), "--embedded-operate" | "--embedded-new"))
+        && !args
+            .iter()
+            .any(|arg| arg == "--password" || arg.contains("\"password\""))
 }
 
 fn acropdf_call_args(
@@ -608,7 +663,14 @@ fn acropdf_call_args(
     let mut last_error = match persistent_acropdf_call_args(&args, timeout) {
         Ok(result) => return Ok(result),
         Err(AcroPdfServerError::Core(error)) => return Err(error),
-        Err(AcroPdfServerError::Transport(error)) => error,
+        Err(AcroPdfServerError::Transport(error)) => {
+            if !pdf_request_can_retry(&args) {
+                return Err(format!(
+                    "作業回應中斷，結果尚未確認；請檢查文件與備份後再操作。{error}"
+                ));
+            }
+            error
+        }
     };
     for runtime in acropdf_runtime_candidates() {
         match command_output_with_timeout(&runtime, &args, timeout) {
@@ -679,12 +741,24 @@ fn acropdf_engine_status() -> EngineStatus {
 }
 
 #[tauri::command]
-fn acropdf_status() -> Result<Value, String> {
+async fn acropdf_status() -> Result<Value, String> {
+    tauri::async_runtime::spawn_blocking(move || acropdf_status_blocking())
+        .await
+        .map_err(|error| format!("作業執行失敗：{error}"))?
+}
+
+fn acropdf_status_blocking() -> Result<Value, String> {
     acropdf_call("--integration-status", None).map(|(value, _)| value)
 }
 
 #[tauri::command]
-fn pdf_report(path: String, password: Option<String>) -> Result<Value, String> {
+async fn pdf_report(path: String, password: Option<String>) -> Result<Value, String> {
+    tauri::async_runtime::spawn_blocking(move || pdf_report_blocking(path, password))
+        .await
+        .map_err(|error| format!("作業執行失敗：{error}"))?
+}
+
+fn pdf_report_blocking(path: String, password: Option<String>) -> Result<Value, String> {
     let source = PathBuf::from(path);
     if !source.is_file() {
         return Err("找不到 PDF 文件".into());
@@ -708,7 +782,13 @@ fn pdf_report(path: String, password: Option<String>) -> Result<Value, String> {
 }
 
 #[tauri::command]
-fn pdf_live_validate(path: String, password: Option<String>) -> Result<Value, String> {
+async fn pdf_live_validate(path: String, password: Option<String>) -> Result<Value, String> {
+    tauri::async_runtime::spawn_blocking(move || pdf_live_validate_blocking(path, password))
+        .await
+        .map_err(|error| format!("作業執行失敗：{error}"))?
+}
+
+fn pdf_live_validate_blocking(path: String, password: Option<String>) -> Result<Value, String> {
     let source = PathBuf::from(path);
     if !source.is_file() {
         return Err("找不到 PDF 文件".into());
@@ -732,7 +812,13 @@ fn pdf_live_validate(path: String, password: Option<String>) -> Result<Value, St
 }
 
 #[tauri::command]
-fn pdf_query(path: String, query: String, options: Value) -> Result<Value, String> {
+async fn pdf_query(path: String, query: String, options: Value) -> Result<Value, String> {
+    tauri::async_runtime::spawn_blocking(move || pdf_query_blocking(path, query, options))
+        .await
+        .map_err(|error| format!("作業執行失敗：{error}"))?
+}
+
+fn pdf_query_blocking(path: String, query: String, options: Value) -> Result<Value, String> {
     const ALLOWED_QUERIES: &[&str] = &[
         "search",
         "forms",
@@ -762,7 +848,20 @@ fn pdf_query(path: String, query: String, options: Value) -> Result<Value, Strin
 }
 
 #[tauri::command]
-fn pdf_render_page(
+async fn pdf_render_page(
+    path: String,
+    page: usize,
+    scale: f64,
+    password: Option<String>,
+) -> Result<Value, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        pdf_render_page_blocking(path, page, scale, password)
+    })
+    .await
+    .map_err(|error| format!("作業執行失敗：{error}"))?
+}
+
+fn pdf_render_page_blocking(
     path: String,
     page: usize,
     scale: f64,
@@ -800,7 +899,20 @@ fn validate_pdf_source(source: &Path) -> Result<(), String> {
 }
 
 #[tauri::command]
-fn pdf_apply_operation(
+async fn pdf_apply_operation(
+    path: String,
+    operation: String,
+    options: Value,
+    output: Option<String>,
+) -> Result<Value, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        pdf_apply_operation_blocking(path, operation, options, output)
+    })
+    .await
+    .map_err(|error| format!("作業執行失敗：{error}"))?
+}
+
+fn pdf_apply_operation_blocking(
     path: String,
     operation: String,
     options: Value,
@@ -854,17 +966,24 @@ fn pdf_apply_operation(
     if !options.is_object() {
         return Err("PDF 操作選項格式錯誤".into());
     }
-    let source = PathBuf::from(path);
+    let _guard = PDF_MUTATIONS
+        .get_or_init(|| Mutex::new(()))
+        .lock()
+        .map_err(|_| "PDF 作業目前無法鎖定")?;
+    let source = PathBuf::from(path)
+        .canonicalize()
+        .map_err(|error| error.to_string())?;
     validate_pdf_source(&source)?;
     let destination = output
         .as_deref()
         .map(PathBuf::from)
         .unwrap_or_else(|| source.clone());
-    let backup = if destination == source {
-        Some(create_backup(&source)?)
-    } else {
-        None
-    };
+    let backup =
+        if destination == source || destination.canonicalize().ok().as_ref() == Some(&source) {
+            Some(create_backup(&source)?)
+        } else {
+            None
+        };
     let mut args = vec![
         "--embedded-operate".into(),
         source.to_string_lossy().to_string(),
@@ -894,7 +1013,17 @@ fn pdf_apply_operation(
 }
 
 #[tauri::command]
-fn pdf_restore_backup(path: String, backup: String) -> Result<ActionResult, String> {
+async fn pdf_restore_backup(path: String, backup: String) -> Result<ActionResult, String> {
+    tauri::async_runtime::spawn_blocking(move || pdf_restore_backup_blocking(path, backup))
+        .await
+        .map_err(|error| format!("作業執行失敗：{error}"))?
+}
+
+fn pdf_restore_backup_blocking(path: String, backup: String) -> Result<ActionResult, String> {
+    let _guard = PDF_MUTATIONS
+        .get_or_init(|| Mutex::new(()))
+        .lock()
+        .map_err(|_| "PDF 作業目前無法鎖定")?;
     let destination = PathBuf::from(path);
     let backup = PathBuf::from(backup);
     validate_pdf_source(&destination)?;
@@ -910,7 +1039,7 @@ fn pdf_restore_backup(path: String, backup: String) -> Result<ActionResult, Stri
         return Err("只能復原由全能文件工作台建立的安全備份".into());
     }
     create_backup(&destination)?;
-    fs::copy(&canonical_backup, &destination).map_err(|error| error.to_string())?;
+    atomic_copy(&canonical_backup, &destination).map_err(|error| error.to_string())?;
     Ok(ActionResult {
         path: destination.to_string_lossy().to_string(),
         file_name: destination
@@ -923,8 +1052,21 @@ fn pdf_restore_backup(path: String, backup: String) -> Result<ActionResult, Stri
 }
 
 #[tauri::command]
-fn pdf_create_blank(destination: String, pages: usize) -> Result<Value, String> {
+async fn pdf_create_blank(destination: String, pages: usize) -> Result<Value, String> {
+    tauri::async_runtime::spawn_blocking(move || pdf_create_blank_blocking(destination, pages))
+        .await
+        .map_err(|error| format!("作業執行失敗：{error}"))?
+}
+
+fn pdf_create_blank_blocking(destination: String, pages: usize) -> Result<Value, String> {
+    let _guard = PDF_MUTATIONS
+        .get_or_init(|| Mutex::new(()))
+        .lock()
+        .map_err(|_| "PDF 作業目前無法鎖定")?;
     let destination = PathBuf::from(destination);
+    if destination.exists() {
+        create_backup(&destination)?;
+    }
     if !destination
         .extension()
         .and_then(|value| value.to_str())
@@ -943,7 +1085,52 @@ fn pdf_create_blank(destination: String, pages: usize) -> Result<Value, String> 
 }
 
 #[tauri::command]
-fn pdf_compare(path: String, other: String) -> Result<Value, String> {
+async fn pdf_save_copy(path: String, destination: String) -> Result<ActionResult, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let _guard = PDF_MUTATIONS
+            .get_or_init(|| Mutex::new(()))
+            .lock()
+            .map_err(|_| "PDF 作業目前無法鎖定")?;
+        let source = PathBuf::from(path)
+            .canonicalize()
+            .map_err(|error| error.to_string())?;
+        validate_pdf_source(&source)?;
+        let target = PathBuf::from(destination);
+        if !target
+            .extension()
+            .is_some_and(|value| value.eq_ignore_ascii_case("pdf"))
+        {
+            return Err("PDF 副本必須使用 .pdf 副檔名".into());
+        }
+        if target.canonicalize().ok().as_ref() == Some(&source) {
+            return Err("請使用不同檔名另存副本".into());
+        }
+        if target.exists() {
+            create_backup(&target)?;
+        }
+        atomic_copy(&source, &target).map_err(|error| error.to_string())?;
+        Ok(ActionResult {
+            path: target.to_string_lossy().into(),
+            file_name: target
+                .file_name()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .into(),
+            message: "已另存 PDF 副本，並保留密碼與簽章。".into(),
+        })
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+async fn pdf_compare(path: String, other: String) -> Result<Value, String> {
+    tauri::async_runtime::spawn_blocking(move || pdf_compare_blocking(path, other))
+        .await
+        .map_err(|error| format!("作業執行失敗：{error}"))?
+}
+
+fn pdf_compare_blocking(path: String, other: String) -> Result<Value, String> {
     let source = PathBuf::from(path);
     let other = PathBuf::from(other);
     validate_pdf_source(&source)?;
@@ -1152,7 +1339,7 @@ fn onlyoffice_is_running() -> bool {
     }
     #[cfg(target_os = "windows")]
     {
-        Command::new("tasklist.exe")
+        quiet_command("tasklist.exe")
             .args(["/FI", "IMAGENAME eq DesktopEditors.exe", "/NH"])
             .output()
             .ok()
@@ -1834,7 +2021,7 @@ fn magi_status() -> MagiStatus {
 
 fn process_snapshot() -> String {
     #[cfg(target_os = "windows")]
-    let output = Command::new("powershell.exe")
+    let output = quiet_command("powershell.exe")
         .args([
             "-NoProfile",
             "-Command",
@@ -1891,7 +2078,13 @@ fn magi_runtime_roots(name: &str) -> Vec<PathBuf> {
 }
 
 #[tauri::command]
-fn system_status<R: Runtime>(app: tauri::AppHandle<R>) -> SystemStatus {
+async fn system_status<R: Runtime>(app: tauri::AppHandle<R>) -> Result<SystemStatus, String> {
+    tauri::async_runtime::spawn_blocking(move || system_status_blocking(app))
+        .await
+        .map_err(|error| format!("環境檢查失敗：{error}"))
+}
+
+fn system_status_blocking<R: Runtime>(app: tauri::AppHandle<R>) -> SystemStatus {
     SystemStatus {
         app_version: app.package_info().version.to_string(),
         platform: if cfg!(target_os = "windows") {
@@ -2014,7 +2207,7 @@ fn inspect_package(path: &Path) -> (usize, usize, Vec<String>) {
     let Ok(file) = File::open(path) else {
         return (0, 0, vec![]);
     };
-    let Ok(mut archive) = ZipArchive::new(file) else {
+    let Ok(mut archive) = safe_office_archive(file) else {
         return (0, 0, vec![]);
     };
     let count = archive.len();
@@ -2164,7 +2357,7 @@ fn build_word_report(path: &Path) -> Result<WordReport, String> {
         return Err("Word 文件中心目前支援 DOCX／DOCM；舊版 DOC 請先用救援引擎另存。".into());
     }
     let file = File::open(path).map_err(|error| error.to_string())?;
-    let mut archive = ZipArchive::new(file).map_err(|_| "無法讀取 Word 文件結構")?;
+    let mut archive = safe_office_archive(file).map_err(|_| "無法讀取 Word 文件結構")?;
     let names: Vec<String> = archive.file_names().map(String::from).collect();
     let document = zip_text(&mut archive, "word/document.xml");
     if document.is_empty() {
@@ -2332,7 +2525,7 @@ fn color_contrast_against_white(hex: &str) -> Option<f64> {
 
 fn build_accessibility_report(path: &Path) -> Result<AccessibilityReport, String> {
     let file = File::open(path).map_err(|error| error.to_string())?;
-    let mut archive = ZipArchive::new(file).map_err(|_| "無法讀取 Word 文件結構")?;
+    let mut archive = safe_office_archive(file).map_err(|_| "無法讀取 Word 文件結構")?;
     let names = archive.file_names().map(String::from).collect::<Vec<_>>();
     let document = zip_text(&mut archive, "word/document.xml");
     let styles = zip_text(&mut archive, "word/styles.xml");
@@ -2570,7 +2763,13 @@ fn build_accessibility_report(path: &Path) -> Result<AccessibilityReport, String
 }
 
 #[tauri::command]
-fn word_accessibility_report(path: String) -> Result<AccessibilityReport, String> {
+async fn word_accessibility_report(path: String) -> Result<AccessibilityReport, String> {
+    tauri::async_runtime::spawn_blocking(move || word_accessibility_report_blocking(path))
+        .await
+        .map_err(|error| format!("作業執行失敗：{error}"))?
+}
+
+fn word_accessibility_report_blocking(path: String) -> Result<AccessibilityReport, String> {
     let source = PathBuf::from(path);
     if !source.is_file() {
         return Err("找不到 Word 文件".into());
@@ -2804,7 +3003,13 @@ fn build_word_quality_report(path: &Path) -> Result<WordQualityReport, String> {
 }
 
 #[tauri::command]
-fn word_quality_report(path: String) -> Result<WordQualityReport, String> {
+async fn word_quality_report(path: String) -> Result<WordQualityReport, String> {
+    tauri::async_runtime::spawn_blocking(move || word_quality_report_blocking(path))
+        .await
+        .map_err(|error| format!("作業執行失敗：{error}"))?
+}
+
+fn word_quality_report_blocking(path: String) -> Result<WordQualityReport, String> {
     let source = PathBuf::from(path);
     if !source.is_file() {
         return Err("找不到 Word 文件".into());
@@ -2898,7 +3103,21 @@ fn ensure_core_title(core: &str, title: &str) -> (String, bool) {
 }
 
 #[tauri::command]
-fn repair_word_accessibility(path: String, destination: String) -> Result<ActionResult, String> {
+async fn repair_word_accessibility(
+    path: String,
+    destination: String,
+) -> Result<ActionResult, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        repair_word_accessibility_blocking(path, destination)
+    })
+    .await
+    .map_err(|error| format!("作業執行失敗：{error}"))?
+}
+
+fn repair_word_accessibility_blocking(
+    path: String,
+    destination: String,
+) -> Result<ActionResult, String> {
     let source = PathBuf::from(path);
     if !source.is_file() {
         return Err("找不到 Word 文件".into());
@@ -2962,14 +3181,8 @@ fn read_citation_sources_unlocked() -> Result<Vec<CitationSource>, String> {
 }
 
 fn write_citation_sources_unlocked(sources: &[CitationSource]) -> Result<(), String> {
-    let path = citation_store_path()?;
-    let temporary = path.with_extension("json.tmp");
-    fs::write(
-        &temporary,
-        serde_json::to_vec_pretty(sources).map_err(|error| error.to_string())?,
-    )
-    .map_err(|error| error.to_string())?;
-    fs::rename(temporary, path).map_err(|error| error.to_string())
+    let content = serde_json::to_vec_pretty(sources).map_err(|error| error.to_string())?;
+    atomic_write(&citation_store_path()?, &content).map_err(|error| error.to_string())
 }
 
 #[tauri::command]
@@ -3336,7 +3549,20 @@ fn update_dynamic_citation_xml(document: &str) -> Result<(String, usize), String
 }
 
 #[tauri::command]
-fn append_bibliography(
+async fn append_bibliography(
+    path: String,
+    destination: String,
+    source_ids: Vec<String>,
+    style: String,
+) -> Result<ActionResult, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        append_bibliography_blocking(path, destination, source_ids, style)
+    })
+    .await
+    .map_err(|error| format!("作業執行失敗：{error}"))?
+}
+
+fn append_bibliography_blocking(
     path: String,
     destination: String,
     source_ids: Vec<String>,
@@ -3381,7 +3607,20 @@ fn append_bibliography(
 }
 
 #[tauri::command]
-fn insert_dynamic_citation(
+async fn insert_dynamic_citation(
+    path: String,
+    destination: String,
+    source_ids: Vec<String>,
+    style: String,
+) -> Result<ActionResult, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        insert_dynamic_citation_blocking(path, destination, source_ids, style)
+    })
+    .await
+    .map_err(|error| format!("作業執行失敗：{error}"))?
+}
+
+fn insert_dynamic_citation_blocking(
     path: String,
     destination: String,
     source_ids: Vec<String>,
@@ -3429,7 +3668,21 @@ fn insert_dynamic_citation(
 }
 
 #[tauri::command]
-fn update_document_citations(path: String, destination: String) -> Result<ActionResult, String> {
+async fn update_document_citations(
+    path: String,
+    destination: String,
+) -> Result<ActionResult, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        update_document_citations_blocking(path, destination)
+    })
+    .await
+    .map_err(|error| format!("作業執行失敗：{error}"))?
+}
+
+fn update_document_citations_blocking(
+    path: String,
+    destination: String,
+) -> Result<ActionResult, String> {
     let source = PathBuf::from(path);
     if !source.is_file() {
         return Err("找不到 Word 文件".into());
@@ -3549,7 +3802,22 @@ fn editable_diagram(kind: &str, title: &str, items: &[String]) -> Result<String,
 }
 
 #[tauri::command]
-fn insert_word_component(
+async fn insert_word_component(
+    path: String,
+    destination: String,
+    kind: String,
+    title: String,
+    subtitle: String,
+    items: Vec<String>,
+) -> Result<ActionResult, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        insert_word_component_blocking(path, destination, kind, title, subtitle, items)
+    })
+    .await
+    .map_err(|error| format!("作業執行失敗：{error}"))?
+}
+
+fn insert_word_component_blocking(
     path: String,
     destination: String,
     kind: String,
@@ -3704,7 +3972,7 @@ fn extract_document_text(path: &Path) -> Result<(String, bool), String> {
         return Err("此格式目前無法安全擷取文字；請先另存為 DOCX、XLSX 或 PPTX".into());
     }
     let file = File::open(path).map_err(|error| error.to_string())?;
-    let mut archive = ZipArchive::new(file).map_err(|_| "無法讀取 Office 文件結構")?;
+    let mut archive = safe_office_archive(file).map_err(|_| "無法讀取 Office 文件結構")?;
     let mut names: Vec<String> = archive.file_names().map(String::from).collect();
     names.sort();
     let selected: Vec<String> = names
@@ -3880,7 +4148,7 @@ fn magi_http_request(
     let curl = "curl.exe";
     #[cfg(not(any(target_os = "macos", target_os = "windows")))]
     let curl = "curl";
-    let mut child = Command::new(curl)
+    let mut child = quiet_command(curl)
         .args(["--config", &config_path.to_string_lossy()])
         .args([
             "--noproxy",
@@ -3982,7 +4250,21 @@ fn magi_analyze_text(
 }
 
 #[tauri::command]
-fn magi_analyze(path: String, mode: String, instruction: String) -> Result<MagiReply, String> {
+async fn magi_analyze(
+    path: String,
+    mode: String,
+    instruction: String,
+) -> Result<MagiReply, String> {
+    tauri::async_runtime::spawn_blocking(move || magi_analyze_blocking(path, mode, instruction))
+        .await
+        .map_err(|error| format!("作業執行失敗：{error}"))?
+}
+
+fn magi_analyze_blocking(
+    path: String,
+    mode: String,
+    instruction: String,
+) -> Result<MagiReply, String> {
     let source = PathBuf::from(&path);
     if !source.is_file() {
         return Err("找不到文件".into());
@@ -4314,7 +4596,13 @@ fn start_magi_bridge() -> Result<PathBuf, String> {
 }
 
 #[tauri::command]
-fn word_report(path: String) -> Result<WordReport, String> {
+async fn word_report(path: String) -> Result<WordReport, String> {
+    tauri::async_runtime::spawn_blocking(move || word_report_blocking(path))
+        .await
+        .map_err(|error| format!("作業執行失敗：{error}"))?
+}
+
+fn word_report_blocking(path: String) -> Result<WordReport, String> {
     let source = PathBuf::from(path);
     if !source.is_file() {
         return Err("找不到 Word 文件".into());
@@ -4324,7 +4612,7 @@ fn word_report(path: String) -> Result<WordReport, String> {
 
 fn build_word_reading_content(path: &Path) -> Result<WordReadingContent, String> {
     let file = File::open(path).map_err(|error| error.to_string())?;
-    let mut archive = ZipArchive::new(file).map_err(|_| "無法讀取 Word 文件結構")?;
+    let mut archive = safe_office_archive(file).map_err(|_| "無法讀取 Word 文件結構")?;
     let document = zip_text(&mut archive, "word/document.xml");
     let comments_xml = zip_text(&mut archive, "word/comments.xml");
     if document.is_empty() {
@@ -4399,7 +4687,13 @@ fn build_word_reading_content(path: &Path) -> Result<WordReadingContent, String>
 }
 
 #[tauri::command]
-fn word_reading_content(path: String) -> Result<WordReadingContent, String> {
+async fn word_reading_content(path: String) -> Result<WordReadingContent, String> {
+    tauri::async_runtime::spawn_blocking(move || word_reading_content_blocking(path))
+        .await
+        .map_err(|error| format!("作業執行失敗：{error}"))?
+}
+
+fn word_reading_content_blocking(path: String) -> Result<WordReadingContent, String> {
     let source = PathBuf::from(path);
     if !source.is_file() {
         return Err("找不到 Word 文件".into());
@@ -4548,7 +4842,20 @@ fn edit_word_outline_xml(
 }
 
 #[tauri::command]
-fn edit_word_outline(
+async fn edit_word_outline(
+    path: String,
+    destination: String,
+    paragraph: usize,
+    action: String,
+) -> Result<ActionResult, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        edit_word_outline_blocking(path, destination, paragraph, action)
+    })
+    .await
+    .map_err(|error| format!("作業執行失敗：{error}"))?
+}
+
+fn edit_word_outline_blocking(
     path: String,
     destination: String,
     paragraph: usize,
@@ -4716,13 +5023,13 @@ fn unique_renumbered_path(source: &Path) -> Result<PathBuf, String> {
     }
     Ok(parent.join(format!(
         "{stem}-重新編號-{}.{extension}",
-        Local::now().format("%Y%m%d-%H%M%S")
+        unique_id().map_err(|error| error.to_string())?
     )))
 }
 
 fn read_word_document_xml(source: &Path) -> Result<String, String> {
     let file = File::open(source).map_err(|error| error.to_string())?;
-    let mut archive = ZipArchive::new(file).map_err(|_| "無法讀取 Word 文件結構")?;
+    let mut archive = safe_office_archive(file).map_err(|_| "無法讀取 Word 文件結構")?;
     let mut entry = archive
         .by_name("word/document.xml")
         .map_err(|_| "Word 文件缺少 document.xml")?;
@@ -4738,31 +5045,46 @@ fn write_word_document_xml(
     destination: &Path,
     document_xml: &str,
 ) -> Result<(), String> {
-    let input = File::open(source).map_err(|error| error.to_string())?;
-    let mut archive = ZipArchive::new(input).map_err(|_| "無法讀取 Word 文件結構")?;
-    let output = File::create(destination).map_err(|error| error.to_string())?;
-    let mut writer = ZipWriter::new(output);
-    for index in 0..archive.len() {
-        let mut entry = archive.by_index(index).map_err(|error| error.to_string())?;
-        if entry.name() != "word/document.xml" {
-            writer
-                .raw_copy_file(entry)
-                .map_err(|error| error.to_string())?;
-            continue;
-        }
-        let name = entry.name().to_string();
-        let options = entry.options();
-        let mut ignored = Vec::new();
-        let _ = entry.read_to_end(&mut ignored);
-        writer
-            .start_file(name, options)
-            .map_err(|error| error.to_string())?;
-        writer
-            .write_all(document_xml.as_bytes())
-            .map_err(|error| error.to_string())?;
+    if source == destination
+        || (source.canonicalize().ok().is_some()
+            && source.canonicalize().ok() == destination.canonicalize().ok())
+    {
+        return Err("請另存新檔；不能覆寫來源 Word 文件".into());
     }
-    writer.finish().map_err(|error| error.to_string())?;
-    Ok(())
+    if destination.is_file() {
+        create_backup(destination)?;
+    }
+    let input = File::open(source).map_err(|error| error.to_string())?;
+    let mut archive = safe_office_archive(input).map_err(|_| "無法讀取 Word 文件結構")?;
+    publish(destination, |output| {
+        (|| -> Result<(), String> {
+            let mut writer = ZipWriter::new(output);
+            for index in 0..archive.len() {
+                let mut entry = archive.by_index(index).map_err(|error| error.to_string())?;
+                if entry.name() != "word/document.xml" {
+                    writer
+                        .raw_copy_file(entry)
+                        .map_err(|error| error.to_string())?;
+                    continue;
+                }
+                let name = entry.name().to_string();
+                let options = entry.options();
+                let mut ignored = Vec::new();
+                let _ = entry.read_to_end(&mut ignored);
+                writer
+                    .start_file(name, options)
+                    .map_err(|error| error.to_string())?;
+                writer
+                    .write_all(document_xml.as_bytes())
+                    .map_err(|error| error.to_string())?;
+            }
+            writer.finish().map_err(|error| error.to_string())?;
+            drop(archive);
+            Ok(())
+        })()
+        .map_err(std::io::Error::other)
+    })
+    .map_err(|error| error.to_string())
 }
 
 fn normalize_distributed_paragraph_id(value: &Value) -> Option<String> {
@@ -5070,28 +5392,7 @@ fn distributed_alignment_document_path(value: &str) -> Result<PathBuf, String> {
 }
 
 fn replace_distributed_alignment_file(source: &Path, temporary: &Path) -> Result<(), String> {
-    #[cfg(unix)]
-    {
-        fs::rename(temporary, source).map_err(|error| format!("無法更新 Word 文件：{error}"))
-    }
-    #[cfg(not(unix))]
-    {
-        let backup = source.with_extension(format!(
-            "{}.opendesk-distribute-backup-{}",
-            source
-                .extension()
-                .and_then(|value| value.to_str())
-                .unwrap_or("docx"),
-            std::process::id()
-        ));
-        fs::rename(source, &backup).map_err(|error| format!("無法暫存原始 Word 文件：{error}"))?;
-        if let Err(error) = fs::rename(temporary, source) {
-            let _ = fs::rename(&backup, source);
-            return Err(format!("無法更新 Word 文件：{error}"));
-        }
-        let _ = fs::remove_file(backup);
-        Ok(())
-    }
+    replace_file(temporary, source).map_err(|error| format!("無法更新 Word 文件：{error}"))
 }
 
 fn persist_distributed_alignment(
@@ -5105,7 +5406,7 @@ fn persist_distributed_alignment(
     let source = distributed_alignment_document_path(&source.to_string_lossy())?;
     let input = File::open(&source).map_err(|error| error.to_string())?;
     let mut archive =
-        ZipArchive::new(input).map_err(|_| "文件仍在儲存中，稍後會自動重試".to_string())?;
+        safe_office_archive(input).map_err(|_| "文件仍在儲存中，稍後會自動重試".to_string())?;
     let custom_xml = zip_text(&mut archive, "docProps/custom.xml");
     let document_xml = zip_text(&mut archive, "word/document.xml");
     drop(archive);
@@ -5157,7 +5458,7 @@ fn persist_distributed_alignment(
         let verification_document = read_word_document_xml(&temporary)?;
         let verification_file = File::open(&temporary).map_err(|error| error.to_string())?;
         let mut verification_archive =
-            ZipArchive::new(verification_file).map_err(|error| error.to_string())?;
+            safe_office_archive(verification_file).map_err(|error| error.to_string())?;
         let verification_custom = zip_text(&mut verification_archive, "docProps/custom.xml");
         if verification_document != rewritten || verification_custom != rewritten_custom {
             return Err("分散對齊寫回驗證失敗，原檔未變更".into());
@@ -5286,7 +5587,13 @@ fn read_mail_merge_data(
 }
 
 #[tauri::command]
-fn mail_merge_preview(data_source: String) -> Result<MailMergePreview, String> {
+async fn mail_merge_preview(data_source: String) -> Result<MailMergePreview, String> {
+    tauri::async_runtime::spawn_blocking(move || mail_merge_preview_blocking(data_source))
+        .await
+        .map_err(|error| format!("作業執行失敗：{error}"))?
+}
+
+fn mail_merge_preview_blocking(data_source: String) -> Result<MailMergePreview, String> {
     let (headers, rows) = read_mail_merge_data(Path::new(&data_source))?;
     Ok(MailMergePreview {
         headers,
@@ -5653,41 +5960,56 @@ fn rewrite_word_package<F>(
 where
     F: FnMut(&str, &str) -> Option<String>,
 {
-    let input = File::open(source).map_err(|error| error.to_string())?;
-    let mut archive = ZipArchive::new(input).map_err(|_| "無法讀取 Word 文件結構")?;
-    let output = File::create(destination).map_err(|error| error.to_string())?;
-    let mut writer = ZipWriter::new(output);
-    for index in 0..archive.len() {
-        let mut entry = archive.by_index(index).map_err(|error| error.to_string())?;
-        let name = entry.name().to_string();
-        if name.ends_with(".xml") {
-            let mut content = String::new();
-            entry
-                .read_to_string(&mut content)
-                .map_err(|error| error.to_string())?;
-            if let Some(next) = transform(&name, &content) {
-                writer
-                    .start_file(name, entry.options())
-                    .map_err(|error| error.to_string())?;
-                writer
-                    .write_all(next.as_bytes())
-                    .map_err(|error| error.to_string())?;
-                continue;
-            }
-            writer
-                .start_file(name, entry.options())
-                .map_err(|error| error.to_string())?;
-            writer
-                .write_all(content.as_bytes())
-                .map_err(|error| error.to_string())?;
-        } else {
-            writer
-                .raw_copy_file(entry)
-                .map_err(|error| error.to_string())?;
-        }
+    if source == destination
+        || (source.canonicalize().ok().is_some()
+            && source.canonicalize().ok() == destination.canonicalize().ok())
+    {
+        return Err("請另存新檔；不能覆寫來源 Word 文件".into());
     }
-    writer.finish().map_err(|error| error.to_string())?;
-    Ok(())
+    if destination.is_file() {
+        create_backup(destination)?;
+    }
+    let input = File::open(source).map_err(|error| error.to_string())?;
+    let mut archive = safe_office_archive(input).map_err(|_| "無法讀取 Word 文件結構")?;
+    publish(destination, |output| {
+        (|| -> Result<(), String> {
+            let mut writer = ZipWriter::new(output);
+            for index in 0..archive.len() {
+                let mut entry = archive.by_index(index).map_err(|error| error.to_string())?;
+                let name = entry.name().to_string();
+                if name.ends_with(".xml") {
+                    let mut content = String::new();
+                    entry
+                        .read_to_string(&mut content)
+                        .map_err(|error| error.to_string())?;
+                    if let Some(next) = transform(&name, &content) {
+                        writer
+                            .start_file(name, entry.options())
+                            .map_err(|error| error.to_string())?;
+                        writer
+                            .write_all(next.as_bytes())
+                            .map_err(|error| error.to_string())?;
+                        continue;
+                    }
+                    writer
+                        .start_file(name, entry.options())
+                        .map_err(|error| error.to_string())?;
+                    writer
+                        .write_all(content.as_bytes())
+                        .map_err(|error| error.to_string())?;
+                } else {
+                    writer
+                        .raw_copy_file(entry)
+                        .map_err(|error| error.to_string())?;
+                }
+            }
+            writer.finish().map_err(|error| error.to_string())?;
+            drop(archive);
+            Ok(())
+        })()
+        .map_err(std::io::Error::other)
+    })
+    .map_err(|error| error.to_string())
 }
 
 fn safe_output_name(value: &str, fallback: &str) -> String {
@@ -5717,11 +6039,44 @@ fn unique_output_path(root: &Path, stem: &str, extension: &str, index: usize) ->
     if !preferred.exists() {
         return preferred;
     }
-    root.join(format!("{stem}-{:03}.{extension}", index + 1))
+    let mut counter = index + 1;
+    loop {
+        let candidate = root.join(format!("{stem}-{counter:03}.{extension}"));
+        if !candidate.exists() {
+            return candidate;
+        }
+        counter += 1;
+    }
 }
 
 #[tauri::command]
-fn mail_merge_generate(
+async fn mail_merge_generate(
+    template: String,
+    data_source: String,
+    output_directory: String,
+    output_format: String,
+    naming_field: String,
+    filter_column: String,
+    filter_operator: String,
+    filter_value: String,
+) -> Result<MailMergeResult, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        mail_merge_generate_blocking(
+            template,
+            data_source,
+            output_directory,
+            output_format,
+            naming_field,
+            filter_column,
+            filter_operator,
+            filter_value,
+        )
+    })
+    .await
+    .map_err(|error| format!("作業執行失敗：{error}"))?
+}
+
+fn mail_merge_generate_blocking(
     template: String,
     data_source: String,
     output_directory: String,
@@ -6072,7 +6427,13 @@ fn create_word_template<R: Runtime>(
 }
 
 #[tauri::command]
-fn renumber_headings(path: String) -> Result<ActionResult, String> {
+async fn renumber_headings(path: String) -> Result<ActionResult, String> {
+    tauri::async_runtime::spawn_blocking(move || renumber_headings_blocking(path))
+        .await
+        .map_err(|error| format!("作業執行失敗：{error}"))?
+}
+
+fn renumber_headings_blocking(path: String) -> Result<ActionResult, String> {
     let source = PathBuf::from(&path);
     if !source.is_file() {
         return Err("找不到 Word 文件".into());
@@ -6114,7 +6475,13 @@ fn renumber_headings(path: String) -> Result<ActionResult, String> {
 }
 
 #[tauri::command]
-fn scan_document(path: String) -> Result<DocumentAnalysis, String> {
+async fn scan_document(path: String) -> Result<DocumentAnalysis, String> {
+    tauri::async_runtime::spawn_blocking(move || scan_document_blocking(path))
+        .await
+        .map_err(|error| format!("作業執行失敗：{error}"))?
+}
+
+fn scan_document_blocking(path: String) -> Result<DocumentAnalysis, String> {
     let file = PathBuf::from(&path);
     if !file.is_file() {
         return Err("找不到文件".into());
@@ -6148,18 +6515,27 @@ fn scan_document(path: String) -> Result<DocumentAnalysis, String> {
 }
 
 fn data_root() -> Result<PathBuf, String> {
-    let base = dirs::data_local_dir().ok_or_else(|| "找不到本機資料目錄".to_string())?;
-    let current = base.join("全能文件工作台");
-    let legacy = base.join("OpenDesk TW");
-    if !current.exists() && legacy.exists() && fs::rename(&legacy, &current).is_err() {
-        fs::create_dir_all(&current).map_err(|error| error.to_string())?;
-    }
-    Ok(current)
+    let root = if let Some(path) = std::env::var_os("OPENDESK_DATA_DIR") {
+        PathBuf::from(path)
+    } else {
+        let base = dirs::data_local_dir().ok_or("找不到資料目錄")?;
+        let current = base.join("全能文件工作台");
+        let legacy = base.join("OpenDesk TW");
+        // If migration is blocked, retain access to the user's existing records.
+        if !current.exists() && legacy.exists() && fs::rename(&legacy, &current).is_err() {
+            legacy
+        } else {
+            current
+        }
+    };
+    private_directory(&root).map_err(|error| error.to_string())?;
+    Ok(root)
 }
 
 fn recovery_root() -> Result<PathBuf, String> {
     let root = data_root()?.join("Recovery");
-    fs::create_dir_all(root.join("Snapshots")).map_err(|error| error.to_string())?;
+    private_directory(&root).map_err(|error| error.to_string())?;
+    private_directory(&root.join("Snapshots")).map_err(|error| error.to_string())?;
     Ok(root)
 }
 
@@ -6177,11 +6553,8 @@ fn read_recovery_sessions_unlocked() -> Result<Vec<RecoverySession>, String> {
 }
 
 fn write_recovery_sessions_unlocked(sessions: &[RecoverySession]) -> Result<(), String> {
-    let path = recovery_registry_path()?;
-    let temporary = path.with_extension("json.tmp");
     let content = serde_json::to_vec_pretty(sessions).map_err(|error| error.to_string())?;
-    fs::write(&temporary, content).map_err(|error| error.to_string())?;
-    fs::rename(&temporary, &path).map_err(|error| error.to_string())
+    atomic_write(&recovery_registry_path()?, &content).map_err(|error| error.to_string())
 }
 
 fn register_recovery_session(source: &Path, engine: &str) -> Result<RecoverySession, String> {
@@ -6190,7 +6563,11 @@ fn register_recovery_session(source: &Path, engine: &str) -> Result<RecoverySess
         .lock()
         .map_err(|_| "復原清單目前無法鎖定")?;
     let now = Local::now();
-    let id = format!("{}-{}", now.format("%Y%m%d%H%M%S%3f"), std::process::id());
+    let id = format!(
+        "{}-{}",
+        now.format("%Y%m%d%H%M%S%3f"),
+        unique_id().map_err(|error| error.to_string())?
+    );
     let extension = source
         .extension()
         .and_then(|value| value.to_str())
@@ -6198,7 +6575,8 @@ fn register_recovery_session(source: &Path, engine: &str) -> Result<RecoverySess
     let snapshot = recovery_root()?
         .join("Snapshots")
         .join(format!("{id}.{extension}"));
-    fs::copy(source, &snapshot).map_err(|error| format!("無法建立工作階段快照：{error}"))?;
+    let mut sessions = read_recovery_sessions_unlocked()?;
+    atomic_copy(source, &snapshot).map_err(|error| format!("無法建立工作階段快照：{error}"))?;
     let session = RecoverySession {
         id: id.clone(),
         path: source.to_string_lossy().to_string(),
@@ -6213,7 +6591,6 @@ fn register_recovery_session(source: &Path, engine: &str) -> Result<RecoverySess
         snapshot_at: now.to_rfc3339(),
         snapshots: 1,
     };
-    let mut sessions = read_recovery_sessions_unlocked().unwrap_or_default();
     sessions.retain(|value| value.path != session.path);
     sessions.insert(0, session.clone());
     sessions.truncate(30);
@@ -6235,19 +6612,19 @@ fn start_recovery_monitor(session: RecoverySession) {
             if modified.is_none() || modified == last_modified {
                 continue;
             }
-            let temporary = snapshot.with_extension("recovery.tmp");
-            if fs::copy(&source, &temporary).is_err() || fs::copy(&temporary, &snapshot).is_err() {
-                let _ = fs::remove_file(&temporary);
-                continue;
-            }
-            let _ = fs::remove_file(&temporary);
-            last_modified = modified;
             let Ok(_guard) = RECOVERY_SESSIONS.get_or_init(|| Mutex::new(())).lock() else {
                 continue;
             };
             let Ok(mut sessions) = read_recovery_sessions_unlocked() else {
                 continue;
             };
+            if !sessions.iter().any(|value| value.id == session.id) {
+                break;
+            }
+            if atomic_copy(&source, &snapshot).is_err() {
+                continue;
+            }
+            last_modified = modified;
             if let Some(value) = sessions.iter_mut().find(|value| value.id == session.id) {
                 value.snapshot_at = Local::now().to_rfc3339();
                 value.snapshots += 1;
@@ -6275,7 +6652,16 @@ fn recovery_sessions() -> Result<RecoveryOverview, String> {
 }
 
 #[tauri::command]
-fn restore_recovery_session(id: String, destination: String) -> Result<ActionResult, String> {
+async fn restore_recovery_session(id: String, destination: String) -> Result<ActionResult, String> {
+    tauri::async_runtime::spawn_blocking(move || restore_recovery_session_blocking(id, destination))
+        .await
+        .map_err(|error| format!("作業執行失敗：{error}"))?
+}
+
+fn restore_recovery_session_blocking(
+    id: String,
+    destination: String,
+) -> Result<ActionResult, String> {
     let _guard = RECOVERY_SESSIONS
         .get_or_init(|| Mutex::new(()))
         .lock()
@@ -6299,9 +6685,31 @@ fn restore_recovery_session(id: String, destination: String) -> Result<ActionRes
     if let Some(parent) = target.parent() {
         fs::create_dir_all(parent).map_err(|error| error.to_string())?;
     }
-    fs::copy(&snapshot, &target).map_err(|error| format!("無法還原工作階段：{error}"))?;
+    let canonical_snapshot = snapshot.canonicalize().map_err(|error| error.to_string())?;
+    let snapshot_root = recovery_root()?
+        .join("Snapshots")
+        .canonicalize()
+        .map_err(|error| error.to_string())?;
+    if !canonical_snapshot.starts_with(&snapshot_root) {
+        return Err("復原快照位置無效".into());
+    }
+    let original = PathBuf::from(&session.path);
+    if target == original
+        || target == snapshot
+        || target.canonicalize().ok().is_some_and(|path| {
+            Some(&path) == original.canonicalize().ok().as_ref() || path == canonical_snapshot
+        })
+    {
+        return Err("請選擇新檔名，避免覆寫原始文件或復原快照".into());
+    }
+    if target.exists() {
+        create_backup(&target)?;
+    }
+    atomic_copy(&canonical_snapshot, &target)
+        .map_err(|error| format!("無法還原工作階段：{error}"))?;
     sessions.retain(|value| value.id != id);
     write_recovery_sessions_unlocked(&sessions)?;
+    let _ = fs::remove_file(&canonical_snapshot);
     Ok(ActionResult {
         path: target.to_string_lossy().to_string(),
         file_name: target
@@ -6330,18 +6738,29 @@ fn dismiss_recovery_session(id: String) -> Result<(), String> {
     sessions.retain(|value| value.id != id);
     write_recovery_sessions_unlocked(&sessions)?;
     if let Some(path) = snapshot {
-        let _ = fs::remove_file(path);
+        if let (Ok(path), Ok(root)) = (
+            path.canonicalize(),
+            recovery_root()?.join("Snapshots").canonicalize(),
+        ) {
+            if path.starts_with(root) {
+                let _ = fs::remove_file(path);
+            }
+        }
     }
     Ok(())
 }
 
 fn create_backup(source: &Path) -> Result<PathBuf, String> {
-    let root = data_root()?
-        .join("Backups")
-        .join(Local::now().format("%Y%m%d-%H%M%S").to_string());
-    fs::create_dir_all(&root).map_err(|error| error.to_string())?;
+    let parent = data_root()?.join("Backups");
+    private_directory(&parent).map_err(|error| error.to_string())?;
+    let root = parent.join(format!(
+        "{}-{}",
+        Local::now().format("%Y%m%d-%H%M%S%3f"),
+        unique_id().map_err(|error| error.to_string())?
+    ));
+    private_directory(&root).map_err(|error| error.to_string())?;
     let destination = root.join(source.file_name().ok_or("無效檔名")?);
-    fs::copy(source, &destination).map_err(|error| error.to_string())?;
+    atomic_copy(source, &destination).map_err(|error| error.to_string())?;
     Ok(destination)
 }
 
@@ -6379,14 +6798,20 @@ fn launch_document(path: &Path, engine: &str) -> Result<(), String> {
 }
 
 #[tauri::command]
-fn backup_and_open(path: String, engine: String) -> Result<ActionResult, String> {
+async fn backup_and_open(path: String, engine: String) -> Result<ActionResult, String> {
+    tauri::async_runtime::spawn_blocking(move || backup_and_open_blocking(path, engine))
+        .await
+        .map_err(|error| format!("作業執行失敗：{error}"))?
+}
+
+fn backup_and_open_blocking(path: String, engine: String) -> Result<ActionResult, String> {
     let source = PathBuf::from(&path);
     if engine == "ONLYOFFICE" {
         prepare_onlyoffice_locale_for_launch()?;
     }
     let backup = create_backup(&source)?;
-    launch_document(&source, &engine)?;
     let recovery = register_recovery_session(&source, &engine)?;
+    launch_document(&source, &engine)?;
     start_recovery_monitor(recovery);
     Ok(ActionResult {
         path,
@@ -6416,15 +6841,34 @@ fn new_document_spec(kind: &str) -> Result<(&'static str, &'static str), String>
 }
 
 #[tauri::command]
-fn create_document(kind: String) -> Result<ActionResult, String> {
+async fn create_document(kind: String) -> Result<ActionResult, String> {
+    tauri::async_runtime::spawn_blocking(move || create_document_blocking(kind))
+        .await
+        .map_err(|error| format!("作業執行失敗：{error}"))?
+}
+
+fn create_document_blocking(kind: String) -> Result<ActionResult, String> {
     let (flag, file_name) = new_document_spec(&kind)?;
-    prepare_onlyoffice_locale_for_launch()?;
-    let executable =
-        engine_executable("ONLYOFFICE").ok_or("找不到 ONLYOFFICE，請先安裝桌面編輯器")?;
-    Command::new(executable)
-        .args(["--keeplang:zh-TW", flag])
-        .spawn()
-        .map_err(|error| format!("無法開啟未命名文件：{error}"))?;
+    if let Some(executable) = engine_executable("ONLYOFFICE") {
+        prepare_onlyoffice_locale_for_launch()?;
+        Command::new(executable)
+            .args(["--keeplang:zh-TW", flag])
+            .spawn()
+            .map_err(|error| format!("無法開啟未命名文件：{error}"))?;
+    } else if let Some(executable) = engine_executable("LibreOffice") {
+        let flag = match kind.as_str() {
+            "text" => "--writer",
+            "spreadsheet" => "--calc",
+            "presentation" => "--impress",
+            _ => unreachable!(),
+        };
+        Command::new(executable)
+            .arg(flag)
+            .spawn()
+            .map_err(|error| format!("無法開啟未命名文件：{error}"))?;
+    } else {
+        return Err("請先安裝 ONLYOFFICE 或 LibreOffice，才能建立 Office 文件".into());
+    }
     Ok(ActionResult {
         path: String::new(),
         file_name: file_name.into(),
@@ -6507,7 +6951,13 @@ fn libreoffice_conversion_command(
 }
 
 #[tauri::command]
-fn convert_pdf(path: String) -> Result<String, String> {
+async fn convert_pdf(path: String) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || convert_pdf_blocking(path))
+        .await
+        .map_err(|error| format!("作業執行失敗：{error}"))?
+}
+
+fn convert_pdf_blocking(path: String) -> Result<String, String> {
     let source = PathBuf::from(path);
     let output = dirs::document_dir()
         .ok_or("找不到文件資料夾")?
@@ -6662,7 +7112,13 @@ fn open_source_repository() -> Result<(), String> {
 }
 
 #[tauri::command]
-fn run_self_test<R: Runtime>(app: tauri::AppHandle<R>) -> SelfTestReport {
+async fn run_self_test<R: Runtime>(app: tauri::AppHandle<R>) -> Result<SelfTestReport, String> {
+    tauri::async_runtime::spawn_blocking(move || run_self_test_blocking(app))
+        .await
+        .map_err(|error| format!("完整檢查失敗：{error}"))
+}
+
+fn run_self_test_blocking<R: Runtime>(app: tauri::AppHandle<R>) -> SelfTestReport {
     let engines = [
         engine_status("ONLYOFFICE"),
         engine_status("LibreOffice"),
@@ -6899,8 +7355,25 @@ fn run_self_test<R: Runtime>(app: tauri::AppHandle<R>) -> SelfTestReport {
             total: 1,
         },
         TestGroup {
-            name: "安全更新簽章".into(),
-            passed: 1,
+            name: "更新簽章設定".into(),
+            passed: usize::from(
+                serde_json::from_str::<Value>(include_str!("../tauri.conf.json"))
+                    .ok()
+                    .is_some_and(|config| {
+                        config["plugins"]["updater"]["pubkey"]
+                            .as_str()
+                            .is_some_and(|key| key.len() > 64)
+                            && config["plugins"]["updater"]["endpoints"]
+                                .as_array()
+                                .is_some_and(|urls| {
+                                    !urls.is_empty()
+                                        && urls.iter().all(|url| {
+                                            url.as_str()
+                                                .is_some_and(|url| url.starts_with("https://"))
+                                        })
+                                })
+                    }),
+            ),
             total: 1,
         },
     ];
@@ -6911,6 +7384,124 @@ fn run_self_test<R: Runtime>(app: tauri::AppHandle<R>) -> SelfTestReport {
         summary: format!("{passed}/{total} 項通過"),
         groups,
     }
+}
+
+#[tauri::command]
+fn frontend_ready(summary: Value) -> Result<(), String> {
+    if let Some(root) = std::env::var_os("OPENDESK_DIAGNOSTICS") {
+        let path = PathBuf::from(root);
+        private_directory(&path).map_err(|error| error.to_string())?;
+        atomic_write(
+            &path.join("window_ready.json"),
+            &serde_json::to_vec_pretty(&json!({
+                "version": env!("CARGO_PKG_VERSION"), "event": "window_ready", "summary": summary
+            }))
+            .map_err(|error| error.to_string())?,
+        )
+        .map_err(|error| error.to_string())?;
+    }
+    Ok(())
+}
+
+/// Installed-binary verification uses generated documents and an isolated profile.
+/// It does not open editors, change their settings or read user documents.
+pub fn verify_install(directory: &Path) -> Result<Value, String> {
+    fs::create_dir_all(directory).map_err(|error| error.to_string())?;
+    let directory = directory
+        .canonicalize()
+        .map_err(|error| error.to_string())?;
+    let profile = std::env::var_os("OPENDESK_DATA_DIR")
+        .map(PathBuf::from)
+        .ok_or("驗證必須指定獨立的 OPENDESK_DATA_DIR")?;
+    fs::create_dir_all(&profile).map_err(|error| error.to_string())?;
+    let profile = profile.canonicalize().map_err(|error| error.to_string())?;
+    if !profile.starts_with(&directory) {
+        return Err("驗證資料必須位於指定的測試目錄內".into());
+    }
+    private_directory(&directory).map_err(|error| error.to_string())?;
+    let root = directory.join(format!(
+        "verification-{}",
+        unique_id().map_err(|error| error.to_string())?
+    ));
+    private_directory(&root).map_err(|error| error.to_string())?;
+    let source = root.join("驗證文件.pdf");
+    pdf_create_blank_blocking(source.to_string_lossy().into(), 2)?;
+    let (core, runtime) = acropdf_call("--integration-status", None)?;
+    let executable = std::env::current_exe().map_err(|error| error.to_string())?;
+    let expected = executable
+        .parent()
+        .ok_or("無法確認安裝目錄")?
+        .join(if cfg!(windows) {
+            "document-pdf-core.exe"
+        } else {
+            "document-pdf-core"
+        });
+    if expected.is_file() && runtime.executable.canonicalize().ok() != expected.canonicalize().ok()
+    {
+        return Err("安裝版沒有使用隨附 PDF 核心".into());
+    }
+    let original = fs::read(&source).map_err(|error| error.to_string())?;
+    let mut backups = BTreeSet::new();
+    for _ in 0..12 {
+        let backup = create_backup(&source)?;
+        if fs::read(&backup).map_err(|error| error.to_string())? != original {
+            return Err("備份內容不一致".into());
+        }
+        backups.insert(backup);
+    }
+    if backups.len() != 12 {
+        return Err("連續備份發生覆寫".into());
+    }
+    let session = register_recovery_session(&source, "verification")?;
+    write_recovery_sessions_unlocked(&[session.clone()])?;
+    write_recovery_sessions_unlocked(&[session.clone()])?;
+    if restore_recovery_session_blocking(session.id.clone(), source.to_string_lossy().into())
+        .is_ok()
+    {
+        return Err("復原覆寫了來源文件".into());
+    }
+    let registry = recovery_registry_path()?;
+    atomic_write(&registry, b"{damaged registry").map_err(|error| error.to_string())?;
+    if register_recovery_session(&source, "verification").is_ok()
+        || fs::read(&registry).map_err(|error| error.to_string())? != b"{damaged registry"
+    {
+        return Err("損壞的復原清單沒有被保留".into());
+    }
+    write_recovery_sessions_unlocked(&[session.clone()])?;
+    let restored = root.join("復原副本.pdf");
+    restore_recovery_session_blocking(session.id, restored.to_string_lossy().into())?;
+    if fs::read(&restored).map_err(|error| error.to_string())? != original {
+        return Err("復原內容不一致".into());
+    }
+    let modified = pdf_apply_operation_blocking(
+        source.to_string_lossy().into(),
+        "add_text".into(),
+        json!({"page":0,"text":"OpenDesk verification"}),
+        None,
+    )?;
+    let rendered = pdf_render_page_blocking(source.to_string_lossy().into(), 0, 1.0, None)?;
+    if rendered
+        .get("data_url")
+        .and_then(Value::as_str)
+        .is_none_or(|value| !value.starts_with("data:image/png;base64,"))
+    {
+        return Err("安裝版無法渲染 PDF".into());
+    }
+    let backup = modified
+        .get("backup")
+        .and_then(Value::as_str)
+        .ok_or("修改前沒有備份")?;
+    pdf_restore_backup_blocking(source.to_string_lossy().into(), backup.into())?;
+    if fs::read(&source).map_err(|error| error.to_string())? != original {
+        return Err("PDF 復原沒有保留原始位元組".into());
+    }
+    let result = json!({"passed":true,"version":env!("CARGO_PKG_VERSION"),"core_version":core.get("app_version"),"packaged_core":expected.is_file(),"backups":backups.len(),"registry_replace":true,"corrupt_registry_preserved":true,"recovery":true,"render":true,"pdf_undo":true});
+    atomic_write(
+        &directory.join("verification.json"),
+        &serde_json::to_vec_pretty(&result).map_err(|error| error.to_string())?,
+    )
+    .map_err(|error| error.to_string())?;
+    Ok(result)
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -6931,6 +7522,7 @@ pub fn run() {
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .invoke_handler(tauri::generate_handler![
+            frontend_ready,
             system_status,
             onlyoffice_tw_status,
             repair_onlyoffice_traditional_chinese,
@@ -6966,6 +7558,7 @@ pub fn run() {
             pdf_restore_backup,
             pdf_create_blank,
             pdf_compare,
+            pdf_save_copy,
             open_in_acropdf,
             backup_and_open,
             create_document,
@@ -6981,8 +7574,105 @@ pub fn run() {
         .expect("全能文件工作台啟動失敗");
 }
 
+fn safe_office_archive(file: File) -> Result<ZipArchive<File>, String> {
+    let mut archive = ZipArchive::new(file).map_err(|error| error.to_string())?;
+    if archive.len() > 20000 {
+        return Err("Office 文件包含過多封存項目".into());
+    }
+    let mut total = 0u64;
+    for index in 0..archive.len() {
+        let entry = archive.by_index(index).map_err(|error| error.to_string())?;
+        total = total
+            .checked_add(entry.size())
+            .ok_or("Office 封存大小無效")?;
+        if total > 512 * 1024 * 1024
+            || (entry.name().ends_with(".xml") && entry.size() > 64 * 1024 * 1024)
+        {
+            return Err("Office 文件解壓大小超過安全處理上限".into());
+        }
+    }
+    Ok(archive)
+}
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn word_transform_never_truncates_original_or_previous_output() {
+        use super::*;
+        let root =
+            std::env::temp_dir().join(format!("opendesk-word-safety-{}", unique_id().unwrap()));
+        fs::create_dir_all(&root).unwrap();
+        let _cleanup = TemporaryFolder(root.clone());
+        let source = root.join("source.docx");
+        let mut writer = ZipWriter::new(File::create(&source).unwrap());
+        let options = zip::write::SimpleFileOptions::default();
+        writer.start_file("word/document.xml", options).unwrap();
+        writer.write_all(b"<document>old</document>").unwrap();
+        writer.start_file("word/invalid.xml", options).unwrap();
+        writer.write_all(&[255, 254]).unwrap();
+        writer.finish().unwrap();
+        let original = fs::read(&source).unwrap();
+        assert!(write_word_document_xml(&source, &source, "new").is_err());
+        assert_eq!(fs::read(&source).unwrap(), original);
+        let destination = root.join("previous.docx");
+        fs::write(&destination, b"previous output").unwrap();
+        assert!(rewrite_word_package(&source, &destination, |_, xml| Some(xml.into())).is_err());
+        assert_eq!(fs::read(&destination).unwrap(), b"previous output");
+        assert_eq!(fs::read(&source).unwrap(), original);
+        assert!(!fs::read_dir(&root).unwrap().any(|entry| entry
+            .unwrap()
+            .file_name()
+            .to_string_lossy()
+            .starts_with(".opendesk-")));
+    }
+    #[test]
+    fn repeated_mail_merge_names_do_not_overwrite_existing_outputs() {
+        use super::*;
+        let root =
+            std::env::temp_dir().join(format!("opendesk-merge-safety-{}", unique_id().unwrap()));
+        fs::create_dir_all(&root).unwrap();
+        let _cleanup = TemporaryFolder(root.clone());
+        fs::write(root.join("same.docx"), b"first").unwrap();
+        fs::write(root.join("same-001.docx"), b"second").unwrap();
+        let target = unique_output_path(&root, "same", "docx", 0);
+        assert_eq!(target.file_name().unwrap(), "same-002.docx");
+        assert_eq!(fs::read(root.join("same-001.docx")).unwrap(), b"second");
+    }
+
+    #[test]
+    fn mutations_and_password_requests_are_never_replayed() {
+        use super::*;
+        assert!(!pdf_request_can_retry(&["--embedded-operate".into()]));
+        assert!(!pdf_request_can_retry(&["--embedded-new".into()]));
+        assert!(!pdf_request_can_retry(&[
+            "--integration-inspect".into(),
+            "--password".into(),
+            "secret".into()
+        ]));
+        assert!(pdf_request_can_retry(&["--integration-inspect".into()]));
+    }
+    #[test]
+    fn fallback_drains_large_output_without_deadlocking() {
+        use super::*;
+        let runtime = AcroPdfRuntime {
+            executable: python_candidates().remove(0),
+            prefix_args: vec![],
+            display_path: "test Python".into(),
+        };
+        let output = command_output_with_timeout(
+            &runtime,
+            &[
+                "-c".into(),
+                "import sys; sys.stdout.write('x'*300000); sys.stderr.write('y'*300000)".into(),
+            ],
+            Duration::from_secs(10),
+        )
+        .unwrap();
+        assert!(output.status.success());
+        assert_eq!(output.stdout.len(), 300000);
+        assert_eq!(output.stderr.len(), 300000);
+    }
+
     use super::*;
 
     #[test]
@@ -8037,7 +8727,7 @@ mod tests {
             build_word_report(&word_output).expect("重編後 Word LIVE 報告應建立成功");
         assert!(renumbered_report.headings.len() >= original_report.headings.len());
         let component_output = temporary_root.join("Word-LIVE-進階元件.docx");
-        insert_word_component(
+        insert_word_component_blocking(
             word_output.to_string_lossy().to_string(),
             component_output.to_string_lossy().to_string(),
             "process".into(),

@@ -1,7 +1,7 @@
 {
   "name": "complete-document-workbench",
   "private": true,
-  "version": "2.8.5",
+  "version": "2.9.0",
   "license": "AGPL-3.0-or-later",
   "type": "module",
   "scripts": {
@@ -17,10 +17,12 @@
     "test:traditional": "node ../scripts/test_onlyoffice_tw_plugin.mjs",
     "test:contracts": "node scripts/test_pdf_integration_contract.mjs",
     "test:legal": "npm run legal:bundle && node scripts/test_agpl_compliance.mjs",
-    "test": "npm run test:traditional && npm run test:contracts && npm run test:pdf-core && npm run test:legal && cargo test --manifest-path src-tauri/Cargo.toml --lib",
+    "test": "npm run test:traditional && npm run test:contracts && npm run test:pdf-core && npm run test:safety && npm run test:preferences && npm run test:legal && cargo test --manifest-path src-tauri/Cargo.toml --lib",
     "dev": "tauri dev",
     "build": "npm run pdf-core:build && tauri build",
-    "check": "cargo check --manifest-path src-tauri/Cargo.toml"
+    "check": "cargo check --manifest-path src-tauri/Cargo.toml",
+    "test:safety": "node scripts/run_pdf_core_test.mjs scripts/test_pdf_safety.py",
+    "test:preferences": "node --test scripts/test_preferences.mjs"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.8.0",

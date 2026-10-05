@@ -173,6 +173,14 @@ const cargoSources = dependencies.cargo.map((item) => {
   };
 });
 
+console.log("封裝固定版本的 OCR 模型與 Apache 授權……");
+const ocrModels = [
+  {name:"eng.traineddata",sha256:"7d4322bd2a7749724879683fc3912cb542f19906c83bcc1a52132556427170b2"},
+  {name:"chi_tra.traineddata",sha256:"529c5b5797d64b126065cd55f2bb4c7fd7b15790798091b1ff259941a829330b"},
+];
+for (const model of ocrModels) await download(`https://raw.githubusercontent.com/tesseract-ocr/tessdata_fast/4.1.0/${model.name}`,path.join(sourcesRoot,"tessdata_fast-4.1.0",model.name),{sha256:model.sha256});
+copyFileSync(path.join(projectRoot,"src-tauri/resources/licenses/TESSDATA_LICENSE.txt"),path.join(sourcesRoot,"tessdata_fast-4.1.0","LICENSE"));
+
 console.log("封裝本版本專案原始碼與法律告知……");
 const projectArchive = path.join(sourcesRoot, `OpenDeskTW-${version}.tar.gz`);
 run("git", [
