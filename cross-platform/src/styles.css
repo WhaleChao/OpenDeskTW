@@ -432,7 +432,7 @@ footer { display: flex; align-items: center; justify-content: space-between; fle
 /* Document Studio: one palette, explicit appearance and calm navigation. */
 :root {
   --canvas: #f5f5f2; --surface: #ffffff; --surface-soft: #f8f9f7;
-  --text: #25363c; --muted: #64757c; --line: #dce3e2;
+  --text: #25363c; --muted: #56686f; --line: #dce3e2;
   --teal: #13766e; --teal-dark: #116b64; --teal-soft: #e7f2ef;
   --word: #366bb0; --word-dark: #285793; --word-soft: #eef3fa;
   --pdf: #b04c42; --pdf-dark: #a14136; --pdf-soft: #faf0ed;
@@ -594,3 +594,10 @@ footer { margin-top: 24px; border-top: 1px solid var(--line); font-size: 12px; }
   .shortcut-dialog-head, .word-tool-heading { align-items: start; flex-wrap: wrap; }
 }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { scroll-behavior: auto !important; transition: none !important; animation: none !important; } }
+
+/* Shared tokens keep feature states readable in both appearances. */
+.feature-tabs button.active, [data-theme="dark"] .feature-tabs button.active { color: var(--teal); background: var(--teal-soft); border-color: var(--teal); }
+.feature-card .tag, [data-theme="dark"] .feature-card .tag { color: var(--teal); }
+.pdf-engine-line, [data-theme="dark"] .pdf-engine-line { color: var(--muted); }
+
+.component-grid label, [data-theme="dark"] .component-grid label { color: var(--muted); }

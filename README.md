@@ -2,7 +2,9 @@
 
 「全能文件工作台」是一套全繁體中文、Windows／macOS 共用的單機文件 App。名稱直接表達用途：在同一個視窗處理文字、試算表、簡報、PDF 與 MAGI，不必先理解檔案格式或切換多套啟動器。
 
-目前開發版為 2.8.5，主要程式位於 `cross-platform/`，以 Tauri 2、Rust 與原生 WebView 建置。新增文字文件、試算表或簡報會立即開啟未命名文件，第一次按儲存時才選擇檔名與位置；Word 編輯器另有每 15 秒富文字草稿、可編輯大綱、完整條件合併、動態引文、台灣文件校閱與結構化範本。2.8.1 修正表格內文字等距分布；2.8.2 取消打字與普通點擊後的全文件重排；2.8.3 解除 macOS 顏色面板對格式複製熱鍵的攔截；2.8.4 修正 macOS 26 的 LibreOffice 背景轉檔；2.8.5 在 ONLYOFFICE 壓縮版行位置 API 失效時依實際版面寬度安全降級，避免分散對齊因 `yBa` 例外整體中止。
+目前開發版為 2.9.0，主要程式位於 `cross-platform/`，以 Tauri 2、Rust 與原生 WebView 建置。新增文字文件、試算表或簡報會立即開啟未命名文件，第一次按儲存時才選擇檔名與位置；Word 編輯器另有每 15 秒富文字草稿、可編輯大綱、完整條件合併、動態引文、台灣文件校閱與結構化範本。2.8.1 修正表格內文字等距分布；2.8.2 取消打字與普通點擊後的全文件重排；2.8.3 解除 macOS 顏色面板對格式複製熱鍵的攔截；2.8.4 修正 macOS 26 的 LibreOffice 背景轉檔；2.8.5 在 ONLYOFFICE 壓縮版行位置 API 失效時依實際版面寬度安全降級，避免分散對齊因 `yBa` 例外整體中止。
+
+2.9.0 加入日間／夜間／跟隨系統、六個工作區、指令搜尋與鍵盤巡覽，並修復 PDF／Word 原子儲存、Windows 復原清單、私有備份、加密簽章、永久遮蔽、OCR 保真與列印權限。完整修復與驗證範圍見 [2.9.0 品質審查](docs/quality-review-2.9.0.md)。
 
 ## 主要能力
 
@@ -56,7 +58,7 @@ npm run build
 `npm run build` 會先建立目前平台的內建 PDF 核心，再產生桌面安裝包。
 
 - macOS：`cross-platform/src-tauri/target/release/bundle/macos` 與 `bundle/dmg`
-- Windows：`cross-platform/src-tauri/target/release/bundle/msi` 與 `bundle/nsis`
+- Windows：`cross-platform/src-tauri/target/release/bundle/nsis`（EXE）
 
 ## 驗證
 
