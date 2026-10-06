@@ -31,7 +31,7 @@ const featureItems = [
   ["pdf", "PDF 表單、簽章與安全", "建立／填寫／扁平化表單、PFX／P12 簽署、驗證、AES-256 與永久遮蔽。", "內建 AcroPDF 核心"],
   ["safety", "版本備份", "每次開啟與轉檔前建立副本，原檔保持原格式。", "全能文件工作台"],
   ["safety", "格式風險掃描", "VBA、ActiveX、外部連結、嵌入物件、SmartArt 與缺少字型。", "全能文件工作台"],
-  ["safety", "MAGI V2／V3", "只連線目前唯一運作版本；結果直接顯示，離線候選測試不算啟用衝突。", "本機 Agent"],
+  ["safety", "MAGI", "只連線本機 MAGI，並使用 MAGI 簽發的受限權杖；結果直接顯示。", "本機 Agent"],
   ["safety", "安全熱修", "只接受 Tauri 私鑰簽章的更新包；驗證失敗不安裝，可保留上一版。", "密碼學簽章"],
 ];
 
@@ -174,7 +174,7 @@ const wordTabs = {
       ["signatures", "簽章、限制與文件屬性", "插入簽名欄、檢查屬性與隱藏資訊；數位憑證需由作業系統提供。", "檔案 → 資訊／插入 → 簽名欄", "editor"],
       ["inspector", "文件檢查與交付前稽核", "檢查巨集、外部連結、嵌入物件、註解、修訂、字型與頁碼。", "工作台直接完成", "report"],
       ["pdf", "輸出可搜尋 PDF", "在本機轉換，不上傳文件；輸出前先檢查修訂、註解與頁碼。", "工作台直接完成", "pdf"],
-      ["magi", "MAGI 文件分析", "摘要、校對、結構與風險分析；相容 V2／V3，結果留在 App。", "工作台直接完成", "magi"],
+      ["magi", "MAGI 文件分析", "摘要、校對、結構與風險分析；使用 MAGI 受限權杖，結果留在 App。", "工作台直接完成", "magi"],
     ],
   },
 };
@@ -250,11 +250,11 @@ const pdfTabs = {
   },
   automation: {
     title: "批次與 MAGI：大量處理、歸檔與內容理解",
-    detail: "批次工作先選輸出資料夾；MAGI 只連線目前唯一運作的 V2 或 V3。",
+    detail: "批次工作先選輸出資料夾；MAGI 只連線本機並使用受限權杖。",
     tasks: [
       ["pdf-batch", "批次處理多份 PDF", "一次加入浮水印、頁首頁尾、Bates 編號、分割或合併。", "工具 → 批次處理", "workspace", "batch"],
       ["pdf-filing", "智慧歸檔與重新命名", "依本機規則分析檔名與內容，複製到分類資料夾並保留來源。", "工具 → 智慧歸檔", "workspace", "filing"],
-      ["pdf-magi", "MAGI PDF 分析", "摘要、翻譯、分類、關鍵資訊與法律文件分析；結果留在 App。", "全能文件工作台＋MAGI V2／V3", "magi", "magi"],
+      ["pdf-magi", "MAGI PDF 分析", "摘要、翻譯、分類、關鍵資訊與法律文件分析；結果留在 App。", "全能文件工作台＋MAGI", "magi", "magi"],
       ["pdf-live-automation", "交付前 LIVE 驗證", "重新檢查結構、首末頁渲染及記憶體往返，確認輸出仍能開啟。", "工作台＋內建 PDF 核心", "live", ""],
     ],
   },
@@ -2461,7 +2461,7 @@ async function runMagiAnalysis() {
       instruction: $("#magi-instruction").value,
     });
     if (state.selectedPath !== source) return;
-    result.textContent = `${reply.text}\n\n— ${reply.compatibility_version.toUpperCase()}${reply.model ? `・${reply.model}` : ""}${reply.degraded ? "・降級回應" : ""}`;
+    result.textContent = `${reply.text}\n\n— MAGI${reply.model ? `・${reply.model}` : ""}${reply.degraded ? "・降級回應" : ""}`;
     $("#magi-copy").classList.remove("hidden");
   } catch (error) {
     result.textContent = `MAGI 分析失敗：${error}`;

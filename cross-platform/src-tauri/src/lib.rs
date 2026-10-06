@@ -36,14 +36,12 @@ struct EngineStatus {
 struct MagiStatus {
     available: bool,
     summary: String,
-    v2_v3_safe: bool,
-    active_version: String,
+    token_ready: bool,
 }
 
 #[derive(Serialize)]
 struct MagiReply {
     text: String,
-    compatibility_version: String,
     model: Option<String>,
     route: Option<String>,
     degraded: bool,
@@ -1987,35 +1985,27 @@ fn magi_status() -> MagiStatus {
         .into_iter()
         .filter_map(magi_listener_working_directory)
         .collect::<Vec<_>>();
-    let version_is_active = |name: &str| {
-        magi_runtime_roots(name).iter().any(|root| {
-            snapshot.contains(&root.to_string_lossy().to_ascii_lowercase())
-                || listener_directories
-                    .iter()
-                    .any(|directory| directory.starts_with(root))
-        })
-    };
-    let v2 = version_is_active("MAGI_v2");
-    let v3 = version_is_active("MAGI_v3");
-    let (active_version, safe) = match (v2, v3) {
-        (true, true) => ("conflict", false),
-        (false, true) => ("v3", true),
-        (true, false) => ("v2", true),
-        (false, false) => ("inactive", true),
-    };
-    let available = main && tools && safe && active_version != "inactive";
-    let summary = match active_version {
-        "v2" if available => "MAGI V2 已就緒，V3 相容介面可用",
-        "v3" if available => "MAGI V3 已就緒，V2 相容介面可用",
-        "conflict" => "偵測到 V2／V3 同時運作，已停止呼叫",
-        "inactive" if main && tools => "服務在線，但未確認執行版本",
-        _ => "本機 MAGI 尚未完全就緒",
+    let running = magi_runtime_roots().iter().any(|root| {
+        snapshot.contains(&root.to_string_lossy().to_ascii_lowercase())
+            || listener_directories
+                .iter()
+                .any(|directory| directory.starts_with(root))
+    });
+    let token_ready = magi_workbench_token().is_ok();
+    let available = main && tools && running && token_ready;
+    let summary = if !(main && tools) {
+        "本機 MAGI 尚未完全就緒"
+    } else if !running {
+        "服務在線，但未確認為 MAGI 正式版本"
+    } else if !token_ready {
+        "尚未取得 MAGI 工作台權杖，請在 MAGI 主機簽發後放入工作台資料目錄"
+    } else {
+        "MAGI 已就緒"
     };
     MagiStatus {
         available,
-        v2_v3_safe: safe,
-        active_version: active_version.into(),
         summary: summary.into(),
+        token_ready,
     }
 }
 
@@ -2036,7 +2026,8 @@ fn process_snapshot() -> String {
         .unwrap_or_default()
 }
 
-fn magi_runtime_roots(name: &str) -> Vec<PathBuf> {
+fn magi_runtime_roots() -> Vec<PathBuf> {
+    let name = "MAGI_v3";
     let mut roots = Vec::new();
     if let Some(home) = dirs::home_dir() {
         #[cfg(target_os = "macos")]
@@ -3871,67 +3862,31 @@ fn insert_word_component_blocking(
     })
 }
 
-fn parse_environment(content: &str) -> std::collections::HashMap<String, String> {
-    let mut values = std::collections::HashMap::new();
-    for raw in content.lines() {
-        let mut line = raw.trim();
-        if let Some(value) = line.strip_prefix("export ") {
-            line = value.trim();
-        }
-        if line.is_empty() || line.starts_with('#') {
-            continue;
-        }
-        let Some((key, raw_value)) = line.split_once('=') else {
-            continue;
-        };
-        let mut value = raw_value.trim().to_string();
-        if value.len() >= 2
-            && ((value.starts_with('"') && value.ends_with('"'))
-                || (value.starts_with('\'') && value.ends_with('\'')))
-        {
-            value = value[1..value.len() - 1].to_string();
-        }
-        values.insert(key.trim().to_string(), value);
-    }
-    values
-}
+const MAGI_WORKBENCH_TOKEN_FILE: &str = "magi-workbench-token";
 
-fn magi_credentials(active_version: &str) -> Result<(String, Option<String>), String> {
-    let mut values: std::collections::HashMap<String, String> = std::env::vars().collect();
-    let mut candidates = Vec::new();
-    if active_version == "v3" {
-        for root in magi_runtime_roots("MAGI_v3") {
-            candidates.extend([root.join("shared/external/.env"), root.join(".env")]);
-        }
-        for root in magi_runtime_roots("MAGI_v2") {
-            candidates.push(root.join(".env"));
-        }
-    } else {
-        for root in magi_runtime_roots("MAGI_v2") {
-            candidates.push(root.join(".env"));
-        }
-        for root in magi_runtime_roots("MAGI_v3") {
-            candidates.push(root.join("shared/external/.env"));
+/// 讀 MAGI 為工作台簽發的受限權杖；不接觸 MAGI 的環境檔或萬用金鑰。
+/// 檔案由 MAGI 主機的 `workbench_token.py issue` 寫入資料目錄，權限必須是 0600。
+fn magi_workbench_token() -> Result<String, String> {
+    let path = data_root()?.join(MAGI_WORKBENCH_TOKEN_FILE);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = fs::metadata(&path)
+            .map_err(|_| "找不到 MAGI 工作台權杖，請在 MAGI 主機簽發")?
+            .permissions()
+            .mode();
+        if mode & 0o077 != 0 {
+            return Err("MAGI 工作台權杖檔案權限過寬，請改為 0600 或重新簽發".into());
         }
     }
-    for candidate in candidates {
-        let Ok(content) = fs::read_to_string(candidate) else {
-            continue;
-        };
-        for (key, value) in parse_environment(&content) {
-            values.entry(key).or_insert(value);
-        }
+    let token = fs::read_to_string(&path)
+        .map_err(|_| "找不到 MAGI 工作台權杖，請在 MAGI 主機簽發")?
+        .trim()
+        .to_string();
+    if !token.starts_with("mwb_") || token.len() < 20 || token.len() > 200 {
+        return Err("MAGI 工作台權杖格式不正確，請重新簽發".into());
     }
-    let api_key = values
-        .get("MAGI_API_KEY")
-        .filter(|value| !value.trim().is_empty())
-        .cloned()
-        .ok_or("找不到 MAGI 的本機 API 驗證設定")?;
-    let tenant = values
-        .get("MAGI_TENANT_ID")
-        .filter(|value| !value.trim().is_empty())
-        .cloned();
-    Ok((api_key, tenant))
+    Ok(token)
 }
 
 fn xml_text(xml: &str) -> String {
@@ -4022,81 +3977,31 @@ fn truncate_text(text: String, limit: usize) -> (String, bool) {
     (text.chars().take(limit).collect(), true)
 }
 
-fn response_string(candidates: &[&Value], key: &str) -> Option<String> {
-    candidates.iter().find_map(|candidate| {
-        candidate
-            .get(key)?
-            .as_str()
-            .map(str::to_string)
-            .filter(|value| !value.trim().is_empty())
-    })
-}
-
-fn adapt_magi_response(object: &Value, active_version: &str) -> Result<MagiReply, String> {
-    if object.get("success").and_then(Value::as_bool) == Some(false)
-        || object.get("ok").and_then(Value::as_bool) == Some(false)
-    {
+fn adapt_magi_response(object: &Value) -> Result<MagiReply, String> {
+    if object.get("success").and_then(Value::as_bool) != Some(true) {
         return Err("MAGI 回傳失敗狀態".into());
     }
-    let mut candidates = vec![object];
-    if let Some(data) = object.get("data") {
-        candidates.push(data);
-    }
-    if let Some(answer) = object.get("data").and_then(|value| value.get("answer")) {
-        candidates.push(answer);
-    }
-    let text = ["response", "text", "analysis", "summary", "reply"]
-        .iter()
-        .find_map(|key| response_string(&candidates, key))
-        .or_else(|| {
-            object
-                .get("data")
-                .and_then(Value::as_str)
-                .map(str::to_string)
-        })
-        .ok_or("MAGI 已回應，但找不到分析文字")?;
-    let meta = object.get("meta");
-    let route = response_string(&candidates, "route")
-        .or_else(|| {
-            candidates.iter().find_map(|value| {
-                value
-                    .get("route")?
-                    .get("path")?
-                    .as_str()
-                    .map(str::to_string)
-            })
-        })
-        .or_else(|| meta?.get("route")?.as_str().map(str::to_string));
-    let model = response_string(&candidates, "model")
-        .or_else(|| {
-            candidates.iter().find_map(|value| {
-                value
-                    .get("route")?
-                    .get("model")?
-                    .as_str()
-                    .map(str::to_string)
-            })
-        })
-        .or_else(|| meta?.get("model")?.as_str().map(str::to_string));
-    let compatibility_version = meta
-        .and_then(|value| value.get("compat_version"))
+    let text = object
+        .get("response")
         .and_then(Value::as_str)
-        .unwrap_or(active_version)
-        .to_string();
-    let degraded = candidates
-        .iter()
-        .find_map(|value| value.get("degraded")?.as_bool())
-        .or_else(|| {
-            meta.and_then(|value| value.get("degraded"))
-                .and_then(Value::as_bool)
-        })
-        .unwrap_or(false);
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or("MAGI 已回應，但找不到分析文字")?;
+    let string_field = |key: &str| {
+        object
+            .get(key)
+            .and_then(Value::as_str)
+            .map(str::to_string)
+            .filter(|value| !value.trim().is_empty())
+    };
     Ok(MagiReply {
-        text: text.trim().into(),
-        compatibility_version,
-        model,
-        route,
-        degraded,
+        text: text.into(),
+        model: string_field("model"),
+        route: string_field("route"),
+        degraded: object
+            .get("degraded")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
     })
 }
 
@@ -4115,11 +4020,7 @@ impl Drop for TemporaryFolder {
     }
 }
 
-fn magi_http_request(
-    api_key: String,
-    tenant: Option<String>,
-    body: Vec<u8>,
-) -> Result<Value, String> {
+fn magi_http_request(token: String, body: Vec<u8>) -> Result<Value, String> {
     let temporary_root = std::env::temp_dir().join(format!(
         "OpenDeskTW-MAGI-{}-{}",
         std::process::id(),
@@ -4128,13 +4029,10 @@ fn magi_http_request(
     fs::create_dir_all(&temporary_root).map_err(|error| error.to_string())?;
     let _cleanup = TemporaryFolder(temporary_root.clone());
     let config_path = temporary_root.join("curl.conf");
-    let mut config = format!("header = \"X-API-Key: {}\"\n", curl_config_value(&api_key));
-    if let Some(tenant) = tenant {
-        config.push_str(&format!(
-            "header = \"X-MAGI-Tenant: {}\"\n",
-            curl_config_value(&tenant)
-        ));
-    }
+    let config = format!(
+        "header = \"Authorization: Bearer {}\"\n",
+        curl_config_value(&token)
+    );
     fs::write(&config_path, config).map_err(|error| error.to_string())?;
     #[cfg(unix)]
     {
@@ -4171,7 +4069,7 @@ fn magi_http_request(
             "OpenDesk-TW/2.0",
         ])
         .args(["--data-binary", "@-", "--write-out", "\n%{http_code}"])
-        .arg("http://127.0.0.1:5003/collab/chat")
+        .arg("http://127.0.0.1:5003/workbench/v1/analyze")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -4202,8 +4100,11 @@ fn magi_http_request(
         .trim()
         .parse()
         .map_err(|_| "MAGI 回應狀態碼無效")?;
-    if !(200..300).contains(&code) {
-        return Err(format!("MAGI 拒絕分析請求（HTTP {code}）"));
+    match code {
+        200..=299 => {}
+        401 => return Err("MAGI 工作台權杖無效、已過期或已撤銷，請在 MAGI 主機重新簽發".into()),
+        403 => return Err("MAGI 拒絕此權杖的權限範圍，請重新簽發工作台權杖".into()),
+        _ => return Err(format!("MAGI 拒絕分析請求（HTTP {code}）")),
     }
     serde_json::from_str(json_text).map_err(|_| "MAGI 回傳了無法辨識的資料格式".into())
 }
@@ -4216,37 +4117,28 @@ fn magi_analyze_text(
     instruction: &str,
 ) -> Result<MagiReply, String> {
     let status = magi_status();
-    if !status.v2_v3_safe {
-        return Err("偵測到 MAGI V2／V3 同時運作；為保護資料已停止分析".into());
-    }
     if !status.available {
         return Err(status.summary);
     }
     if text.trim().is_empty() {
         return Err("目前文件沒有可供 MAGI 分析的文字".into());
     }
-    let task = match mode {
-        "summary" => "整理文件摘要、重要數字、日期、待辦與決策。",
-        "review" => "校對內容，找出語句、數字、日期、邏輯與前後矛盾的疑點。",
-        "structure" => "檢查標題層級、段落結構、順序與可讀性，提出具體調整建議。",
-        _ => "完整檢查內容、結構、風險、排版線索與可執行的改善建議。",
+    // 提示詞由 MAGI 端依 mode 組成；工作台只送文件文字與模式，不再自帶可自由改寫的指令。
+    let mode = match mode {
+        "summary" | "review" | "structure" | "risk" | "rewrite" => mode,
+        _ => "risk",
     };
-    let extra = if instruction.trim().is_empty() {
-        String::new()
-    } else {
-        format!("使用者追加要求：{}", instruction.trim())
-    };
-    let range = if truncated {
-        "內容過長，本次分析前 60,000 字"
-    } else {
-        "已擷取完整可讀文字"
-    };
-    let prompt = format!("你是整合在全能文件工作台裡的 MAGI 文件分析助手。請全程使用繁體中文，嚴格依據擷取內容，不要臆測；若無法從文字確認視覺版面，請明確說明。\n\n【任務】\n{task}\n{extra}\n\n【文件】\n名稱：{file_name}\n擷取範圍：{range}\n\n【內容開始】\n{text}\n【內容結束】\n\n請用清楚的小標題與條列回答，不要覆寫原檔。");
-    let (api_key, tenant) = magi_credentials(&status.active_version)?;
-    let body = serde_json::to_vec(&json!({"prompt": prompt, "timeout_sec": 90, "allow_fallback": true, "allow_template_fallback": true, "user_id": "opendesk-tw", "platform": "OPENDESK_TW", "role": "user"}))
-        .map_err(|error| error.to_string())?;
-    let object = magi_http_request(api_key, tenant, body)?;
-    adapt_magi_response(&object, &status.active_version)
+    let token = magi_workbench_token()?;
+    let body = serde_json::to_vec(&json!({
+        "mode": mode,
+        "text": text,
+        "file_name": file_name,
+        "instruction": instruction.trim(),
+        "truncated": truncated,
+    }))
+    .map_err(|error| error.to_string())?;
+    let object = magi_http_request(token, body)?;
+    adapt_magi_response(&object)
 }
 
 #[tauri::command]
@@ -7350,8 +7242,8 @@ fn run_self_test_blocking<R: Runtime>(app: tauri::AppHandle<R>) -> SelfTestRepor
             total: 3,
         },
         TestGroup {
-            name: "MAGI V2／V3 安全連線".into(),
-            passed: usize::from(magi.available && magi.v2_v3_safe),
+            name: "MAGI 安全連線".into(),
+            passed: usize::from(magi.available),
             total: 1,
         },
         TestGroup {
@@ -7515,6 +7407,10 @@ pub fn run() {
                 }
             }
             start_magi_bridge().map_err(std::io::Error::other)?;
+            #[cfg(not(target_os = "macos"))]
+            for argument in std::env::args().skip(1).filter(|value| !value.starts_with("--")) {
+                open_requested_document(PathBuf::from(argument));
+            }
             Ok(())
         })
         .plugin(tauri_plugin_dialog::init())
@@ -7570,8 +7466,55 @@ pub fn run() {
             open_source_repository,
             run_self_test
         ])
-        .run(tauri::generate_context!())
-        .expect("全能文件工作台啟動失敗");
+        .build(tauri::generate_context!())
+        .expect("全能文件工作台啟動失敗")
+        .run(|_app, event| {
+            // MAGI 檔案管理的「用全能文件工作台開啟」會經 LaunchServices 送來開檔事件。
+            #[cfg(target_os = "macos")]
+            if let tauri::RunEvent::Opened { urls } = event {
+                for url in urls {
+                    if let Ok(path) = url.to_file_path() {
+                        open_requested_document(path);
+                    }
+                }
+            }
+            #[cfg(not(target_os = "macos"))]
+            let _ = event;
+        });
+}
+
+const OPENABLE_DOCUMENT_EXTENSIONS: [&str; 11] = [
+    "docx", "doc", "odt", "rtf", "xlsx", "xls", "ods", "csv", "pptx", "ppt", "odp",
+];
+
+fn is_openable_document(path: &Path) -> bool {
+    path.extension()
+        .and_then(|value| value.to_str())
+        .map(|value| {
+            OPENABLE_DOCUMENT_EXTENSIONS
+                .iter()
+                .any(|allowed| value.eq_ignore_ascii_case(allowed))
+        })
+        .unwrap_or(false)
+}
+
+/// 外部（MAGI 或檔案總管）要求開啟文件：沿用既有的「先備份、再開啟、建立復原快照」流程，
+/// 只接受實體的辦公室文件檔，其餘一律忽略。
+fn open_requested_document(path: PathBuf) {
+    let Ok(path) = path.canonicalize() else {
+        return;
+    };
+    if !path.is_file() || !is_openable_document(&path) {
+        return;
+    }
+    let engine = if engine_executable("ONLYOFFICE").is_some() {
+        "ONLYOFFICE"
+    } else {
+        "LibreOffice"
+    };
+    thread::spawn(move || {
+        let _ = backup_and_open_blocking(path.to_string_lossy().into_owned(), engine.into());
+    });
 }
 
 fn safe_office_archive(file: File) -> Result<ZipArchive<File>, String> {
@@ -8225,16 +8168,50 @@ mod tests {
     }
 
     #[test]
-    fn adapts_v2_and_v3_compatible_envelope() {
+    fn adapts_workbench_gateway_response() {
         let value = json!({
-            "ok": true,
-            "data": {"answer": {"text": "這是繁體中文分析結果", "model": "local"}},
-            "meta": {"compat_version": "v3", "degraded": false}
+            "success": true,
+            "response": "這是繁體中文分析結果",
+            "model": "local",
+            "route": "workbench_analyze",
+            "degraded": false
         });
-        let reply = adapt_magi_response(&value, "v2").expect("應能解析相容封套");
-        assert_eq!(reply.compatibility_version, "v3");
+        let reply = adapt_magi_response(&value).expect("應能解析工作台端點回應");
         assert!(reply.text.contains("分析結果"));
+        assert_eq!(reply.model.as_deref(), Some("local"));
         assert!(!reply.degraded);
+    }
+
+    #[test]
+    fn open_requests_accept_only_office_documents() {
+        assert!(is_openable_document(Path::new("/a/b/答辯狀.DOCX")));
+        assert!(is_openable_document(Path::new("/a/b/表.xlsx")));
+        assert!(!is_openable_document(Path::new("/a/b/run.command")));
+        assert!(!is_openable_document(Path::new("/a/b/x.pdf")));
+        assert!(!is_openable_document(Path::new("/a/b/noext")));
+    }
+
+    #[test]
+    fn rejects_failed_or_empty_workbench_response() {
+        assert!(adapt_magi_response(&json!({"success": false, "response": "x"})).is_err());
+        assert!(adapt_magi_response(&json!({"success": true, "response": "  "})).is_err());
+        assert!(adapt_magi_response(&json!({"ok": true, "data": {"answer": "舊封套"}})).is_err());
+    }
+
+    #[test]
+    fn magi_integration_no_longer_reads_master_key_or_legacy_endpoint() {
+        let source = include_str!("lib.rs");
+        let production = source.split("#[cfg(test)]").next().unwrap();
+        for forbidden in [
+            concat!("MAGI_", "API_KEY"),
+            concat!("shared/external/", ".env"),
+            concat!("X-API-", "Key"),
+            concat!("collab/", "chat"),
+            concat!("MAGI_", "v2"),
+        ] {
+            assert!(!production.contains(forbidden), "不應再出現：{forbidden}");
+        }
+        assert!(production.contains("/workbench/v1/analyze"));
     }
 
     #[test]
@@ -8609,23 +8586,21 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "需要正在運作的本機 MAGI V2 或 V3"]
-    fn live_magi_v2_v3_request() {
+    #[ignore = "需要正在運作的本機 MAGI 與已簽發的工作台權杖"]
+    fn live_magi_workbench_request() {
         let status = magi_status();
-        assert!(status.available && status.v2_v3_safe, "{}", status.summary);
-        let (api_key, tenant) = magi_credentials(&status.active_version).expect("應找到本機認證");
+        assert!(status.available, "{}", status.summary);
+        let token = magi_workbench_token().expect("應找到工作台權杖");
         let body = serde_json::to_vec(&json!({
-            "prompt": "請只用繁體中文回答：OpenDesk TW MAGI LIVE 驗證通過。",
-            "timeout_sec": 90,
-            "allow_fallback": true,
-            "allow_template_fallback": true,
-            "user_id": "opendesk-tw-live-test",
-            "platform": "OPENDESK_TW",
-            "role": "user"
+            "mode": "summary",
+            "text": "全能文件工作台 MAGI LIVE 驗證：本文件只用來確認連線。",
+            "file_name": "live-test.docx",
+            "instruction": "請只用繁體中文簡短回答驗證通過。",
+            "truncated": false
         }))
         .unwrap();
-        let value = magi_http_request(api_key, tenant, body).expect("MAGI LIVE 呼叫應成功");
-        let reply = adapt_magi_response(&value, &status.active_version).expect("應能解析回應");
+        let value = magi_http_request(token, body).expect("MAGI LIVE 呼叫應成功");
+        let reply = adapt_magi_response(&value).expect("應能解析回應");
         assert!(!reply.text.trim().is_empty());
     }
 
@@ -8781,23 +8756,18 @@ mod tests {
                 >= 1
         );
         let status = magi_status();
-        assert!(status.available && status.v2_v3_safe, "{}", status.summary);
-        let (api_key, tenant) = magi_credentials(&status.active_version).unwrap();
+        assert!(status.available, "{}", status.summary);
+        let token = magi_workbench_token().unwrap();
         let body = serde_json::to_vec(&json!({
-            "prompt": "請以繁體中文簡短確認 OpenDesk TW Office 完整管線 LIVE 驗證。",
-            "timeout_sec": 90,
-            "allow_fallback": true,
-            "allow_template_fallback": true,
-            "user_id": "opendesk-tw-pipeline-test",
-            "platform": "OPENDESK_TW",
-            "role": "user"
+            "mode": "summary",
+            "text": "OpenDesk TW Office 完整管線 LIVE 驗證文字。",
+            "file_name": "pipeline-test.docx",
+            "instruction": "請以繁體中文簡短確認。",
+            "truncated": false
         }))
         .unwrap();
-        let value = magi_http_request(api_key, tenant, body).unwrap();
-        assert!(!adapt_magi_response(&value, &status.active_version)
-            .unwrap()
-            .text
-            .is_empty());
+        let value = magi_http_request(token, body).unwrap();
+        assert!(!adapt_magi_response(&value).unwrap().text.is_empty());
     }
 
     #[cfg(target_os = "macos")]

@@ -501,7 +501,6 @@ const pluginWindow = {
           ok: true,
           reply: {
             text: "MAGI 測試完成",
-            compatibility_version: "v3",
             model: "test-model",
             degraded: false,
           },
